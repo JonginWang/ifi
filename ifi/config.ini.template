@@ -1,0 +1,5 @@
+[VEST_DB]
+host = your_database_host
+database = your_database_name
+user = your_username
+password = your_password 

@@ -1,0 +1,6 @@
+pyvisa
+pyvisa-py
+mysql-connector-python
+pynput
+numpy
+matplotlib 
