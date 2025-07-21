@@ -15,8 +15,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import os
-os.environ['NUMBA_DISABLE_CACHE'] = '1'
+
+# Set a project-local cache directory for numba to avoid permission errors.
+# This directory should be added to .gitignore
+numba_cache_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'cache', 'numba_cache')
+os.makedirs(numba_cache_dir, exist_ok=True)
+os.environ['NUMBA_CACHE_DIR'] = numba_cache_dir
+
 
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
