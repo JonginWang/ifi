@@ -6,9 +6,11 @@ import os
 import threading
 import time
 
-# 상대 경로 임포트를 위해 경로 설정이 필요할 수 있습니다.
-from ..tek_controller.scope import TektronixScope
+# Relative imports by its path
+from ..tek_controller.scope import TekScopeController
 from ..db_controller.vest_db import VEST_DB
+from ..utils import resource_path
+from ..file_io import read_waveform_file, save_waveform_to_csv
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -36,9 +38,14 @@ class Application(tk.Frame):
         self.gui_queue = queue.Queue()
         
         # --- Backend Objects ---
-        self.scope1 = None
-        self.scope2 = None
-        self.vest_db = VEST_DB()
+        # Now we have controller objects that manage the devices
+        self.scope_controller = TekScopeController()
+        # These will hold the identifier string ("MODEL - SERIAL")
+        self.selected_scope1_id = tk.StringVar()
+        self.selected_scope2_id = tk.StringVar()
+        
+        config_file = resource_path('ifi/config.ini')
+        self.vest_db = VEST_DB(config_path=config_file)
 
         self.create_widgets()
         
@@ -46,6 +53,9 @@ class Application(tk.Frame):
         self.worker_thread = threading.Thread(target=self.worker_loop, daemon=True)
         self.worker_thread.start()
         
+        # --- Initial Tasks ---
+        self.task_queue.put(('find_scopes', {}))
+
         # --- Keyboard Listener ---
         self.keyboard_listener = keyboard.Listener(on_press=self.on_key_press)
         self.keyboard_listener.start()
@@ -137,19 +147,26 @@ class Application(tk.Frame):
         daq_frame.pack(padx=10, pady=10, fill="x")
         
         ttk.Label(daq_frame, text="Scope 1:").pack(side="left", padx=5, pady=5)
-        self.scope1_var = tk.StringVar()
-        self.scope1_dropdown = ttk.Combobox(daq_frame, textvariable=self.scope1_var, state="readonly")
+        self.scope1_dropdown = ttk.Combobox(daq_frame, textvariable=self.selected_scope1_id, state="readonly")
         self.scope1_dropdown.pack(side="left", padx=5, pady=5)
+        self.scope1_dropdown.bind("<<ComboboxSelected>>", self.connect_scope1_action)
         
         if num_scopes == 2:
             ttk.Label(daq_frame, text="Scope 2:").pack(side="left", padx=5, pady=5)
-            self.scope2_var = tk.StringVar()
-            self.scope2_dropdown = ttk.Combobox(daq_frame, textvariable=self.scope2_var, state="readonly")
+            self.scope2_dropdown = ttk.Combobox(daq_frame, textvariable=self.selected_scope2_id, state="readonly")
             self.scope2_dropdown.pack(side="left", padx=5, pady=5)
+            # self.scope2_dropdown.bind("<<ComboboxSelected>>", self.connect_scope2_action)
 
         # Waveform Section
         waveform_frame = ttk.LabelFrame(parent_tab, text="Waveform")
         waveform_frame.pack(padx=10, pady=10, fill="both", expand=True)
+        
+        # --- Top controls for waveform ---
+        wf_control_frame = ttk.Frame(waveform_frame)
+        wf_control_frame.pack(fill="x", padx=5, pady=5)
+        
+        load_file_button = ttk.Button(wf_control_frame, text="Load from File", command=self.load_waveform_action)
+        load_file_button.pack(side="left")
 
         # Matplotlib Graph
         fig = Figure(figsize=(5, 4), dpi=100)
@@ -196,7 +213,9 @@ class Application(tk.Frame):
         if key == keyboard.Key.f12:
             print("F12 pressed, triggering manual save.")
             # GUI에서 직접 처리하는 대신 워커 스레드에 작업을 요청합니다.
-            self.task_queue.put(('manual_save', {}))
+            # Get the save name from the GUI thread and pass it to the worker
+            save_name = self.manual_save_name.get()
+            self.task_queue.put(('manual_save', {'save_name': save_name}))
         
     def worker_loop(self):
         """ This loop runs in a background thread to handle long-running tasks. """
@@ -204,7 +223,17 @@ class Application(tk.Frame):
             try:
                 task_name, kwargs = self.task_queue.get()
                 
-                if task_name == 'connect_db':
+                if task_name == 'find_scopes':
+                    scopes_found = self.scope_controller.list_devices()
+                    self.gui_queue.put(('update_scope_list', {'scopes': scopes_found}))
+
+                elif task_name == 'connect_scope':
+                    identifier = kwargs.get('identifier')
+                    is_connected = self.scope_controller.connect(identifier)
+                    # We can add more GUI feedback here
+                    self.gui_queue.put(('log', {'level': 'INFO' if is_connected else 'ERROR', 'msg': f"Connection to {identifier}: {'OK' if is_connected else 'Failed'}"}))
+                
+                elif task_name == 'connect_db':
                     is_connected = self.vest_db.connect()
                     self.gui_queue.put(('db_status_update', {'connected': is_connected}))
                 
@@ -214,12 +243,42 @@ class Application(tk.Frame):
                         self.gui_queue.put(('shot_num_update', {'shot_num': shot_num}))
 
                 elif task_name == 'manual_save':
-                    # GUI에서 직접 가져오면 스레드 충돌이 날 수 있으므로, kwargs로 전달받아야 함
                     save_name = kwargs.get('save_name')
-                    # scope 객체도 안전하게 가져와야 함
-                    # self.scope1.save_all_channels_to_file(save_name, 'path')
-                    print(f"Worker: Pretending to save with name {save_name}")
-                    self.gui_queue.put(('log', {'level': 'INFO', 'msg': f"Manual save '{save_name}' triggered."}))
+                    if not save_name:
+                        self.gui_queue.put(('log', {'level': 'WARN', 'msg': "Manual save failed: Save name cannot be empty."}))
+                        continue
+
+                    self.gui_queue.put(('log', {'level': 'INFO', 'msg': f"Starting manual save for '{save_name}'..."}))
+                    
+                    # For simplicity, we save CH1. This could be configurable in the GUI.
+                    channel_to_save = "CH1"
+                    waveform_data = self.scope_controller.get_waveform_data(channel=channel_to_save)
+
+                    if waveform_data:
+                        time_data, voltage_data = waveform_data
+                        # Define a save directory
+                        save_dir = "data" # Or get this from a config file/GUI
+                        filename = f"{save_name}_{channel_to_save}.csv"
+                        filepath = os.path.join(save_dir, filename)
+                        
+                        # Use the new file_io function
+                        save_waveform_to_csv(filepath, time_data, voltage_data, channel_name=channel_to_save)
+                        
+                        self.gui_queue.put(('log', {'level': 'INFO', 'msg': f"Successfully saved waveform to {filepath}"}))
+                        # Also plot the newly saved data
+                        self.gui_queue.put(('plot_update', {'time': time_data, 'voltage': voltage_data}))
+                    else:
+                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to get waveform data for manual save."}))
+
+                elif task_name == 'read_and_plot_file':
+                    filepath = kwargs.get('filepath')
+                    self.gui_queue.put(('log', {'level': 'INFO', 'msg': f"Reading file: {filepath}"}))
+                    time_data, voltage_data = read_waveform_file(filepath)
+                    if time_data is not None:
+                        # Send data to GUI thread for plotting
+                        self.gui_queue.put(('plot_update', {'time': time_data, 'voltage': voltage_data}))
+                    else:
+                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to read waveform from {os.path.basename(filepath)}"}))
 
                 # 여기에 다른 task들 (e.g., 'start_monitoring', 'stop_monitoring')을 추가
                 
@@ -234,7 +293,13 @@ class Application(tk.Frame):
             while True:
                 task_name, kwargs = self.gui_queue.get_nowait()
                 
-                if task_name == 'db_status_update':
+                if task_name == 'update_scope_list':
+                    scopes = kwargs.get('scopes', [])
+                    # Assuming you have dropdowns named self.scope1_dropdown etc.
+                    self.scope1_dropdown['values'] = scopes
+                    # self.scope2_dropdown['values'] = scopes # If you have a second one
+
+                elif task_name == 'db_status_update':
                     is_connected = kwargs.get('connected')
                     color = "green" if is_connected else "red"
                     self.db_status_light.config(fg=color)
@@ -246,6 +311,11 @@ class Application(tk.Frame):
                     
                 elif task_name == 'log':
                     self.log_message(kwargs.get('msg'), kwargs.get('level'))
+                
+                elif task_name == 'plot_update':
+                    t = kwargs.get('time')
+                    v = kwargs.get('voltage')
+                    self.plot_data(t, v)
                 
         except queue.Empty:
             pass
@@ -273,4 +343,35 @@ class Application(tk.Frame):
         self.log_area.configure(state='normal')
         self.log_area.insert(tk.END, log_entry)
         self.log_area.configure(state='disabled')
-        self.log_area.see(tk.END) 
+        self.log_area.see(tk.END)
+
+    def plot_data(self, time_data, voltage_data):
+        """Helper function to plot data on the matplotlib canvas."""
+        if time_data is not None and voltage_data is not None:
+            self.ax.clear()
+            self.ax.plot(time_data, voltage_data)
+            self.ax.grid(True)
+            self.ax.set_xlabel("Time (s)")
+            self.ax.set_ylabel("Voltage (V)")
+            self.ax.figure.canvas.draw()
+            self.log_message(f"Plotted waveform with {len(time_data)} points.")
+        else:
+            self.log_message("Failed to plot data.", "WARN")
+
+    def load_waveform_action(self):
+        """Action for the 'Load from File' button."""
+        filepath = filedialog.askopenfilename(
+            title="Select a Waveform File",
+            filetypes=[
+                ("CSV Files", "*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+        if filepath:
+            self.task_queue.put(('read_and_plot_file', {'filepath': filepath})) 
+
+    def connect_scope1_action(self, event):
+        """Action when a scope is selected from the first dropdown."""
+        selected_identifier = self.selected_scope1_id.get()
+        if selected_identifier:
+            self.task_queue.put(('connect_scope', {'identifier': selected_identifier})) 

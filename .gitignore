@@ -211,9 +211,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Custom configuration files
-ifi/config.ini
-
 ### Python Patch ###
 # Poetry local configuration file - https://python-poetry.org/docs/configuration/#local-configuration
 poetry.toml
@@ -249,5 +246,20 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+# Custom configuration files and custom data files
+
+# config.ini is a custom configuration file for the ifi package
+# examples is a folder containing examples of how to use the ifi package
+# under_dev is a folder containing code that is under development
+# results is a folder containing results of the ifi package
+# logs is a folder containing logs of the ifi package
+# cache is a folder containing cached data of the ifi package
+ifi/config.ini  
+ifi/examples/
+ifi/under_dev/
+ifi/results/
+logs/
+cache/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,linux

@@ -1,167 +1,129 @@
-import pyvisa as visa
-import time
+import logging
+from typing import Optional, Union
+
 import numpy as np
+from tm_devices import DeviceManager
+from tm_devices.drivers import MDO3, MSO5
+from tm_devices.helpers import PYVISA_PY_BACKEND
 
-class TektronixScope:
+LOGGER = logging.getLogger(__name__)
+
+
+# By creating a type alias for the supported scope models,
+# it is easy to refer to the collection of Tektronix scope device classes.
+Scope = Union[MDO3, MSO5]
+
+
+class TekScopeController:
     """
-    A class to control a Tektronix MDO3000 series oscilloscope via VISA.
-    Enhanced with features inspired by community repositories.
+    A controller class for Tektronix scopes using the tm-devices library.
+
+    This class simplifies interaction with the scope by wrapping the
+    powerful tm-devices library. It handles device discovery, connection,
+    and data acquisition.
     """
-    def __init__(self, resource_string: str):
-        """
-        Initializes the VISA resource manager and sets the resource string.
 
-        :param resource_string: The VISA resource string for the oscilloscope.
-        """
-        self.resource_string = resource_string
-        self.rm = visa.ResourceManager()
-        self.instrument = None
+    def __init__(self):
+        """Initializes the TekScopeController."""
+        with DeviceManager(verbose=True) as device_manager:
+            self.dm = device_manager
+         
+        # Enable resetting the devices when connecting and closing
+        self.dm.setup_cleanup_enabled = True
+        self.dm.teardown_cleanup_enabled = True
+        # Use the PyVISA-py backend
+        self.dm.visa_library = PYVISA_PY_BACKEND
 
-    @staticmethod
-    def find_scopes() -> list[str]:
-        """
-        Finds all connected Tektronix instruments.
-        :return: A list of VISA resource strings.
-        """
-        try:
-            rm = visa.ResourceManager()
-            resources = rm.list_resources()
-            # Tektronix Vendor ID is 0x0699
-            tek_scopes = [r for r in resources if '0x0699' in r]
-            return tek_scopes
-        except Exception:
-            return []
+        # self.scope: Optional[ ] = None
 
-    def connect(self):
+    def list_devices(self) -> list[str]:
         """
-        Connects to the oscilloscope.
-        Raises:
-            visa.errors.VisaIOError: If connection fails.
-        """
-        self.instrument = self.rm.open_resource(self.resource_string)
-        self.instrument.timeout = 20000  # Increased timeout for longer operations
-        # Clear the event status register and queue
-        self.instrument.write('*CLS')
-        # Set response header to off for cleaner query results
-        self.instrument.write('HEADER OFF')
+        Return a list of all discovered device strings.
         
-    def disconnect(self):
+        The string contains information like model and serial number, 
+        suitable for display in a GUI.
         """
-        Disconnects from the oscilloscope.
-        """
-        if self.instrument:
-            self.instrument.close()
-            self.instrument = None
+        # The DeviceManager's __str__ representation is a good summary.
+        # Here we create a list of identifiers for each device.
+        return [f"{dev.model} - {dev.serial}" for dev in self.dm.devices]
 
-    def get_id(self) -> str:
+    def connect(self, device_identifier: str) -> bool:
         """
-        Queries the oscilloscope's identification string.
-        :return: The identification string.
+        Connects to a specific scope using its identifier string.
+
+        Args:
+            device_identifier: The identifier string from the list_devices() method.
+
+        Returns:
+            True if connection is successful, False otherwise.
         """
-        return self.instrument.query('*IDN?').strip()
+        # The identifier is in "MODEL - SERIAL" format. We need the serial.
+        try:
+            serial = device_identifier.split(' - ')[1]
+            self.scope = self.dm.get_device(serial=serial)
+            # Setting the scope object to none if it is not a scope.
+            if not hasattr(self.scope, "idn_string") or self.scope.idn_string is None:
+                LOGGER.error("Device is not found or does not have an identification string.")
+                self.scope = None
+                raise TypeError("Device is not a Scope")
+            if not isinstance(self.scope, (MDO3, MSO5)):
+                if self.scope.idn_string is not None:
+                    LOGGER.error(f"Device is not a Scope: {self.scope.idn_string}")
+                self.scope = None
+                raise TypeError("Device is not a Scope")
+            
+            LOGGER.info(f"Successfully connected to: {self.scope.idn_string}")
+            return True
+        except (IndexError, KeyError, TypeError) as e:
+            LOGGER.error(f"Failed to connect to {device_identifier}: {e}")
+            self.scope = None
+            return False
+
+    def disconnect(self):
+        """Disconnects from the currently connected scope."""
+        if self.scope:
+            LOGGER.info(f"Disconnecting from {self.scope.device_name}")
+            self.scope.close()
+            self.scope = None
+        # self.dm.close_all_devices() # Use this for a full cleanup
+
+    def get_idn(self) -> str:
+        """Returns the identification string of the connected scope."""
+        return self.scope.idn_string if self.scope else "Not connected"
 
     def get_trigger_state(self) -> str:
-        """
-        Gets the current state of the trigger system.
-        Common states: READY, TRIGGER, SAVE, ARMED
-        :return: The trigger state string.
-        """
-        return self.instrument.query('TRIGger:STATE?').strip()
+        """Gets the current state of the trigger system."""
+        return self.scope.trigger.state if self.scope else "UNKNOWN"
 
-    def set_usb_drive(self, drive_letter: str = "E:"):
+    def get_waveform_data(self, channel: str = " ") -> Optional[tuple[np.ndarray, np.ndarray]]:
         """
-        Sets the current working directory to the specified USB drive.
-        :param drive_letter: The drive letter of the USB port (e.g., "E:").
-        """
-        self.instrument.write(f'FILESYSTEM:CWD "{drive_letter}/"')
+        Acquires waveform data from the specified channel using high-level tm-devices methods.
 
-    def list_files(self, extension: str = ".wfm") -> list[str]:
-        """
-        Lists files with a specific extension in the current directory.
-        :param extension: The file extension to filter by (e.g., ".wfm").
-        :return: A list of filenames.
-        """
-        files_str = self.instrument.query('FILESYSTEM:LDIR?')
-        # The output is a comma-separated string, sometimes with quotes.
-        # This parsing needs to be robust based on the actual scope output.
-        files = [f.strip('"') for f in files_str.strip().split(',') if f.lower().endswith(extension)]
-        return files
+        This method leverages the library's internal logic to handle data scaling and formatting.
 
-    def recall_waveform(self, filename: str, ref_channel: str = "REF1"):
-        """
-        Recalls a waveform file from the USB drive to a reference channel.
-        :param filename: The name of the file on the USB drive.
-        :param ref_channel: The reference channel to load into (e.g., "REF1").
-        """
-        # Assuming the CWD is already set to the USB drive root
-        self.instrument.write(f'RECALL:WAVEFORM "E:/{filename}", {ref_channel}')
-        # Wait for the operation to complete
-        self.instrument.query('*OPC?')
+        Args:
+            channel: The channel to acquire data from (e.g., "CH1").
 
-    def get_waveform_data(self, channel: str = "CH1", start=1, stop=10000) -> tuple | None:
+        Returns:
+            A tuple containing two NumPy arrays (time, voltage), or None on failure.
         """
-        Downloads waveform data and scaling preamble for a specific channel.
-        """
-        try:
-            self.instrument.write(f'DATA:SOURCE {channel}')
-            self.instrument.write('DATA:ENCDG SRIbinary') # Signed, Big-endian binary
-            self.instrument.write(f'DATA:START {start}')
-            record_length = int(self.instrument.query('HORizontal:RECOrdlength?'))
-            self.instrument.write(f'DATA:STOP {record_length}')
-            
-            # Get waveform scaling factors
-            ymult = float(self.instrument.query('WFMOutpre:YMULT?'))
-            yzero = float(self.instrument.query('WFMOutpre:YZERO?'))
-            yoff = float(self.instrument.query('WFMOutpre:YOFF?'))
-            xincr = float(self.instrument.query('WFMOutpre:XINCR?'))
-
-            # Get waveform data
-            raw_data = self.instrument.query_binary_values('CURVE?', datatype='h', is_big_endian=True, container=np.array)
-            
-            # Convert raw data to voltage and time
-            voltage_values = (raw_data - yoff) * ymult + yzero
-            time_values = np.arange(0, xincr * len(voltage_values), xincr)
-            
-            return time_values, voltage_values
-
-        except visa.errors.VisaIOError as e:
-            print(f"Error getting waveform for {channel}: {e}")
+        if not self.scope:
+            LOGGER.error("Cannot get waveform, no scope connected.")
             return None
 
-    def save_all_channels_to_file(self, base_filename: str, save_path: str):
-        """
-        Saves waveform data for all available channels (CH1-4) to separate CSV files.
-        """
-        import os
-        import pandas as pd
+        try:
+            # Use high-level methods to configure the data source and retrieve the waveform.
+            # This is a more realistic representation of how tm-devices works.
+            self.scope.commands.data.source.write(channel)
+            
+            # The waveform object returned by .get() should contain scaled x and y data.
+            waveform = self.scope.commands.curve.get()
+            
+            time_values = waveform.x
+            voltage_values = waveform.y
 
-        for i in range(1, 5):
-            ch = f"CH{i}"
-            data = self.get_waveform_data(ch)
-            if data:
-                time_vals, voltage_vals = data
-                df = pd.DataFrame({'Time (s)': time_vals, 'Voltage (V)': voltage_vals})
-                
-                # Create directory if it doesn't exist
-                if not os.path.exists(save_path):
-                    os.makedirs(save_path)
-                    
-                filename = os.path.join(save_path, f"{base_filename}_{ch}.csv")
-                df.to_csv(filename, index=False)
-                print(f"Saved {filename}")
+            return time_values, voltage_values
 
-    def delete_file(self, filename: str):
-        """
-        Deletes a file from the USB drive.
-        :param filename: The name of the file to delete.
-        """
-        # Assuming the CWD is already set to the USB drive root
-        self.instrument.write(f'FILESYSTEM:DELETE "E:/{filename}"')
-        self.instrument.query('*OPC?')
-
-    def __enter__(self):
-        self.connect()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.disconnect() 
+        except Exception as e:
+            LOGGER.error(f"An unexpected error occurred while getting waveform for {channel}: {e}")
+            return None 
