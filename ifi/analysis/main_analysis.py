@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+import os
+os.environ['NUMBA_DISABLE_CACHE'] = '1'
+
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
