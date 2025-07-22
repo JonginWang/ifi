@@ -604,15 +604,22 @@ class NAS_DB:
             for attempt in range(max_retries):
                 try:
                     cmd = f'python "{remote_script_path}" "{file_path}" {chunk_size} {chunk_id} {skiprows} {has_header_for_remote}'
-                    stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+                    self.logger.info(f"Executing remote chunk command (chunk_id={chunk_id})")
+                    # Add timeout and get_pty for robustness against hangs
+                    stdin, stdout, stderr = self.ssh_client.exec_command(cmd, timeout=60, get_pty=True)
                     
+                    self.logger.info(f"Reading stdout for chunk {chunk_id}...")
                     chunk_data = stdout.read().decode('utf-8', errors='ignore')
+                    self.logger.info(f"Finished reading stdout for chunk {chunk_id}. Bytes received: {len(chunk_data)}")
+
                     err_output = stderr.read().decode('utf-8', errors='ignore').strip()
 
                     if err_output:
+                        self.logger.error(f"Remote script stderr for chunk {chunk_id}: {err_output}")
                         raise IOError(err_output)
                     
                     if not chunk_data: # No more data
+                        self.logger.info(f"Chunk {chunk_id} is empty. Assuming end of file.")
                         success = True
                         break
 
@@ -754,6 +761,7 @@ class NAS_DB:
                 continue
         
         try:
+            local_skiprows = header_len
             read_target = file_path
             if self.access_mode == 'remote':
                  read_target = self._fetch_remote_file_chunked(
@@ -764,10 +772,11 @@ class NAS_DB:
                     skipfooter=0
                 )
                  if read_target is None: return None
+                 local_skiprows = 0 # We've already skipped rows remotely
 
             df = pd.read_csv(
                 read_target,
-                skiprows=header_len,
+                skiprows=local_skiprows,
                 header=None,
                 encoding_errors='ignore',
                 engine='python',
@@ -824,6 +833,7 @@ class NAS_DB:
 
         # 2. Read the actual data using pandas, skipping to the data section
         try:
+            local_skiprows = header_row_index
             read_target = file_path
             if self.access_mode == 'remote':
                 read_target = self._fetch_remote_file_chunked(
@@ -831,10 +841,11 @@ class NAS_DB:
                     skiprows=header_row_index
                 )
                 if read_target is None: return None
+                local_skiprows = 0 # We've already skipped rows remotely
 
             df = pd.read_csv(
                 read_target,
-                skiprows=header_row_index,
+                skiprows=local_skiprows,
                 encoding='utf-8',
                 on_bad_lines='warn',
                 low_memory=False,
