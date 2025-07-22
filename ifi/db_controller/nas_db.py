@@ -11,36 +11,37 @@ from typing import Dict, List, Union, Set
 import h5py
 import re
 import tempfile
+from stat import S_ISDIR
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
 ALLOWED_EXTENSIONS = ['.csv', '.dat', '.mat', '.isf', '.wfm']
 
-# This script finds files and returns a newline-separated list.
-# It now accepts multiple patterns separated by spaces.
-REMOTE_LIST_SCRIPT = r"""
-import sys
-import os
-import glob
-def find_files(base_path_str, patterns_str):
-    base_paths = base_path_str.split(';')
-    patterns = patterns_str.split(' ')
-    all_file_paths = set()
-    for base_path in base_paths:
-        for pattern in patterns:
-            search_pattern = os.path.join(base_path, '**', pattern)
-            file_paths = glob.glob(search_pattern, recursive=True)
-            all_file_paths.update(file_paths)
-    
-    sorted_paths = sorted(list(all_file_paths))
-    for path in sorted_paths:
-        print(path)
-
-if __name__ == "__main__":
-    base_path_str = sys.argv[1]
-    patterns_str = sys.argv[2]
-    find_files(base_path_str, patterns_str)
-"""
+# # This script finds files and returns a newline-separated list.
+# # It now accepts multiple patterns separated by spaces.
+# REMOTE_LIST_SCRIPT = r"""
+# import sys
+# import os
+# import glob
+# def find_files(base_path_str, patterns_str):
+#     base_paths = base_path_str.split(';')
+#     patterns = patterns_str.split(' ')
+#     all_file_paths = set()
+#     for base_path in base_paths:
+#         for pattern in patterns:
+#             search_pattern = os.path.join(base_path, '**', pattern)
+#             file_paths = glob.glob(search_pattern, recursive=True)
+#             all_file_paths.update(file_paths)
+#   
+#     sorted_paths = sorted(list(all_file_paths))
+#     for path in sorted_paths:
+#         print(path)
+#
+# if __name__ == "__main__":
+#     base_path_str = sys.argv[1]
+#     patterns_str = sys.argv[2]
+#     find_files(base_path_str, patterns_str)
+# """
 
 # This script will be written to the remote machine to read the top N lines of a file.
 REMOTE_HEAD_SCRIPT = r"""
@@ -163,7 +164,8 @@ class NAS_DB:
                 self.sftp_client = self.ssh_client.open_sftp()
                 self.logger.info(f"SSH connection to {self.ssh_host} successful.")
                 
-                self._authenticate_nas_remote()
+                # No longer needed with SFTP-based file searching
+                # self._authenticate_nas_remote() 
                 return True
 
             except Exception as e:
@@ -178,7 +180,8 @@ class NAS_DB:
 
     def _authenticate_nas_remote(self):
         """
-        Runs 'net use' on the remote machine to authenticate with the NAS.
+        [DEPRECATED] Runs 'net use' on the remote machine to authenticate with the NAS.
+        This is no longer needed with a pure SFTP approach.
         """
         auth_cmd = f'net use "{self.nas_path}" /user:{self.nas_user} {self.nas_password} /persistent:no'
         self.logger.info("Authenticating to NAS on remote machine.")
@@ -253,7 +256,8 @@ class NAS_DB:
                     found = glob.glob(search_path, recursive=True)
                     all_files.update(found)
         else: # remote access
-            all_found_paths = self._find_files_remote(data_folders, search_patterns)
+            # all_found_paths = self._find_files_remote(data_folders, search_patterns)
+            all_found_paths = self._find_files_remote_sftp(data_folders, search_patterns)
             all_files.update(all_found_paths)
 
         sorted_files = sorted(list(all_files))
@@ -284,7 +288,6 @@ class NAS_DB:
     def _find_files_remote(self, data_folders: List[str], patterns: List[str]) -> List[str]:
         """ Executes a single remote script to find files across multiple folders and patterns. """
         patterns_str = ' '.join(patterns)
-
         # Combine all search folders into a single semicolon-separated string
         search_paths = [os.path.join(self.nas_path, folder).replace('\\', '/') for folder in data_folders]
         search_paths_str = ';'.join(search_paths)
@@ -305,12 +308,60 @@ class NAS_DB:
         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
 
         files = stdout.read().decode('utf-8').strip().splitlines()
-        
+
         err_output = stderr.read().decode('utf-8', errors='ignore').strip()
         if err_output:
             self.logger.error(f"Remote list script error: {err_output}")
     
         return files
+
+    def _sftp_walk(self, remote_path):
+        """
+        A generator that yields (dirpath, dirnames, filenames) for a remote path,
+        similar to os.walk().
+        """
+        try:
+            items = self.sftp_client.listdir_attr(remote_path)
+        except (FileNotFoundError, IOError) as e:
+            self.logger.warning(f"Cannot access remote path '{remote_path}': {e}. Skipping.")
+            return
+
+        dirs, files = [], []
+        for attr in items:
+            if S_ISDIR(attr.st_mode):
+                dirs.append(attr.filename)
+            else:
+                files.append(attr.filename)
+        
+        yield remote_path, dirs, files
+
+        for d in dirs:
+            new_path = f"{remote_path}/{d}" if not remote_path.endswith('/') else f"{remote_path}{d}"
+            yield from self._sftp_walk(new_path)
+
+    def _find_files_remote_sftp(self, data_folders: List[str], patterns: List[str]) -> List[str]:
+        """
+        Finds files on a remote server using a pure SFTP walk, avoiding remote command execution.
+        """
+        import fnmatch
+
+        all_found = set()
+        base_remote_path = self.nas_path.replace('\\', '/')
+
+        for folder in data_folders:
+            # Construct the full path to search on the remote server
+            folder_normalized = folder.replace('\\', '/')
+            start_path = f"{base_remote_path}/{folder_normalized}"
+            self.logger.info(f"Starting SFTP search in: {start_path}")
+            
+            for dirpath, _, filenames in self._sftp_walk(start_path):
+                for pattern in patterns:
+                    for filename in fnmatch.filter(filenames, pattern):
+                        full_path = f"{dirpath}/{filename}"
+                        all_found.add(full_path)
+        
+        return list(all_found)
+
 
     def _get_files_total_size(self, file_list: List[str]) -> int:
         """Calculates the total size of a list of files in bytes."""
