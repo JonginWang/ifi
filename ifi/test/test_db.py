@@ -126,12 +126,15 @@ def run_vest_db_test():
             if existence > 0:
                 logging.info(f"  -> SUCCESS: Shot found in table (shotDataWaveform_{existence}).")
                 logging.info("\nAttempting to load data...")
-                result = db.load_shot(VEST_SHOT_TO_TEST, VEST_FIELD_TO_TEST)
+                result_df = db.load_shot(VEST_SHOT_TO_TEST, [VEST_FIELD_TO_TEST])
                 
-                if result:
-                    time_array, data_array = result
+                if not result_df.empty:
                     logging.info("  -> SUCCESS: VEST data loaded.")
-                    logging.info(f"     Time array shape: {time_array.shape}, Data array shape: {data_array.shape}")
+                    logging.info(f"     DataFrame shape: {result_df.shape}")
+                    logging.info(f"     Columns: {result_df.columns.tolist()}")
+                    print("--- Head of DataFrame ---")
+                    print(result_df.head())
+                    print("-------------------------")
                 else:
                     logging.error("  -> FAILED: Could not load VEST data.")
             else:
@@ -146,5 +149,5 @@ def run_vest_db_test():
 
 
 if __name__ == '__main__':
-    # run_nas_db_test()
+    run_nas_db_test()
     run_vest_db_test() 
