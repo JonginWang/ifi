@@ -68,7 +68,8 @@ def run_nas_db_test():
                 return
 
             # Verify cache file creation
-            expected_cache_file = os.path.join(CACHE_FOLDER, f'{SHOT_TO_TEST}.h5')
+            cache_dir = os.path.join(CACHE_FOLDER, str(SHOT_TO_TEST))
+            expected_cache_file = os.path.join(cache_dir, f'{SHOT_TO_TEST}.h5')
             if os.path.exists(expected_cache_file):
                 logging.info(f"   -> SUCCESS: Cache file created at '{expected_cache_file}'")
             else:

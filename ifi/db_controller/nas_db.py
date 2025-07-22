@@ -436,9 +436,11 @@ class NAS_DB:
                     cache_file = os.path.join(cache_dir, f'{shot_num_for_cache}.h5')
                     
                     os.makedirs(cache_dir, exist_ok=True)
-                    key = basename.replace(os.path.sep, '_')
+                    # Sanitize the basename to be a valid HDF5 key
+                    key = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
                     self.logger.info(f"Caching '{basename}' to '{cache_file}' with key '{key}'")
-                    df.to_hdf(cache_file, key, mode='a', format='table', complevel=5, complib='zlib')
+                    # Use keyword arguments for to_hdf for future compatibility with pandas 3.0
+                    df.to_hdf(path_or_buf=cache_file, key=key, mode='a', format='table', complevel=5, complib='zlib')
                 else:
                     self.logger.warning(f"Could not determine shot number for '{basename}'. Skipping cache.")
 
@@ -625,11 +627,24 @@ class NAS_DB:
         self.logger.info(f"Parsing as MSO58: {file_path}")
         
         metadata = {}
-        header_len = 24 # MSO58 typically has a 24-line header
+        data_start_line = -1
 
-        for line in header_content:
+        # 1. Dynamically find where the data starts
+        for i, line in enumerate(header_content):
+            line = line.strip()
+            if not line: continue # Skip empty lines
+            
+            parts = line.split(',')
             try:
-                parts = line.strip().split(',')
+                # A data line should consist of comma-separated values that can be converted to float.
+                # We check the first few parts to be sure.
+                _ = [float(p) for p in parts[:min(5, len(parts))] if p.strip()]
+                # If we succeed, this is the first data line.
+                data_start_line = i
+                self.logger.info(f"Dynamically detected MSO58 data start at line: {data_start_line}")
+                break
+            except (ValueError, IndexError):
+                # This is not a data line, so parse it for metadata.
                 if len(parts) > 1:
                     key = parts[0].strip()
                     val = parts[1].strip()
@@ -637,9 +652,11 @@ class NAS_DB:
                         metadata['record_length'] = int(val)
                     elif 'Sample Interval' in key:
                         metadata['time_resolution'] = float(val)
-            except (ValueError, IndexError):
-                continue
         
+        if data_start_line == -1:
+            self.logger.error(f"Could not dynamically determine the start of data for MSO58 file: {file_path}")
+            return None
+
         read_target = file_path
         sftp_file = None
         try:
@@ -650,7 +667,7 @@ class NAS_DB:
 
             df = pd.read_csv(
                 read_target,
-                skiprows=header_len,
+                skiprows=data_start_line,
                 header=None,
                 encoding_errors='ignore',
                 engine='python',
