@@ -144,6 +144,25 @@ class NAS_DB:
         self.access_mode = None  # 'local' or 'remote'
         self._file_cache = {} # Cache for file paths for find_files method
 
+    def _ensure_remote_dir_exists(self, remote_path: str):
+        """
+        Ensures a directory exists on the remote server using SFTP.
+        """
+        if self.access_mode != 'remote' or not self.sftp_client:
+            return
+
+        try:
+            # Check if the path exists and is a directory
+            self.sftp_client.stat(remote_path)
+        except FileNotFoundError:
+            # If it doesn't exist, create it
+            self.logger.info(f"Remote directory '{remote_path}' not found. Creating it.")
+            self.sftp_client.mkdir(remote_path)
+        except Exception as e:
+            self.logger.error(f"Could not check or create remote directory '{remote_path}': {e}")
+            # Depending on the desired robustness, you might want to raise this exception
+            raise
+
     def connect(self):
         """
         Establishes connection. Checks for local access first, then SSH.
@@ -272,6 +291,9 @@ class NAS_DB:
         """ Executes remote script to find files using multiple patterns. """
         all_remote_files = []
         patterns_str = ' '.join(patterns) # Pass patterns as a single space-separated string
+
+        # Ensure the remote temp directory exists before trying to write to it
+        self._ensure_remote_dir_exists(self.remote_temp_dir)
 
         for folder in data_folders:
             search_path = os.path.join(self.nas_path, folder).replace('\\', '/')
@@ -523,6 +545,7 @@ class NAS_DB:
         self.logger.info(f"Fetching remote file '{os.path.basename(file_path)}' with chunked retries.")
         
         # 1. Deploy the chunk reader script
+        self._ensure_remote_dir_exists(self.remote_temp_dir)
         remote_script_path = os.path.join(self.remote_temp_dir, f'chunk_reader_{int(time.time())}.py').replace('\\', '/')
         try:
             with self.sftp_client.open(remote_script_path, 'w') as f:
@@ -883,6 +906,7 @@ class NAS_DB:
         self.logger.info(f"Reading top {lines} lines from remote file...")
 
         # 1. Write the head script to a remote temp file
+        self._ensure_remote_dir_exists(self.remote_temp_dir)
         remote_script_path = os.path.join(self.remote_temp_dir, f'head_{int(time.time())}.py').replace('\\', '/')
         try:
             with self.sftp_client.open(remote_script_path, 'w') as f:

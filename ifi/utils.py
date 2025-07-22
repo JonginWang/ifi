@@ -3,6 +3,7 @@ import os
 import functools
 import numpy as np
 from typing import Callable
+import logging
 
 def resource_path(relative_path: str) -> str:
     """
@@ -59,3 +60,13 @@ def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:
             return func(self, *args, **injected_kwargs, **kwargs)
         return wrapper
     return decorator
+
+
+def ensure_dir_exists(path: str):
+    """
+    Ensures that a directory exists at the given path.
+    If the directory does not exist, it is created.
+    """
+    if not os.path.exists(path):
+        os.makedirs(path)
+        logging.info(f"Created directory: {path}")
