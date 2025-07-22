@@ -438,6 +438,8 @@ class NAS_DB:
                     os.makedirs(cache_dir, exist_ok=True)
                     # Sanitize the basename to be a valid HDF5 key
                     key = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
+                    if key and not key[0].isalpha() and not key.startswith('_'):
+                        key = '_' + key
                     self.logger.info(f"Caching '{basename}' to '{cache_file}' with key '{key}'")
                     # Use keyword arguments for to_hdf for future compatibility with pandas 3.0
                     df.to_hdf(path_or_buf=cache_file, key=key, mode='a', format='table', complevel=5, complib='zlib')
@@ -627,24 +629,13 @@ class NAS_DB:
         self.logger.info(f"Parsing as MSO58: {file_path}")
         
         metadata = {}
-        data_start_line = -1
+        header_row_index = -1
 
-        # 1. Dynamically find where the data starts
+        # 1. Dynamically find the header row, similar to _parse_standard_csv
         for i, line in enumerate(header_content):
-            line = line.strip()
-            if not line: continue # Skip empty lines
-            
-            parts = line.split(',')
+            # Parse metadata from any line
             try:
-                # A data line should consist of comma-separated values that can be converted to float.
-                # We check the first few parts to be sure.
-                _ = [float(p) for p in parts[:min(5, len(parts))] if p.strip()]
-                # If we succeed, this is the first data line.
-                data_start_line = i
-                self.logger.info(f"Dynamically detected MSO58 data start at line: {data_start_line}")
-                break
-            except (ValueError, IndexError):
-                # This is not a data line, so parse it for metadata.
+                parts = line.strip().split(',')
                 if len(parts) > 1:
                     key = parts[0].strip()
                     val = parts[1].strip()
@@ -652,9 +643,17 @@ class NAS_DB:
                         metadata['record_length'] = int(val)
                     elif 'Sample Interval' in key:
                         metadata['time_resolution'] = float(val)
+            except (ValueError, IndexError):
+                pass # Ignore lines that can't be parsed for metadata
+
+            # Find the actual header row
+            if 'TIME' in line.upper() and 'CH' in line.upper():
+                header_row_index = i
+                self.logger.info(f"Dynamically detected MSO58 header at line: {header_row_index}")
+                break
         
-        if data_start_line == -1:
-            self.logger.error(f"Could not dynamically determine the start of data for MSO58 file: {file_path}")
+        if header_row_index == -1:
+            self.logger.error(f"Could not dynamically determine the header row for MSO58 file: {file_path}")
             return None
 
         read_target = file_path
@@ -667,16 +666,15 @@ class NAS_DB:
 
             df = pd.read_csv(
                 read_target,
-                skiprows=data_start_line,
-                header=None,
+                skiprows=header_row_index,
+                header=0, # Use the found line as the header
                 encoding_errors='ignore',
                 engine='python',
                 skipfooter=0
             )
 
-            # Manually assign column names
-            num_cols = len(df.columns)
-            df.columns = ['TIME'] + [f'CH{i+1}' for i in range(num_cols - 1)]
+            # Clean up column names that may have been read with extra spaces
+            df.columns = df.columns.str.strip()
 
             # Verification log
             actual_len = len(df)

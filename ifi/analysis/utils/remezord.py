@@ -5,7 +5,7 @@ from numpy import atleast_1d, poly, polyval, roots, real, asarray, allclose, \
     cos, exp, cosh, arccosh, ceil, conjugate, zeros, sinh, hstack, mod
 from numpy import mintypecode
 from scipy import special, optimize
-# from scipy.misc import comb
+from scipy.special import comb
 import string, types
  
 abs = absolute

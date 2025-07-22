@@ -14,6 +14,8 @@ from typing import List, Union
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import dask
+from dask import delayed
 
 
 # Set a project-local cache directory for numba to avoid permission errors.
@@ -30,6 +32,58 @@ from ifi.analysis.plots import plot_cwt
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+@dask.delayed
+def load_and_process_file(nas_instance, file_path, args):
+    """
+    Loads a single file using the NAS_DB instance, then processes it
+    through refining, offset removal, and STFT analysis.
+    This function is designed to be run in parallel by Dask.
+    """
+    logging.info(f"Starting processing for: {os.path.basename(file_path)}")
+    
+    # 1. Read single file data
+    # We call the internal _read_shot_file method directly.
+    df_raw = nas_instance._read_shot_file(file_path)
+    if df_raw is None:
+        logging.warning(f"Failed to read {file_path}. Skipping.")
+        return None
+
+    # 2. Refine data
+    df_refined = processing.refine_data(df_raw)
+
+    # 3. Remove offset
+    if not args.no_offset_removal:
+        df_processed = processing.remove_offset(df_refined, window_size=args.offset_window)
+    else:
+        df_processed = df_refined
+    
+    # 4. Perform STFT analysis if requested
+    stft_result = None
+    if args.stft:
+        analyzer = spectrum.SpectrumAnalysis()
+        all_data_cols = [col for col in df_processed.columns if col != 'TIME']
+        
+        cols_to_analyze_indices = range(len(all_data_cols))
+        if args.stft_cols is not None:
+            cols_to_analyze_indices = args.stft_cols
+
+        fs = 1 / df_processed['TIME'].diff().mean()
+        
+        stft_result_for_file = {}
+        for col_idx in cols_to_analyze_indices:
+            if col_idx < 0 or col_idx >= len(all_data_cols):
+                continue
+            col_name = all_data_cols[col_idx]
+            signal = df_processed[col_name].to_numpy()
+            f, t, Zxx = analyzer.compute_stft(signal, fs)
+            stft_result_for_file[col_name] = {'f': f, 't': t, 'Zxx': Zxx}
+        
+        stft_result = {file_path: stft_result_for_file}
+
+    # Return a tuple of the processed data and any analysis results
+    return file_path, df_processed, stft_result
+
 
 def main():
     """Main function to run the analysis pipeline."""
@@ -143,6 +197,13 @@ def main():
         default=None,
         help="Perform baseline correction on density data. Modes: 'ip' (uses plasma current ramp-up), 'trig' (uses fixed time window)."
     )
+    parser.add_argument(
+        "--scheduler",
+        type=str,
+        default='threads',
+        choices=['threads', 'processes', 'single-threaded'],
+        help="Dask scheduler to use for parallel processing."
+    )
 
     args = parser.parse_args()
 
@@ -161,66 +222,51 @@ def main():
     logging.info(f"Query: {processed_query}, Folders: {data_folders_list}, Results Dir: {args.results_dir}")
 
     # --- Main Analysis Steps ---
-
-    # 1. Load data using NAS_DB with the specified results/cache directory
     try:
-        nas = NAS_DB(config_path='ifi/config.ini')
-        
-        # Override the default dumping_folder with the one from arguments
-        nas.dumping_folder = args.results_dir
-        os.makedirs(nas.dumping_folder, exist_ok=True)
+        with NAS_DB(config_path='ifi/config.ini') as nas:
+            # Override the default dumping_folder with the one from arguments
+            nas.dumping_folder = args.results_dir
+            os.makedirs(nas.dumping_folder, exist_ok=True)
 
-        if not nas.connect():
-            logging.error("Failed to connect to NAS. Aborting.")
-            return
+            if not nas.connect():
+                logging.error("Failed to connect to NAS. Aborting.")
+                return
 
-        logging.info("Loading data...")
-        raw_data = nas.get_shot_data(
-            query=processed_query,
-            data_folders=data_folders_list,
-            force_remote=args.force_remote
-        )
+            logging.info("Finding files...")
+            # Instead of loading all data, just find the file paths first.
+            target_files = nas.find_files(query=processed_query, data_folders=data_folders_list)
 
-        if not raw_data:
-            logging.warning("No data loaded. Exiting.")
-            return
-        
-        logging.info(f"Successfully loaded {len(raw_data)} files.")
-        for i, (filename, df) in enumerate(raw_data.items()):
-            logging.info(f"  [{i+1}] {os.path.basename(filename)} - Shape: {df.shape}")
+            if not target_files:
+                logging.warning("No files found for the given query. Exiting.")
+                return
+
+            logging.info(f"Found {len(target_files)} files to process. Building Dask graph...")
+            
+            # --- Dask Parallel Processing ---
+            # 1. Create a list of delayed tasks
+            tasks = [load_and_process_file(nas, f, args) for f in target_files]
+            
+            # 2. Execute tasks in parallel
+            logging.info(f"Executing {len(tasks)} tasks in parallel using '{args.scheduler}' scheduler...")
+            results = dask.compute(*tasks, scheduler=args.scheduler)
+            
+            # 3. Process results
+            # Filter out None results from failed tasks
+            results = [res for res in results if res is not None]
+            if not results:
+                logging.error("All processing tasks failed. Exiting.")
+                return
+                
+            # Unpack results into separate dictionaries
+            analysis_data = {file_path: df for file_path, df, stft in results}
+            stft_results = {k: v for stft in (res[2] for res in results if res[2] is not None) for k, v in stft.items()}
 
     except FileNotFoundError as e:
         logging.error(f"Configuration file not found: {e}")
         return
     except Exception as e:
-        logging.error(f"An unexpected error occurred during data loading: {e}")
+        logging.error(f"An unexpected error occurred during data loading and processing: {e}", exc_info=True)
         return
-    finally:
-        if 'nas' in locals() and nas.ssh_client:
-            nas.disconnect()
-
-
-    # 2. Refine data (implement_data_refining)
-    logging.info("Refining loaded data...")
-    refined_data = {}
-    for filename, df in raw_data.items():
-        logging.info(f"  Refining {os.path.basename(filename)}...")
-        refined_data[filename] = processing.refine_data(df)
-
-    # 3. Remove offset (implement_offset_removal)
-    if not args.no_offset_removal:
-        logging.info("Removing offset from data...")
-        offset_removed_data = {}
-        for filename, df in refined_data.items():
-            logging.info(f"  Processing {os.path.basename(filename)}...")
-            offset_removed_data[filename] = processing.remove_offset(df, window_size=args.offset_window)
-        
-        # This becomes the primary data for subsequent analysis
-        analysis_data = offset_removed_data
-        logging.info("Offset removal complete. Using offset-removed data for further analysis.")
-    else:
-        analysis_data = refined_data
-        logging.info("Skipping offset removal. Using refined data for further analysis.")
 
     # --- Combine data from multiple files into single dataframes for easier processing ---
     # We will use the time axis from the first file as the reference
@@ -242,43 +288,19 @@ def main():
         return pd.concat(df_list, axis=1)
 
     # Combined dataframes for plotting and further analysis
-    combined_raw_data = combine_dataframes(raw_data)
-    combined_refined_data = combine_dataframes(refined_data)
+    # NOTE: The concept of "raw_data" and "refined_data" is simplified in the Dask workflow
+    # as processing is done in one go. We will use the final 'analysis_data' for combinations.
+    # If raw/refined plots are needed, the delayed function would need to return them.
     combined_analysis_data = combine_dataframes(analysis_data)
 
 
     # 4. Perform frequency analysis
-    stft_results = {}
+    # STFT is now done in parallel within the Dask tasks.
+    # We just need to ensure the results are correctly formatted.
     if args.stft:
-        logging.info("Performing STFT analysis...")
-        analyzer = spectrum.SpectrumAnalysis()
-        
-        for filename, df in analysis_data.items():
-            # Determine which columns to analyze
-            all_data_cols = [col for col in df.columns if col != 'TIME']
-            if args.stft_cols is None:
-                # User did not specify, use all columns
-                cols_to_analyze_indices = range(len(all_data_cols))
-            else:
-                cols_to_analyze_indices = args.stft_cols
-
-            # Calculate sampling frequency
-            fs = 1 / df['TIME'].diff().mean()
-
-            stft_results[filename] = {}
-            for col_idx in cols_to_analyze_indices:
-                if col_idx < 0 or col_idx >= len(all_data_cols):
-                    logging.warning(f"Column index {col_idx} is out of bounds for {filename}. Skipping.")
-                    continue
-                
-                col_name = all_data_cols[col_idx]
-                logging.info(f"  Analyzing {col_name} in {os.path.basename(filename)} (fs={fs/1e6:.2f} MHz)...")
-                
-                signal = df[col_name].to_numpy()
-                f, t, Zxx = analyzer.compute_stft(signal, fs)
-                
-                stft_results[filename][col_name] = {'f': f, 't': t, 'Zxx': Zxx}
-        logging.info("STFT analysis complete.")
+        logging.info("STFT analysis was performed in parallel.")
+    else:
+        stft_results = {}
 
 
     # --- Perform CWT Analysis ---
@@ -484,7 +506,7 @@ def main():
         # Basic signal plots
         if args.plot:
             plots.plot_signals(
-                {"Raw": combined_raw_data, "Processed": combined_analysis_data},
+                {"Raw": combined_analysis_data}, # Use combined_analysis_data for raw data
                 trigger_time=args.trigger_time,
                 downsample=args.downsample,
                 title_prefix=title_prefix

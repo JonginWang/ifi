@@ -21,6 +21,7 @@ pynput==1.8.1  # Requires Python <3.11
 # Data Processing
 numpy==1.26.4
 pandas==2.2.3
+dask==2025.7.0
 
 # Scientific Data Processing
 scipy==1.13.0
