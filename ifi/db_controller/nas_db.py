@@ -39,45 +39,6 @@ if __name__ == "__main__":
     find_files(base_path, patterns_str)
 """
 
-# This script will be written to the remote machine and executed to read a specific chunk of a file.
-REMOTE_CHUNK_READER_SCRIPT = r"""
-import sys
-import os
-import pandas as pd
-
-def read_chunk(file_path, chunk_size, chunk_id, skiprows, has_header):
-    try:
-        # For the first chunk (chunk_id=0), we might need to skip the file's own header lines.
-        # For subsequent chunks, we skip rows based on chunk_id and chunk_size.
-        rows_to_skip = skiprows if chunk_id == 0 else (chunk_id * chunk_size) + skiprows
-
-        df = pd.read_csv(
-            file_path,
-            skiprows=rows_to_skip,
-            nrows=chunk_size,
-            header=None,
-            encoding_errors='ignore',
-            engine='python' # Python engine is more robust for varied line endings and footers
-        )
-        
-        # Only include the header for the very first chunk of the entire stream
-        include_header = (chunk_id == 0 and has_header)
-        df.to_csv(sys.stdout, index=False, header=include_header)
-        
-    except Exception as e:
-        # Send errors to stderr so the main process can catch them
-        print(f"Error reading chunk {chunk_id} from {file_path}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    file_path = sys.argv[1]
-    chunk_size = int(sys.argv[2])
-    chunk_id = int(sys.argv[3])
-    skiprows = int(sys.argv[4])
-    has_header = sys.argv[5].lower() == 'true'
-    read_chunk(file_path, chunk_size, chunk_id, skiprows, has_header)
-"""
-
 # This script will be written to the remote machine to read the top N lines of a file.
 REMOTE_HEAD_SCRIPT = r"""
 import sys
@@ -571,85 +532,6 @@ class NAS_DB:
             
         return 'ETC'
 
-    def _fetch_remote_file_chunked(self, file_path: str, chunk_size: int = 50000, max_retries: int = 3, **pd_read_csv_kwargs) -> StringIO | None:
-        """
-        Fetches a remote file chunk by chunk with a retry mechanism.
-        Returns a StringIO object containing the full file content.
-        """
-        self.logger.info(f"Fetching remote file '{os.path.basename(file_path)}' with chunked retries.")
-        
-        # 1. Deploy the chunk reader script
-        self._ensure_remote_dir_exists(self.remote_temp_dir)
-        remote_script_path = os.path.join(self.remote_temp_dir, f'chunk_reader_{int(time.time())}.py').replace('\\', '/')
-        try:
-            with self.sftp_client.open(remote_script_path, 'w') as f:
-                f.write(REMOTE_CHUNK_READER_SCRIPT)
-        except Exception as e:
-            self.logger.error(f"Failed to write remote chunk reader script: {e}")
-            return None
-
-        # 2. Fetch chunk by chunk
-        full_content_buffer = StringIO()
-        chunk_id = 0
-        
-        # Get skiprows from pandas kwargs, default to 0
-        skiprows = pd_read_csv_kwargs.get('skiprows', 0)
-        # The local pandas call will handle the header, so the remote doesn't need to.
-        # But if we were to reconstruct, we'd need to know if the first chunk has a header.
-        # For now, we assume the final pd.read_csv will handle it.
-        has_header_for_remote = pd_read_csv_kwargs.get('header') is not None
-
-        while True:
-            success = False
-            for attempt in range(max_retries):
-                try:
-                    cmd = f'python "{remote_script_path}" "{file_path}" {chunk_size} {chunk_id} {skiprows} {has_header_for_remote}'
-                    self.logger.info(f"Executing remote chunk command (chunk_id={chunk_id})")
-                    # Add timeout and get_pty for robustness against hangs
-                    stdin, stdout, stderr = self.ssh_client.exec_command(cmd, timeout=60, get_pty=True)
-                    
-                    self.logger.info(f"Reading stdout for chunk {chunk_id}...")
-                    chunk_data = stdout.read().decode('utf-8', errors='ignore')
-                    self.logger.info(f"Finished reading stdout for chunk {chunk_id}. Bytes received: {len(chunk_data)}")
-
-                    err_output = stderr.read().decode('utf-8', errors='ignore').strip()
-
-                    if err_output:
-                        self.logger.error(f"Remote script stderr for chunk {chunk_id}: {err_output}")
-                        raise IOError(err_output)
-                    
-                    if not chunk_data: # No more data
-                        self.logger.info(f"Chunk {chunk_id} is empty. Assuming end of file.")
-                        success = True
-                        break
-
-                    full_content_buffer.write(chunk_data)
-                    success = True
-                    break # Success, break retry loop
-
-                except Exception as e:
-                    self.logger.warning(f"Failed to fetch chunk {chunk_id} for '{os.path.basename(file_path)}' on attempt {attempt + 1}/{max_retries}. Error: {e}")
-                    time.sleep(1) # Wait before retrying
-            
-            if not success:
-                self.logger.error(f"All retries failed for chunk {chunk_id}. Aborting file fetch for '{os.path.basename(file_path)}'.")
-                return None
-            
-            if not chunk_data: # End of file
-                break
-
-            chunk_id += 1
-        
-        # 3. Cleanup remote script
-        try:
-            self.sftp_client.remove(remote_script_path)
-        except Exception as e:
-            self.logger.warning(f"Failed to remove remote script {remote_script_path}: {e}")
-
-        full_content_buffer.seek(0)
-        return full_content_buffer
-
-
     def _parse_mdo3000pc(self, file_path: str, header_content: list[str], **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as MDO3000pc: {file_path}")
         
@@ -701,23 +583,18 @@ class NAS_DB:
             return None
 
         # 3. Read the file with pandas, using the determined indices
+        read_target = file_path
+        sftp_file = None
         try:
             # The actual data starts after the header block (assumed to be 17 lines)
-            
-            read_target = file_path
             if self.access_mode == 'remote':
-                read_target = self._fetch_remote_file_chunked(
-                    file_path, 
-                    skiprows=17, 
-                    header=None, 
-                    usecols=final_data_indices,
-                    on_bad_lines='warn',
-                    encoding_errors='ignore'
-                )
-                if read_target is None: return None
+                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
+                sftp_file = self.sftp_client.open(file_path, 'r')
+                read_target = sftp_file
             
             df = pd.read_csv(
                 read_target,
+                skiprows=17,
                 header=None,
                 usecols=final_data_indices,
                 low_memory=False,
@@ -735,6 +612,9 @@ class NAS_DB:
         except Exception as e:
             self.logger.error(f"Pandas failed to parse MDO3000pc file {file_path}. Error: {e}")
             return None
+        finally:
+            if sftp_file:
+                sftp_file.close()
 
 
     def _parse_mso58(self, file_path: str, header_content: list[str], **kwargs) -> pd.DataFrame | None:
@@ -760,23 +640,17 @@ class NAS_DB:
             except (ValueError, IndexError):
                 continue
         
+        read_target = file_path
+        sftp_file = None
         try:
-            local_skiprows = header_len
-            read_target = file_path
             if self.access_mode == 'remote':
-                 read_target = self._fetch_remote_file_chunked(
-                    file_path,
-                    skiprows=header_len,
-                    header=None,
-                    engine='python',
-                    skipfooter=0
-                )
-                 if read_target is None: return None
-                 local_skiprows = 0 # We've already skipped rows remotely
+                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
+                sftp_file = self.sftp_client.open(file_path, 'r')
+                read_target = sftp_file
 
             df = pd.read_csv(
                 read_target,
-                skiprows=local_skiprows,
+                skiprows=header_len,
                 header=None,
                 encoding_errors='ignore',
                 engine='python',
@@ -799,6 +673,9 @@ class NAS_DB:
         except Exception as e:
             self.logger.error(f"Pandas failed to parse MSO58 file {file_path}. Error: {e}")
             return None
+        finally:
+            if sftp_file:
+                sftp_file.close()
 
     def _parse_standard_csv(self, file_path: str, header_content: list[str], csv_type: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as {csv_type}: {file_path}")
@@ -832,20 +709,17 @@ class NAS_DB:
         self.logger.info(f"Found header at line {header_row_index + 1}. Metadata: {metadata}")
 
         # 2. Read the actual data using pandas, skipping to the data section
+        read_target = file_path
+        sftp_file = None
         try:
-            local_skiprows = header_row_index
-            read_target = file_path
             if self.access_mode == 'remote':
-                read_target = self._fetch_remote_file_chunked(
-                    file_path,
-                    skiprows=header_row_index
-                )
-                if read_target is None: return None
-                local_skiprows = 0 # We've already skipped rows remotely
+                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
+                sftp_file = self.sftp_client.open(file_path, 'r')
+                read_target = sftp_file
 
             df = pd.read_csv(
                 read_target,
-                skiprows=local_skiprows,
+                skiprows=header_row_index,
                 encoding='utf-8',
                 on_bad_lines='warn',
                 low_memory=False,
@@ -861,6 +735,9 @@ class NAS_DB:
         except Exception as e:
             self.logger.error(f"Pandas failed to parse {file_path} with detected header. Error: {e}")
             return None
+        finally:
+            if sftp_file:
+                sftp_file.close()
 
     def _read_fpga_dat(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as FPGA .dat: {file_path}")
