@@ -383,21 +383,35 @@ class NAS_DB:
                 cache_dir = os.path.join(self.dumping_folder, str(shot_num_for_cache))
                 cache_file = os.path.join(cache_dir, f'{shot_num_for_cache}.h5')
                 
+                # --- Start Diagnostic Logging ---
+                self.logger.info(f"[Cache Check] For file: '{basename}'")
+                self.logger.info(f"[Cache Check] Checking for cache file at: '{os.path.abspath(cache_file)}'")
+                
                 if not os.path.exists(cache_file):
+                    self.logger.warning(f"[Cache Check] -> Cache file NOT FOUND.")
                     files_to_fetch.append(file_path)
                     continue
+                
+                self.logger.info(f"[Cache Check] -> Cache file FOUND.")
+                # --- End Diagnostic Logging ---
                 
                 # Sanitize the basename to be a valid HDF5 key, matching the writing logic.
                 key = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
                 if key and not key[0].isalpha() and not key.startswith('_'):
                     key = '_' + key
                 
+                # --- Start Diagnostic Logging ---
+                self.logger.info(f"[Cache Check] Looking for key: '{key}'")
+                # --- End Diagnostic Logging ---
+
                 try:
                     with h5py.File(cache_file, 'r') as f:
                         if key in f:
+                            self.logger.info(f"[Cache Check] -> Key FOUND in cache. Loading from HDF5.")
                             self.logger.info(f"Found '{basename}' in cache: {cache_file}")
                             data_dict[file_path] = pd.read_hdf(cache_file, key)
                         else:
+                            self.logger.warning(f"[Cache Check] -> Key NOT FOUND in cache file. Re-fetching.")
                             files_to_fetch.append(file_path)
                 except Exception as e:
                     self.logger.error(f"Error reading cache file '{cache_file}': {e}. Will refetch.")
