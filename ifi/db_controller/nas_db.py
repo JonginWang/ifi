@@ -10,6 +10,7 @@ import glob
 from typing import Dict, List, Union, Set
 import h5py
 import re
+import tempfile
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -588,13 +589,14 @@ class NAS_DB:
 
         # 3. Read the file with pandas, using the determined indices
         read_target = file_path
-        sftp_file = None
+        temp_file = None
         try:
             # The actual data starts after the header block (assumed to be 17 lines)
             if self.access_mode == 'remote':
-                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
-                sftp_file = self.sftp_client.open(file_path, 'r')
-                read_target = sftp_file
+                self.logger.info(f"Downloading remote file to temp location: {file_path}")
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                self.sftp_client.get(file_path, temp_file.name)
+                read_target = temp_file.name
             
             df = pd.read_csv(
                 read_target,
@@ -617,8 +619,9 @@ class NAS_DB:
             self.logger.error(f"Pandas failed to parse MDO3000pc file {file_path}. Error: {e}")
             return None
         finally:
-            if sftp_file:
-                sftp_file.close()
+            if temp_file:
+                temp_file.close()
+                os.unlink(temp_file.name)
 
 
     def _parse_mso58(self, file_path: str, header_content: list[str], **kwargs) -> pd.DataFrame | None:
@@ -657,12 +660,13 @@ class NAS_DB:
             return None
 
         read_target = file_path
-        sftp_file = None
+        temp_file = None
         try:
             if self.access_mode == 'remote':
-                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
-                sftp_file = self.sftp_client.open(file_path, 'r')
-                read_target = sftp_file
+                self.logger.info(f"Downloading remote file to temp location: {file_path}")
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                self.sftp_client.get(file_path, temp_file.name)
+                read_target = temp_file.name
 
             df = pd.read_csv(
                 read_target,
@@ -689,8 +693,9 @@ class NAS_DB:
             self.logger.error(f"Pandas failed to parse MSO58 file {file_path}. Error: {e}")
             return None
         finally:
-            if sftp_file:
-                sftp_file.close()
+            if temp_file:
+                temp_file.close()
+                os.unlink(temp_file.name)
 
     def _parse_standard_csv(self, file_path: str, header_content: list[str], csv_type: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as {csv_type}: {file_path}")
@@ -725,12 +730,13 @@ class NAS_DB:
 
         # 2. Read the actual data using pandas, skipping to the data section
         read_target = file_path
-        sftp_file = None
+        temp_file = None
         try:
             if self.access_mode == 'remote':
-                self.logger.info(f"Opening remote file via SFTP stream: {file_path}")
-                sftp_file = self.sftp_client.open(file_path, 'r')
-                read_target = sftp_file
+                self.logger.info(f"Downloading remote file to temp location: {file_path}")
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                self.sftp_client.get(file_path, temp_file.name)
+                read_target = temp_file.name
 
             df = pd.read_csv(
                 read_target,
@@ -751,8 +757,9 @@ class NAS_DB:
             self.logger.error(f"Pandas failed to parse {file_path} with detected header. Error: {e}")
             return None
         finally:
-            if sftp_file:
-                sftp_file.close()
+            if temp_file:
+                temp_file.close()
+                os.unlink(temp_file.name)
 
     def _read_fpga_dat(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as FPGA .dat: {file_path}")
