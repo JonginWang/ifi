@@ -22,22 +22,24 @@ REMOTE_LIST_SCRIPT = r"""
 import sys
 import os
 import glob
-def find_files(base_path, patterns_str):
+def find_files(base_path_str, patterns_str):
+    base_paths = base_path_str.split(';')
     patterns = patterns_str.split(' ')
     all_file_paths = set()
-    for pattern in patterns:
-        search_pattern = os.path.join(base_path, '**', pattern)
-        file_paths = glob.glob(search_pattern, recursive=True)
-        all_file_paths.update(file_paths)
+    for base_path in base_paths:
+        for pattern in patterns:
+            search_pattern = os.path.join(base_path, '**', pattern)
+            file_paths = glob.glob(search_pattern, recursive=True)
+            all_file_paths.update(file_paths)
     
     sorted_paths = sorted(list(all_file_paths))
     for path in sorted_paths:
         print(path)
 
 if __name__ == "__main__":
-    base_path = sys.argv[1]
+    base_path_str = sys.argv[1]
     patterns_str = sys.argv[2]
-    find_files(base_path, patterns_str)
+    find_files(base_path_str, patterns_str)
 """
 
 # This script will be written to the remote machine to read the top N lines of a file.
@@ -280,35 +282,35 @@ class NAS_DB:
         return normalized_files
 
     def _find_files_remote(self, data_folders: List[str], patterns: List[str]) -> List[str]:
-        """ Executes remote script to find files using multiple patterns. """
-        all_remote_files = []
-        patterns_str = ' '.join(patterns) # Pass patterns as a single space-separated string
+        """ Executes a single remote script to find files across multiple folders and patterns. """
+        patterns_str = ' '.join(patterns)
+
+        # Combine all search folders into a single semicolon-separated string
+        search_paths = [os.path.join(self.nas_path, folder).replace('\\', '/') for folder in data_folders]
+        search_paths_str = ';'.join(search_paths)
 
         # Ensure the remote temp directory exists before trying to write to it
         self._ensure_remote_dir_exists(self.remote_temp_dir)
 
-        for folder in data_folders:
-            search_path = os.path.join(self.nas_path, folder).replace('\\', '/')
-            remote_script_path = os.path.join(self.remote_temp_dir, f'list_{int(time.time())}.py').replace('\\', '/')
-            
-            try:
-                with self.sftp_client.open(remote_script_path, 'w') as f:
-                    f.write(REMOTE_LIST_SCRIPT)
-            except Exception as e:
-                self.logger.error(f"Failed to write remote list script: {e}")
-                continue
-
-            cmd = f'python "{remote_script_path}" "{search_path}" "{patterns_str}"'
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
-
-            files = stdout.read().decode('utf-8').strip().splitlines()
-            all_remote_files.extend(files)
-            
-            err_output = stderr.read().decode('utf-8', errors='ignore').strip()
-            if err_output:
-                self.logger.error(f"Remote list script error: {err_output}")
+        remote_script_path = os.path.join(self.remote_temp_dir, f'list_{int(time.time())}.py').replace('\\', '/')
         
-        return all_remote_files
+        try:
+            with self.sftp_client.open(remote_script_path, 'w') as f:
+                f.write(REMOTE_LIST_SCRIPT)
+        except Exception as e:
+            self.logger.error(f"Failed to write remote list script: {e}")
+            return []
+
+        cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
+        stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+
+        files = stdout.read().decode('utf-8').strip().splitlines()
+        
+        err_output = stderr.read().decode('utf-8', errors='ignore').strip()
+        if err_output:
+            self.logger.error(f"Remote list script error: {err_output}")
+    
+        return files
 
     def _get_files_total_size(self, file_list: List[str]) -> int:
         """Calculates the total size of a list of files in bytes."""
@@ -780,16 +782,14 @@ class NAS_DB:
 
     def _read_fpga_dat(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as FPGA .dat: {file_path}")
+        read_target = file_path
+        temp_file = None
         try:
-            read_target = file_path
             if self.access_mode == 'remote':
-                # .dat files are simple, we can fetch them whole
-                # Or adapt chunker if they can be huge. For now, assume they are manageable.
-                # This part is left as an exercise if large .dat files are a concern.
-                self.logger.warning("Remote reading for .dat files is not implemented with chunking. Reading whole file.")
-                sftp_file = self.sftp_client.open(file_path, 'r')
-                read_target = StringIO(sftp_file.read().decode('utf-8', errors='ignore'))
-                sftp_file.close()
+                self.logger.info(f"Downloading remote .dat file to temp location: {file_path}")
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
+                self.sftp_client.get(file_path, temp_file.name)
+                read_target = temp_file.name
 
             cols = ['TIME'] + [f'PHI{i}' for i in range(1, 9)] + \
                    [f'LID{i}' for i in range(1, 9)] + \
@@ -801,6 +801,10 @@ class NAS_DB:
         except Exception as e:
             self.logger.error(f"Failed to parse FPGA file {file_path}: {e}")
             return None
+        finally:
+            if temp_file:
+                temp_file.close()
+                os.unlink(temp_file.name)
 
     def _read_matlab_mat(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         self.logger.info(f"Parsing as MATLAB .mat: {file_path}")

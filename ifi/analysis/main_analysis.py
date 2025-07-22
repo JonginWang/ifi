@@ -98,8 +98,13 @@ def main():
     parser.add_argument(
         '--data_folders',
         type=str,
-        default='data',
-        help='Comma-separated list of data folders to search within the NAS structure (e.g., "data,processed").'
+        default=None,
+        help='Comma-separated list of data folders to search. Overrides config.ini defaults unless --add_path is used.'
+    )
+    parser.add_argument(
+        '--add_path',
+        action='store_true',
+        help='If specified, adds the --data_folders paths to the default paths from config.ini instead of overriding them.'
     )
     parser.add_argument(
         '--force_remote',
@@ -216,10 +221,12 @@ def main():
     else:
         processed_query = [int(q) if q.isdigit() else q for q in args.query]
     
-    data_folders_list = [folder.strip() for folder in args.data_folders.split(',')]
+    data_folders_list = None
+    if args.data_folders:
+        data_folders_list = [folder.strip() for folder in args.data_folders.split(',')]
 
     logging.info("Starting IFI Analysis...")
-    logging.info(f"Query: {processed_query}, Folders: {data_folders_list}, Results Dir: {args.results_dir}")
+    logging.info(f"Query: {processed_query}, Folders: {data_folders_list or 'Default'}, Results Dir: {args.results_dir}")
 
     # --- Main Analysis Steps ---
     try:
@@ -228,13 +235,22 @@ def main():
             nas.dumping_folder = args.results_dir
             os.makedirs(nas.dumping_folder, exist_ok=True)
 
-            if not nas.connect():
-                logging.error("Failed to connect to NAS. Aborting.")
-                return
+            # Determine the final list of folders to search
+            search_folders = None
+            if args.data_folders:
+                user_folders = [folder.strip() for folder in args.data_folders.split(',')]
+                if args.add_path:
+                    # Combine user-specified folders with defaults from the config
+                    search_folders = nas.default_data_folders + user_folders
+                    logging.info(f"Adding to default search paths. Searching {len(search_folders)} folders.")
+                else:
+                    # Override the defaults with user-specified folders
+                    search_folders = user_folders
+            # If search_folders is still None, nas.find_files will use its defaults
 
             logging.info("Finding files...")
             # Instead of loading all data, just find the file paths first.
-            target_files = nas.find_files(query=processed_query, data_folders=data_folders_list)
+            target_files = nas.find_files(query=processed_query, data_folders=search_folders)
 
             if not target_files:
                 logging.warning("No files found for the given query. Exiting.")
@@ -248,7 +264,8 @@ def main():
             
             # 2. Execute tasks in parallel
             logging.info(f"Executing {len(tasks)} tasks in parallel using '{args.scheduler}' scheduler...")
-            results = dask.compute(*tasks, scheduler=args.scheduler)
+            # For debugging, force single-threaded execution to see logs properly
+            results = dask.compute(*tasks, scheduler='single-threaded')
             
             # 3. Process results
             # Filter out None results from failed tasks

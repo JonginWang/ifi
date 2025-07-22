@@ -11,9 +11,9 @@ from ifi.db_controller.vest_db import VEST_DB
 
 # --- Test Configuration ---
 # PLEASE ADJUST THESE VALUES BASED ON YOUR 'ifi/config.ini' AND AVAILABLE DATA
-# SHOT_TO_TEST = 45821 # Test for CSV files, 'MDO3000orig', 'MDO3000fetch', 'MSO58'
+SHOT_TO_TEST = 45821 # Test for CSV files, 'MDO3000orig', 'MDO3000fetch', 'MSO58'
 # SHOT_TO_TEST = 41715 # Test for CSV files, 'MDO3000orig', 'MDO3000fetch'
-SHOT_TO_TEST = 36853 # Test for CSV files, 'MSO58'
+# SHOT_TO_TEST = 36853 # Test for CSV files, 'MSO58'
 # SHOT_TO_TEST = 38396 # Test for 'MDO3000pc'
 # SHOT_TO_TEST = 'AGC w attn I' # Test for 'ETC'
 # Define the list of folders to search within the NAS mount point
@@ -55,7 +55,8 @@ def run_nas_db_test():
         logging.info(f"\n[Test 1] Fetching data for shot #{SHOT_TO_TEST} from source...")
         data_dict = {}
         with NAS_DB(config_path=CONFIG_PATH) as nas:
-            data_dict = nas.get_shot_data(SHOT_TO_TEST, DATA_FOLDER_TO_SEARCH)
+            # Pass no folders to use the defaults from config.ini
+            data_dict = nas.get_shot_data(SHOT_TO_TEST)
         
         if data_dict:
             logging.info(f"   -> SUCCESS: Data loaded. Found {len(data_dict)} file(s).")
@@ -81,7 +82,8 @@ def run_nas_db_test():
         # This runs in a new, separate 'with' block to simulate a fresh run.
         logging.info(f"\n[Test 2] Fetching data for shot #{SHOT_TO_TEST} again (should use cache)...")
         with NAS_DB(config_path=CONFIG_PATH) as nas_cached:
-            cached_data_dict = nas_cached.get_shot_data(SHOT_TO_TEST, DATA_FOLDER_TO_SEARCH)
+            # Pass no folders to use the defaults from config.ini
+            cached_data_dict = nas_cached.get_shot_data(SHOT_TO_TEST)
 
             if cached_data_dict and isinstance(cached_data_dict, dict):
                 logging.info(f"   -> SUCCESS: Data loaded from cache. Found {len(cached_data_dict)} file(s).")
@@ -95,7 +97,8 @@ def run_nas_db_test():
         # Test 3: Get file header using a new instance
         logging.info(f"\n[Test 3] Fetching top lines for the first file of shot #{SHOT_TO_TEST}...")
         with NAS_DB(config_path=CONFIG_PATH) as nas_head:
-            file_head = nas_head.get_data_top(SHOT_TO_TEST, DATA_FOLDER_TO_SEARCH, lines=10)
+            # Pass no folders to use the defaults from config.ini
+            file_head = nas_head.get_data_top(SHOT_TO_TEST)
 
             if file_head:
                 logging.info("   -> SUCCESS: Retrieved file head.")

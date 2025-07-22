@@ -169,14 +169,14 @@ class VEST_DB:
         try:
             with self.connection.cursor() as cursor:
                 # Check shotDataWaveform_3 first as it's the newer table
-                query3 = f"SELECT 1 FROM shotDataWaveform_3 WHERE shotCode = {shot} AND shotDataFieldCode = {field} LIMIT 1"
-                cursor.execute(query3)
+                query3 = "SELECT 1 FROM shotDataWaveform_3 WHERE shotCode = %s AND shotDataFieldCode = %s LIMIT 1"
+                cursor.execute(query3, (shot, field))
                 if cursor.fetchone():
                     return 3
 
                 # If not in table 3, check shotDataWaveform_2
-                query2 = f"SELECT 1 FROM shotDataWaveform_2 WHERE shotCode = {shot} AND shotDataFieldCode = {field} LIMIT 1"
-                cursor.execute(query2)
+                query2 = "SELECT 1 FROM shotDataWaveform_2 WHERE shotCode = %s AND shotDataFieldCode = %s LIMIT 1"
+                cursor.execute(query2, (shot, field))
                 if cursor.fetchone():
                     return 2
             
@@ -204,12 +204,15 @@ class VEST_DB:
             time_raw, data_raw = None, None
             try:
                 with self.connection.cursor() as cursor:
-                    existence = self.exist_shot(shot, field)
+                    # exist_shot is called within load_shot in the original code,
+                    # but it's better to get the table number first then query.
+                    # Replicating original logic for now.
+                    table_num = self.exist_shot(shot, field)
 
-                    if existence == 3:
+                    if table_num == 3:
                         # Data is in the new shotDataWaveform_3 table.
-                        query = f"SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_3 WHERE shotCode = {shot} AND shotDataFieldCode = {field}"
-                        cursor.execute(query)
+                        query = "SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_3 WHERE shotCode = %s AND shotDataFieldCode = %s"
+                        cursor.execute(query, (shot, field))
                         result = cursor.fetchone()
 
                         if result:
@@ -217,10 +220,10 @@ class VEST_DB:
                             time_raw = np.fromstring(time_str.strip('[]'), sep=',')
                             data_raw = np.fromstring(val_str.strip('[]'), sep=',')
 
-                    elif existence == 2:
+                    elif table_num == 2:
                         # Data is in the old shotDataWaveform_2 table.
-                        query = f"SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_2 WHERE shotCode = {shot} AND shotDataFieldCode = {field} ORDER BY shotDataWaveformTime ASC"
-                        cursor.execute(query)
+                        query = "SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_2 WHERE shotCode = %s AND shotDataFieldCode = %s ORDER BY shotDataWaveformTime ASC"
+                        cursor.execute(query, (shot, field))
                         results = cursor.fetchall()
 
                         if results:
