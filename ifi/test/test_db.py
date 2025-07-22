@@ -50,22 +50,26 @@ def run_nas_db_test():
         logging.info("--- Starting NAS_DB Refactored Test ---")
         
         # Test 1: Get data (should find files, parse them, and create a cache)
+        # This runs in its own 'with' block to ensure the connection is closed
+        # and the cache file is fully written and flushed to disk.
         logging.info(f"\n[Test 1] Fetching data for shot #{SHOT_TO_TEST} from source...")
+        data_dict = {}
         with NAS_DB(config_path=CONFIG_PATH) as nas:
             data_dict = nas.get_shot_data(SHOT_TO_TEST, DATA_FOLDER_TO_SEARCH)
-            
-            if data_dict:
-                logging.info(f"   -> SUCCESS: Data loaded. Found {len(data_dict)} file(s).")
-                for name, df in data_dict.items():
-                    logging.info(f"      - DataFrame '{name}': Shape={df.shape}, Columns={df.columns.tolist()}")
-                print("--- Data Head (first file) ---")
-                print(list(data_dict.values())[0].head())
-                print("------------------------------")
-            else:
-                logging.error("   -> FAILED: Could not retrieve any data on the first call.")
-                return
+        
+        if data_dict:
+            logging.info(f"   -> SUCCESS: Data loaded. Found {len(data_dict)} file(s).")
+            # Log info outside the 'with' block to show it has completed.
+            for name, df in data_dict.items():
+                logging.info(f"      - DataFrame '{name}': Shape={df.shape}, Columns={df.columns.tolist()}")
+            print("--- Data Head (first file) ---")
+            print(list(data_dict.values())[0].head())
+            print("------------------------------")
+        else:
+            logging.error("   -> FAILED: Could not retrieve any data on the first call.")
+            return
 
-        # Verify cache file creation
+        # Verify cache file creation after the 'with' block is closed.
         cache_dir = os.path.join(CACHE_FOLDER, str(SHOT_TO_TEST))
         expected_cache_file = os.path.join(cache_dir, f'{SHOT_TO_TEST}.h5')
         if os.path.exists(expected_cache_file):
@@ -74,14 +78,13 @@ def run_nas_db_test():
             logging.warning(f"   -> WARNING: Cache file was not created at '{expected_cache_file}'.")
 
         # Test 2: Get data again (should load from HDF5 cache)
+        # This runs in a new, separate 'with' block to simulate a fresh run.
         logging.info(f"\n[Test 2] Fetching data for shot #{SHOT_TO_TEST} again (should use cache)...")
         with NAS_DB(config_path=CONFIG_PATH) as nas_cached:
             cached_data_dict = nas_cached.get_shot_data(SHOT_TO_TEST, DATA_FOLDER_TO_SEARCH)
 
             if cached_data_dict and isinstance(cached_data_dict, dict):
                 logging.info(f"   -> SUCCESS: Data loaded from cache. Found {len(cached_data_dict)} file(s).")
-                # We can't directly compare data_dict keys as they might differ (remote vs local path)
-                # Instead, we just check if the operation succeeded.
                 if len(cached_data_dict) == len(data_dict):
                     logging.info("      - SUCCESS: Number of cached files matches original files.")
                 else:

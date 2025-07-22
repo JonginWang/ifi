@@ -387,8 +387,11 @@ class NAS_DB:
                     files_to_fetch.append(file_path)
                     continue
                 
-                # HDF5 keys cannot contain '/', so we replace them
-                key = basename.replace(os.path.sep, '_')
+                # Sanitize the basename to be a valid HDF5 key, matching the writing logic.
+                key = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
+                if key and not key[0].isalpha() and not key.startswith('_'):
+                    key = '_' + key
+                
                 try:
                     with h5py.File(cache_file, 'r') as f:
                         if key in f:
