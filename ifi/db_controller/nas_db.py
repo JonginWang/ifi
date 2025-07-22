@@ -11,6 +11,10 @@ from typing import Dict, List, Union, Set
 import h5py
 import re
 
+# Define the set of file extensions that the system is designed to process.
+# This prevents attempts to read unsupported files like images (.tif) or documents.
+ALLOWED_EXTENSIONS = ['.csv', '.dat', '.mat', '.isf', '.wfm']
+
 # This script finds files and returns a newline-separated list.
 # It now accepts multiple patterns separated by spaces.
 REMOTE_LIST_SCRIPT = r"""
@@ -130,6 +134,11 @@ class NAS_DB:
         self.ssh_pkey = os.path.expanduser(ssh_cfg.get('ssh_pkey_path'))
         self.remote_temp_dir = ssh_cfg.get('remote_temp_dir')
 
+        # Connection settings
+        conn_cfg = config['CONNECTION_SETTINGS']
+        self.ssh_max_retries = conn_cfg.getint('ssh_max_retries', 3)
+        self.ssh_connect_timeout = conn_cfg.getfloat('ssh_connect_timeout', 10.0)
+
         # Local Cache Config
         if config.has_section('LOCAL_CACHE'):
             cache_cfg = config['LOCAL_CACHE']
@@ -175,26 +184,33 @@ class NAS_DB:
         self.logger.info("Local NAS mount not found. Attempting SSH connection.")
         self.access_mode = 'remote'
         
-        try:
-            self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            self.ssh_client.connect(
-                hostname=self.ssh_host,
-                port=self.ssh_port,
-                username=self.ssh_user,
-                key_filename=self.ssh_pkey,
-                timeout=10
-            )
-            self.sftp_client = self.ssh_client.open_sftp()
-            self.logger.info(f"SSH connection to {self.ssh_host} successful.")
-            
-            self._authenticate_nas_remote()
-            return True
+        for attempt in range(self.ssh_max_retries):
+            try:
+                self.logger.info(f"SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
+                self.ssh_client = paramiko.SSHClient()
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                self.ssh_client.connect(
+                    hostname=self.ssh_host,
+                    port=self.ssh_port,
+                    username=self.ssh_user,
+                    key_filename=self.ssh_pkey,
+                    timeout=self.ssh_connect_timeout
+                )
+                self.sftp_client = self.ssh_client.open_sftp()
+                self.logger.info(f"SSH connection to {self.ssh_host} successful.")
+                
+                self._authenticate_nas_remote()
+                return True
 
-        except Exception as e:
-            self.logger.error(f"Failed to establish SSH connection: {e}")
-            self.disconnect()
-            return False
+            except Exception as e:
+                self.logger.error(f"SSH connection attempt {attempt + 1} failed: {e}")
+                self.disconnect()
+                if attempt < self.ssh_max_retries - 1:
+                    self.logger.info("Retrying in 3 seconds...")
+                    time.sleep(3)
+        
+        self.logger.error("All SSH connection attempts failed.")
+        return False
 
     def _authenticate_nas_remote(self):
         """
@@ -278,14 +294,28 @@ class NAS_DB:
 
         sorted_files = sorted(list(all_files))
 
-        if sorted_files:
-            self.logger.info(f"Found {len(sorted_files)} files. Caching result.")
-            self._file_cache[cache_key] = sorted_files
+        # --- Filter by allowed extensions ---
+        filtered_files = [
+            f for f in sorted_files
+            if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
+        ]
+        if len(filtered_files) < len(sorted_files):
+            self.logger.info(
+                f"Filtered file list from {len(sorted_files)} to {len(filtered_files)} "
+                f"based on allowed extensions: {ALLOWED_EXTENSIONS}"
+            )
+
+        # --- Normalize paths to use forward slashes for consistency ---
+        normalized_files = [f.replace('\\', '/') for f in filtered_files]
+
+        if normalized_files:
+            self.logger.info(f"Found {len(normalized_files)} files. Caching result.")
+            self._file_cache[cache_key] = normalized_files
         else:
-            self.logger.warning(f"No files found for query '{query}' in {data_folders}. Caching empty list.")
+            self.logger.warning(f"No files with allowed extensions found for query '{query}' in {data_folders}. Caching empty list.")
             self._file_cache[cache_key] = []
             
-        return sorted_files
+        return normalized_files
 
     def _find_files_remote(self, data_folders: List[str], patterns: List[str]) -> List[str]:
         """ Executes remote script to find files using multiple patterns. """
@@ -476,15 +506,19 @@ class NAS_DB:
         Reads a CSV file by first identifying its type from the header.
         """
         self.logger.info(f"Reading CSV file: {file_path}")
-        try:
-            # Use get_data_top to peek at the header without reading the whole file
-            # This logic needs to be adapted since get_data_top is a public method
-            # For now, we read the top lines directly here.
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                header_content = [next(f) for _ in range(40)]
-        except Exception as e:
-            self.logger.error(f"Could not read header of {file_path}: {e}")
+        
+        # --- Safely get header for both local and remote files ---
+        header_text = None
+        if self.access_mode == 'local':
+            header_text = self._get_data_top_local(file_path, lines=40)
+        else: # remote
+            header_text = self._get_data_top_remote(file_path, lines=40)
+
+        if not header_text:
+            self.logger.error(f"Could not read header of {file_path}")
             return None
+
+        header_content = header_text.splitlines()
 
         csv_type = self._identify_csv_type(header_content)
         self.logger.info(f"Identified CSV type for {os.path.basename(file_path)} as: {csv_type}")
@@ -949,7 +983,8 @@ class NAS_DB:
         self.logger.info("Disconnected.")
 
     def __enter__(self):
-        self.connect()
+        if not self.connect():
+            raise ConnectionError("Failed to establish connection to NAS.")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
