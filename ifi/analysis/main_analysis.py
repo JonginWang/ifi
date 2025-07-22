@@ -55,6 +55,7 @@ def load_and_process_file(nas_instance, file_path, args):
     # 3. Remove offset
     if not args.no_offset_removal:
         df_processed = processing.remove_offset(df_refined, window_size=args.offset_window)
+        logging.info(f"Offset removed from {file_path}")
     else:
         df_processed = df_refined
     
@@ -80,6 +81,7 @@ def load_and_process_file(nas_instance, file_path, args):
             stft_result_for_file[col_name] = {'f': f, 't': t, 'Zxx': Zxx}
         
         stft_result = {file_path: stft_result_for_file}
+        logging.info(f"STFT analysis complete for {file_path}")
 
     # Return a tuple of the processed data and any analysis results
     return file_path, df_processed, stft_result
@@ -147,8 +149,8 @@ def main():
     parser.add_argument(
         '--downsample',
         type=int,
-        default=1,
-        help='Downsample factor for plotting to improve performance.'
+        default=10,
+        help='Downsample factor for plotting to improve performance. Default: 10.'
     )
     parser.add_argument(
         '--stft',
@@ -211,6 +213,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    logging.info(f"Args parsed for analysis of shot {args.query}: {args}")
 
     # --- Process Arguments ---
     # Convert single query item to correct type if possible
@@ -289,6 +293,7 @@ def main():
     # We will use the time axis from the first file as the reference
     all_filenames = list(analysis_data.keys())
     ref_time_axis = analysis_data[all_filenames[0]].index
+    logging.info(f"Using time axis from '{os.path.basename(all_filenames[0])}' as reference for combining data.")
 
     def combine_dataframes(data_dict):
         """Combines a dictionary of dataframes into a single dataframe."""
@@ -309,6 +314,7 @@ def main():
     # as processing is done in one go. We will use the final 'analysis_data' for combinations.
     # If raw/refined plots are needed, the delayed function would need to return them.
     combined_analysis_data = combine_dataframes(analysis_data)
+    logging.info(f"All processed data combined into a single DataFrame with shape {combined_analysis_data.shape}.")
 
 
     # 4. Perform frequency analysis
@@ -469,6 +475,7 @@ def main():
             )
     else:
         combined_density_data = pd.DataFrame()
+        logging.info("Skipping density calculation as per arguments.")
 
     # 6. Load VEST data
     vest_data = pd.DataFrame(index=ref_time_axis)
@@ -486,26 +493,26 @@ def main():
                 shot_num_for_vest = int(match.group(1))
 
         if shot_num_for_vest:
-            logging.info(f"Loading VEST data for shot {shot_num_for_vest}...")
+            logging.info(f"Loading VEST data for shot {shot_num_for_vest}, fields: {args.vest_fields}...")
             try:
-                vest_db = VEST_DB(config_path='ifi/config.ini')
-                vest_df_raw = vest_db.load_shot(shot_num_for_vest, args.vest_fields)
-                
-                if not vest_df_raw.empty:
-                    # Interpolate VEST data onto the main time axis
-                    interp_data = {}
-                    for col in vest_df_raw.columns:
-                        interp_data[col] = np.interp(
-                            ref_time_axis.to_numpy(),
-                            vest_df_raw.index.to_numpy(),
-                            vest_df_raw[col].to_numpy(),
-                            left=np.nan,
-                            right=np.nan,
-                        )
-                    vest_data = pd.DataFrame(interp_data, index=ref_time_axis)
-                    logging.info("Successfully loaded and processed VEST data.")
-                else:
-                    logging.warning("No VEST data returned for the given fields.")
+                with VEST_DB(config_path='ifi/config.ini') as vest_db:
+                    vest_df_raw = vest_db.load_shot(shot_num_for_vest, args.vest_fields)
+                    
+                    if not vest_df_raw.empty:
+                        # Interpolate VEST data onto the main time axis
+                        interp_data = {}
+                        for col in vest_df_raw.columns:
+                            interp_data[col] = np.interp(
+                                ref_time_axis.to_numpy(),
+                                vest_df_raw.index.to_numpy(),
+                                vest_df_raw[col].to_numpy(),
+                                left=np.nan,
+                                right=np.nan,
+                            )
+                        vest_data = pd.DataFrame(interp_data, index=ref_time_axis)
+                        logging.info(f"Successfully loaded and processed VEST data. Shape: {vest_data.shape}")
+                    else:
+                        logging.warning("No VEST data returned for the given fields.")
             except Exception as e:
                 logging.error(f"An error occurred while loading VEST data: {e}", exc_info=True)
         else:
@@ -517,7 +524,7 @@ def main():
         logging.info("No plots requested. Skipping visualization.")
     else:
         logging.info("Generating plots...")
-        title_prefix = f"Shot #{shot_num_for_vest} - " if shot_num_for_vest else ""
+        title_prefix = f"Shot #{shot_num_for_vest} - " if shot_num_for_vest else "IFI Analysis - "
         plt.ion()
 
         # Basic signal plots
@@ -533,8 +540,9 @@ def main():
         if stft_results:
             plots.plot_spectrograms(
                 stft_results,
-                downsample=args.downsample,
-                title_prefix=title_prefix
+                title_prefix=title_prefix,
+                trigger_time=args.trigger_time,
+                downsample=args.downsample
             )
 
         # CWT plots

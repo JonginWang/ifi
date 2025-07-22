@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.signal import get_window, ShortTimeFFT, cwt, ricker, find_peaks
 import pywt
-from typing import Tuple
+from typing import Tuple, Union
 from ssqueezepy import stft
+import logging
 
 from ifi.utils import assign_kwargs
 
@@ -19,17 +20,21 @@ class SpectrumAnalysis:
             'phase_shift': 0
         }
 
-    @assign_kwargs(['window', 'nperseg', 'noverlap', 'mfft', 'dual_win', 'scale_to', 'phase_shift'])
-    def compute_stft(self, signal: np.ndarray, fs: float, window: str, 
-                     nperseg: int, noverlap: int, mfft: int, 
-                     dual_win, scale_to: str, phase_shift: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # @assign_kwargs(['window', 'nperseg', 'noverlap', 'mfft', 'dual_win', 'scale_to', 'phase_shift'])
+    # def compute_stft(self, signal: np.ndarray, fs: float, window: Union[str, tuple, np.ndarray], 
+    #                  nperseg: int, noverlap: int, mfft: int, 
+    #                  dual_win, scale_to: str, phase_shift: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute_stft(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Computes the Short-Time Fourier Transform (STFT) of a signal.
-
+        
+        ###### Revise version 0.1 ######
         Args:
             signal (np.ndarray): The input signal.
             fs (float): The sampling frequency.
-            window (str): The window function to use.
+            window (str, tuple, or np.ndarray): The window function to use.
+                - If str or tuple, it's passed to `scipy.signal.get_window`.
+                - If np.ndarray, it's used directly as the window.
             nperseg (int): Length of each segment.
             noverlap (int): Number of points to overlap between segments.
             mfft (int): The number of points for the FFT. Defaults to nperseg.
@@ -39,13 +44,43 @@ class SpectrumAnalysis:
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]: Frequencies, times, and the complex STFT matrix.
+        
+        ###### Revise version 0.2 ######
+        # Reviewed 2025-07-22
+        Accepts keyword arguments to override defaults defined in `self.kwargs_fallback`.
         """
-        win = get_window(window, nperseg)
+        # Merge provided kwargs with fallback defaults
+        final_kwargs = self.kwargs_fallback.copy()
+        final_kwargs.update(kwargs)
+
+        window = final_kwargs['window']
+        nperseg = final_kwargs['nperseg']
+        noverlap = final_kwargs['noverlap']
+        mfft = final_kwargs['mfft']
+        dual_win = final_kwargs['dual_win']
+        scale_to = final_kwargs['scale_to']
+        phase_shift = final_kwargs['phase_shift']
+        
+        if isinstance(window, (str, tuple)):
+            win = get_window(window, nperseg)
+        elif isinstance(window, np.ndarray):
+            # If the window is already a numpy array, use it directly.
+            if len(window) > 1 and len(window) != nperseg:
+                raise ValueError(f"Provided window is length {len(window)}. To use Kaiser window, put a number (e.g., 8) for the beta parameter. To use a pre-designed filter, use a numpy array of length {nperseg}.")
+            win = window
+        else:
+            raise TypeError(f"Unsupported window type: {type(window)}. Must be str, tuple, or np.ndarray.")
+
         hop = nperseg - noverlap
         mfft = nperseg if mfft is None else mfft
 
         SFT = ShortTimeFFT(win, hop, fs=fs, mfft=mfft, dual_win=dual_win, scale_to=scale_to, phase_shift=phase_shift)
-        f, t, Zxx = SFT.stft(signal)
+        
+        # The stft method of a ShortTimeFFT object returns only the Zxx matrix.
+        # Frequencies (f) and times (t) are properties of the object itself.
+        Zxx = SFT.stft(signal)
+        f = SFT.f
+        t = SFT.t(signal.shape[-1])
         # ShortTimeFFT
         # f, t, Zxx = stft(signal, fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
         # nfft=mfft, return_onesided=True if fft_mode is 'onesided' else False)
@@ -101,25 +136,29 @@ class SpectrumAnalysis:
 
     def find_freq_ridge(self, Zxx: np.ndarray, f: np.ndarray, prominence: float = None, distance: float = None) -> np.ndarray:
         """
-        Finds the frequency "ridge" in a spectrogram (abs(Zxx)).
+        Finds the frequency "ridge" in a spectrogram by locating the frequency
+        with the maximum power for each time slice.
 
         Args:
-            Zxx (np.ndarray): The complex matrix from the STFT.
+            Zxx (np.ndarray): The complex matrix from the STFT (frequencies x times).
             f (np.ndarray): The array of sample frequencies.
-            prominence (float, optional): Required prominence of peaks.
-            distance (float, optional): Required minimal horizontal distance (>= 1) in samples between neighbouring peaks.
+            prominence (float, optional): Ignored. Kept for signature compatibility.
+            distance (float, optional): Ignored. Kept for signature compatibility.
 
         Returns:
-            np.ndarray: The frequency ridge.
+            np.ndarray: A 1D array containing the frequency with the highest power for each time segment.
         """
+        if Zxx.ndim != 2:
+            raise ValueError(f"`Zxx` must be a 2-D array, but got shape {Zxx.shape}")
+
         # Get the magnitude squared (power)
         power_spectrum = np.abs(Zxx)**2
         
-        # Find the peaks in the power spectrum
-        peaks, _ = find_peaks(power_spectrum, prominence=prominence, distance=distance)
+        # Find the index of the maximum power for each time slice (along the frequency axis=0)
+        peak_indices = np.argmax(power_spectrum, axis=0)
         
         # Map the indices to frequencies
-        frequency_ridge = f[peaks]
+        frequency_ridge = f[peak_indices]
         
         return frequency_ridge
 
@@ -133,14 +172,14 @@ if __name__ == '__main__':
     # Call with default parameters using SciPy
     f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
     ridge = analyzer.find_freq_ridge(Zxx, f)
-    print("--- SciPy STFT ---")
-    print(f"STFT shape: {Zxx.shape}")
-    print(f"Ridge frequency: {np.mean(ridge)}")
+    logging.info("--- SciPy STFT ---")
+    logging.info(f"STFT shape: {Zxx.shape}")
+    logging.info(f"Ridge frequency: {np.mean(ridge)}")
     
     # Call using ssqueezepy
     f_ssq, t_ssq, Sxx = analyzer.compute_stft_ssq(signal, fs, n_fft=1024, hop_len=512)
     ridge_ssq = analyzer.find_freq_ridge(Sxx, f_ssq)
-    print("\n--- ssqueezepy STFT ---")
-    print(f"STFT shape: {Sxx.shape}")
-    print(f"Ridge frequency: {np.mean(ridge_ssq)}")
+    logging.info("--- ssqueezepy STFT ---")
+    logging.info(f"STFT shape: {Sxx.shape}")
+    logging.info(f"Ridge frequency: {np.mean(ridge_ssq)}")
     pass

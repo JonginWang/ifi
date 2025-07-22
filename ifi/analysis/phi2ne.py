@@ -5,6 +5,7 @@ from scipy.signal import hilbert, firwin, remez, filtfilt, freqz
 import matplotlib.pyplot as plt
 from typing import Dict, Any
 import pandas as pd
+import logging
 
 # "eegpy" is a package that contains the remezord function, translated from MATLAB
 # Though remezord is not in scipy, we could import by piece of script under ifi/analysis/utils/remezord.py
@@ -166,11 +167,11 @@ class PhaseConverter:
         
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx: # Allow some tolerance
-            print(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            print("Difference is significant. Using the value from remezord.")
+            logging.info(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info("Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            print(f"Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
 
         taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
@@ -195,11 +196,11 @@ class PhaseConverter:
         
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx: # Allow some tolerance
-            print(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            print("Difference is significant. Using the value from remezord.")
+            logging.info(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info("Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            print(f"Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
 
         taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
@@ -209,7 +210,7 @@ class PhaseConverter:
         """Plots the frequency response of the FIR filter."""
         if fs is None:
             fs = 2*np.pi
-            print("fs is not provided, using 2*pi, resulting in frequency in rad/sample")
+            logging.warning(f"fs is not provided, using 2*pi, resulting in frequency in rad/sample")
         freqs_at_response, responses = freqz(taps, worN=2048, fs=fs)
         plot_response(freqs_at_response, responses, title)
         plt.show()
@@ -336,13 +337,13 @@ class PhaseConverter:
 
         if mode == 'ip':
             if vest_data is None or vest_data.empty:
-                print("Warning: 'ip' baseline mode selected but VEST data is not available. Skipping correction.")
+                logging.warning("Warning: 'ip' baseline mode selected but VEST data is not available. Skipping correction.")
                 return corrected_df
             
             # Assuming the Ip data column is named '109' from vest_db
             ip_col = '109'
             if ip_col not in vest_data.columns:
-                print(f"Warning: Plasma current column '{ip_col}' not in VEST data. Skipping 'ip' baseline correction.")
+                logging.warning(f"Warning: Plasma current column '{ip_col}' not in VEST data. Skipping 'ip' baseline correction.")
                 return corrected_df
             
             ip_data = vest_data[ip_col]
@@ -356,28 +357,28 @@ class PhaseConverter:
                 t_end = t_rampup - 3e-3
 
             except IndexError:
-                print("Warning: Plasma current never exceeded 10kA. Cannot determine ramp-up for 'ip' baseline. Skipping.")
+                logging.warning("Warning: Plasma current never exceeded 10kA. Cannot determine ramp-up for 'ip' baseline. Skipping.")
                 return corrected_df
 
         elif mode == 'trig':
             t_start, t_end = 0.285, 0.290
         
         else:
-            print(f"Warning: Invalid baseline mode '{mode}'. Skipping correction.")
+            logging.warning(f"Warning: Invalid baseline mode '{mode}'. Skipping correction.")
             return corrected_df
 
         # Find indices for the baseline window
         baseline_indices = np.where((time_axis >= t_start) & (time_axis <= t_end))[0]
 
         if len(baseline_indices) == 0:
-            print(f"Warning: No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping correction.")
+            logging.warning(f"Warning: No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping correction.")
             return corrected_df
 
-        print(f"Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_indices)} points).")
+        logging.info(f"Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_indices)} points).")
         for col in corrected_df.columns:
             baseline_mean = corrected_df[col].iloc[baseline_indices].mean()
             corrected_df[col] -= baseline_mean
-            print(f"  - Column '{col}': Removed baseline of {baseline_mean:.2e}")
+            logging.info(f"  - Column '{col}': Removed baseline of {baseline_mean:.2e}")
             
         return corrected_df
 

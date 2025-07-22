@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import os
 from typing import List, Dict, Any
+import logging
 
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis.spectrum import SpectrumAnalysis
@@ -23,11 +24,11 @@ class Plotter:
             return data
         return data[::factor]
 
-    def plot_multi_panel_time_series(self, time: np.ndarray, data: np.ndarray, labels: List[str], title: str, downsample_factor: int = 1):
+    def plot_multi_panel_time_series(self, time: np.ndarray, data: np.ndarray, labels: List[str], title: str, downsample: int = 1):
         """
         Plots multiple channels of time series data in subplots.
         """
-        time = self._downsample(time, downsample_factor)
+        time = self._downsample(time, downsample)
         n_channels = data.shape[1]
         
         fig, axes = plt.subplots(n_channels, 1, figsize=(12, 2 * n_channels), sharex=True)
@@ -37,7 +38,7 @@ class Plotter:
         fig.suptitle(title, fontsize=16)
 
         for i in range(n_channels):
-            channel_data = self._downsample(data[:, i], downsample_factor)
+            channel_data = self._downsample(data[:, i], downsample)
             axes[i].plot(time, channel_data)
             axes[i].set_ylabel(labels[i])
             axes[i].grid(True)
@@ -109,27 +110,27 @@ if __name__ == '__main__':
     # plotter = Plotter()
     # time = np.linspace(0, 1, 10000)
     # data = np.random.randn(10000, 3)
-    # plotter.plot_multi_panel_time_series(time, data, ['Ch1', 'Ch2', 'Ch3'], "Test Plot", downsample_factor=10)
+    # plotter.plot_multi_panel_time_series(time, data, ['Ch1', 'Ch2', 'Ch3'], "Test Plot", downsample=10)
     pass
 
 
 def plot_signals(
     data_dict: Dict[str, pd.DataFrame],
-    title_suffix: str = "",
+    title_prefix: str = "",
     trigger_time: float = 0.0,
-    downsample_factor: int = 1
+    downsample: int = 1
 ):
     """
     Plots signals from a dictionary of DataFrames, each in a separate figure.
 
     Args:
         data_dict: Dictionary mapping a name (e.g., filename) to a DataFrame.
-        title_suffix: A suffix to add to the plot title (e.g., "(Offset Removed)").
+        title_prefix: A suffix to add to the plot title (e.g., "(Offset Removed)").
         trigger_time: Time in seconds to add to the 'TIME' column.
-        downsample_factor: Factor by which to downsample the data for plotting.
+        downsample: Factor by which to downsample the data for plotting.
     """
     if not data_dict:
-        print("No data to plot.")
+        logging.warning("No data to plot.")
         return
 
     for name, df in data_dict.items():
@@ -141,8 +142,8 @@ def plot_signals(
             continue
 
         # Downsample
-        if downsample_factor > 1:
-            plot_df = df.iloc[::downsample_factor, :]
+        if downsample > 1:
+            plot_df = df.iloc[::downsample, :]
         else:
             plot_df = df
 
@@ -153,7 +154,7 @@ def plot_signals(
         fig, axes = plt.subplots(num_channels, 1, figsize=(12, 2 * num_channels), sharex=True, squeeze=False)
         axes = axes.flatten() # Ensure axes is always a flat array
 
-        fig.suptitle(f"{os.path.basename(name)} {title_suffix}".strip(), **FontStyle.title)
+        fig.suptitle(f"{os.path.basename(name)} {title_prefix}".strip(), **FontStyle.title)
 
         for i, col_name in enumerate(data_cols):
             axes[i].plot(time_data, plot_df[col_name])
@@ -168,8 +169,9 @@ def plot_signals(
 
 def plot_spectrograms(
     stft_results: Dict[str, Dict[str, Any]],
-    analyzer: SpectrumAnalysis,
-    trigger_time: float = 0.0
+    title_prefix: str = "",
+    trigger_time: float = 0.0,
+    downsample: int = 1
 ):
     """
     Plots spectrograms and their frequency ridges from STFT results.
@@ -177,31 +179,36 @@ def plot_spectrograms(
     Args:
         stft_results: Dictionary containing STFT results from SpectrumAnalysis.
                       Structure: {filename: {col_name: {'f', 't', 'Zxx'}}}
-        analyzer: An instance of SpectrumAnalysis to use for finding the ridge.
+        title_prefix: A prefix to add to the plot title.
         trigger_time: Time in seconds to add to the time axis.
+        downsample: Factor by which to downsample the time axis for plotting.
     """
     if not stft_results:
         return
 
+    analyzer = SpectrumAnalysis() # Create a local instance for analysis
     for filename, results_by_col in stft_results.items():
         for col_name, results in results_by_col.items():
             f = results['f']
             t = results['t']
             Zxx = results['Zxx']
             
-            # Find frequency ridge
             ridge = analyzer.find_freq_ridge(Zxx, f)
             
+            # Downsample time-dependent data for performance
+            t_plot = t[::downsample]
+            ridge_plot = ridge[::downsample]
+            # For pcolormesh, we need to downsample Zxx along the time axis (axis 1)
+            Zxx_plot = Zxx[:, ::downsample]
+
             set_plot_style()
             fig = plt.figure(figsize=(12, 6))
             
-            # Plot spectrogram
-            plt.pcolormesh((t + trigger_time), f / 1e6, pow2db(np.abs(Zxx)), shading='gouraud', cmap='viridis')
+            plt.pcolormesh(t_plot + trigger_time, f / 1e6, pow2db(np.abs(Zxx_plot)), shading='gouraud', cmap='viridis')
             
-            # Plot ridge
-            plt.plot(t + trigger_time, ridge / 1e6, color='r', linewidth=2, label='Frequency Ridge')
+            plt.plot(t_plot + trigger_time, ridge_plot / 1e6, color='r', linewidth=2, label='Frequency Ridge')
             
-            plt.title(f"Spectrogram: {os.path.basename(filename)} - {col_name}", **FontStyle.title)
+            plt.title(f"{title_prefix}Spectrogram: {os.path.basename(filename)} - {col_name}", **FontStyle.title)
             plt.ylabel("Frequency [MHz]", **FontStyle.label)
             plt.xlabel(f"Time (s) [Trigger at {trigger_time}s]", **FontStyle.label)
             plt.legend()
@@ -236,7 +243,7 @@ def plot_cwt(cwt_results, trigger_time=0.0, title_prefix=""):
 
             # Use pcolormesh for time-frequency plotting
             im = ax.pcolormesh(
-                t - trigger_time, freqs, cwt_matrix, shading="gouraud", cmap="viridis"
+                t - trigger_time, freqs, cwt_matrix, shading="gouraud", cmap="hot"
             )
             fig.colorbar(im, ax=ax, label="Magnitude")
 
@@ -285,7 +292,7 @@ def plot_analysis_overview(
     }
 
     if not datasets:
-        print("No data available to plot for the overview.")
+        logging.warning("No data available to plot for the overview.")
         return
 
     set_plot_style()
