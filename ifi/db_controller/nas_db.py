@@ -336,7 +336,7 @@ class NAS_DB:
         yield remote_path, dirs, files
 
         for d in dirs:
-            new_path = f"{remote_path}/{d}" if not remote_path.endswith('/') else f"{remote_path}{d}"
+            new_path = f"{remote_path.rstrip('/')}/{d}"
             yield from self._sftp_walk(new_path)
 
     def _find_files_remote_sftp(self, data_folders: List[str], patterns: List[str]) -> List[str]:
@@ -346,18 +346,22 @@ class NAS_DB:
         import fnmatch
 
         all_found = set()
-        base_remote_path = self.nas_path.replace('\\', '/')
-
+        
         for folder in data_folders:
-            # Construct the full path to search on the remote server
-            folder_normalized = folder.replace('\\', '/')
-            start_path = f"{base_remote_path}/{folder_normalized}"
+            # Robustly join remote path components and normalize slashes.
+            # This handles any combination of slashes ('/', '\\', '//', etc.)
+            path_parts = self.nas_path.replace('\\', '/').split('/') + folder.replace('\\', '/').split('/')
+            # Filter out empty strings that result from multiple slashes (e.g., '//' or '/\')
+            valid_parts = [part for part in path_parts if part]
+            start_path = '/' + '/'.join(valid_parts)
+            
             self.logger.info(f"Starting SFTP search in: {start_path}")
             
             for dirpath, _, filenames in self._sftp_walk(start_path):
                 for pattern in patterns:
                     for filename in fnmatch.filter(filenames, pattern):
-                        full_path = f"{dirpath}/{filename}"
+                        # Ensure the final path is also clean
+                        full_path = f"{dirpath.rstrip('/')}/{filename}"
                         all_found.add(full_path)
         
         return list(all_found)
