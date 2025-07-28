@@ -64,10 +64,15 @@ class VEST_DB:
             ssh_cfg = config['SSH_TUNNEL']
             conn_cfg = config['CONNECTION_SETTINGS']
             
+            ssh_key_path = os.path.expanduser(ssh_cfg.get('ssh_pkey_path'))
+            self.logger.info(f"SSH key path resolved to: {ssh_key_path}")
+            if not os.path.exists(ssh_key_path):
+                self.logger.warning(f"SSH private key file does not exist at '{ssh_key_path}'!")
+
             self.ssh_config = {
                 'ssh_address_or_host': (ssh_cfg.get('ssh_host'), ssh_cfg.getint('ssh_port')),
                 'ssh_username': ssh_cfg.get('ssh_user'),
-                'ssh_pkey': os.path.expanduser(ssh_cfg.get('ssh_pkey_path')),
+                'ssh_pkey': ssh_key_path,
                 'remote_bind_address': (ssh_cfg.get('remote_mysql_host'), self.db_port),
                 'set_keepalive': 60.0
             }
@@ -100,6 +105,8 @@ class VEST_DB:
             if not self.tunnel_enabled:
                 self.logger.error("SSH tunnel is disabled. Cannot proceed.")
                 return False
+            # Explicitly log the fallback attempt
+            self.logger.info("Direct connection failed. Now attempting fallback to SSH tunnel.")
 
         # 2. Fallback to SSH tunnel connection
         self.logger.info("Falling back to SSH tunnel connection...")
@@ -123,10 +130,13 @@ class VEST_DB:
                     return True
 
             except BaseSSHTunnelForwarderError as e:
-                self.logger.error(f"SSH Tunnel Error: {e}")
+                self.logger.error(f"SSH Tunnel Error on attempt {attempt + 1}: {e}", exc_info=True)
                 self.disconnect() # Cleanup
             except pymysql.Error as e:
-                self.logger.error(f"MySQL Connection Error (via Tunnel): {e}")
+                self.logger.error(f"MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}", exc_info=True)
+                self.disconnect() # Cleanup
+            except Exception as e:
+                self.logger.error(f"An unexpected error occurred during SSH tunnel connection on attempt {attempt+1}: {e}", exc_info=True)
                 self.disconnect() # Cleanup
 
             if attempt < self.ssh_max_retries - 1:
