@@ -302,11 +302,11 @@ class VEST_DB:
 
         # 2. Determine t0 and tE from tFastDAQ logic
         if shot_num >= 41660: # Includes shots >= 43685
-            t0 = 0.26
-            tE = 0.36
+            t_start = 0.26
+            t_end = 0.36
         else:
-            t0 = 0.24
-            tE = 0.34
+            t_start = 0.24
+            t_end = 0.34
         
         # 3. Recalculate time axis
         # The MATLAB condition `diff(time) < 1/25e3` is a bit ambiguous for a whole array.
@@ -315,7 +315,7 @@ class VEST_DB:
         if len(time) > 1 and np.mean(np.diff(time)) < (1 / 25e3):
             # High-speed DAQ: create a new time axis
             self.logger.info("High-speed DAQ detected. Recalculating time axis.")
-            new_time = np.linspace(t0, tE, len(time) + 1)
+            new_time = np.linspace(t_start, t_end, len(time) + 1)
             time = new_time[:-1]
         else:
             # Low-speed DAQ: time values are already in seconds
