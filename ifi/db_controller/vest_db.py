@@ -338,7 +338,7 @@ if __name__ == '__main__':
     
     # Define a test shot and a list of fields that exist in the label CSV.
     test_shot = 45821 
-    test_fields = [109, 101] # Corresponds to I_p_raw and H-alpha
+    test_fields = [109, 171] # Corresponds to I_p_raw and Mirnov coil
 
     logging.info(f"--- Testing VEST_DB with Shot #{test_shot}, Fields #{test_fields} ---")
     
