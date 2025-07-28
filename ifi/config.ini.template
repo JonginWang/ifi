@@ -1,8 +1,14 @@
+[Tektronix]
+visa_address_94G1 = USB0::{your_oscilloscope_id}::0::INSTR
+visa_address_94G2 = USB0::{your_oscilloscope_id}::0::INSTR
+visa_address_280G = USB0::{your_oscilloscope_id}::0::INSTR
+
 [VEST_DB]
 host = your_database_host
 database = your_database_name
 user = your_username
 password = your_password 
+field_label_file = your_shotfiled_file_dir
 
 [SSH_TUNNEL]
 # Enable or disable the SSH tunnel functionality

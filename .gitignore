@@ -261,5 +261,7 @@ ifi/under_dev/
 ifi/results/
 logs/
 cache/
+ifi/db_controller/shotdata_field_origin.csv
+ifi/db_controller/shotdata_field_221230.txt
 
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,linux

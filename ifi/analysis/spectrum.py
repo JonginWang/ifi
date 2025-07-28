@@ -162,6 +162,59 @@ class SpectrumAnalysis:
         
         return frequency_ridge
 
+    def find_center_frequency_fft(self, signal: np.ndarray, fs: float) -> float:
+        """
+        Finds the center frequency of a signal using FFT.
+
+        This method computes the FFT of the signal and identifies the frequency
+        with the highest magnitude, considered as the center frequency. To avoid
+        low-frequency noise, it only searches above a certain threshold.
+
+        Args:
+            signal (np.ndarray): The input signal array.
+            fs (float): The sampling frequency of the signal.
+
+        Returns:
+            float: The estimated center frequency in Hz.
+        """
+        n = len(signal)
+        if n == 0:
+            return 0.0
+
+        # Compute FFT
+        yf = np.fft.fft(signal)
+        xf = np.fft.fftfreq(n, 1 / fs)
+
+        # We only care about the positive frequencies
+        xf_positive = xf[:n//2]
+        yf_positive = 2.0/n * np.abs(yf[0:n//2])
+
+        # Define a minimum frequency threshold to ignore DC and low-freq noise
+        # Threshold: Min(5% of Nyquist frequency, 5MHz)
+        nyquist = fs / 2
+        min_freq_threshold = min(nyquist * 0.05, 5e6)
+        
+        # Find the index where frequency is just above the threshold
+        try:
+            search_start_idx = np.where(xf_positive > min_freq_threshold)[0][0]
+        except IndexError:
+            # This happens if all frequencies are below the threshold.
+            # In this case, just search from the beginning of positive freqs.
+            search_start_idx = 0
+
+        # Find the peak frequency above the threshold
+        if search_start_idx >= len(yf_positive):
+             # If search start index is out of bounds, there's no valid range to search
+            logging.warning("No valid range to search for center frequency. Returning 0.0 Hz.")
+            return 0.0
+            
+        peak_idx = np.argmax(yf_positive[search_start_idx:]) + search_start_idx
+        f_center = xf_positive[peak_idx]
+
+        logging.info(f"Center frequency: {f_center/1e6:.2f} MHz")
+
+        return f_center
+
 if __name__ == '__main__':
     # Example usage:
     analyzer = SpectrumAnalysis()

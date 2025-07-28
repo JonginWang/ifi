@@ -23,14 +23,40 @@ class VEST_DB:
         config = configparser.ConfigParser()
         config.read(config_path)
         
+        # --- Database Configuration ---
         db_cfg = config['VEST_DB']
-        self.db_config = {
-            'host': db_cfg.get('host'),
-            'user': db_cfg.get('user'),
-            'password': db_cfg.get('password'),
-            'database': db_cfg.get('database'),
-            'port': db_cfg.getint('port', 3306) # Default MySQL port
+        self.db_host = db_cfg.get('host')
+        self.db_user = db_cfg.get('user')
+        self.db_password = db_cfg.get('password')
+        self.db_name = db_cfg.get('database')
+        self.db_port = db_cfg.getint('port', 3306)
+
+        # This dictionary will only contain connection-specific arguments
+        self.db_connection_args = {
+            'host': self.db_host,
+            'user': self.db_user,
+            'password': self.db_password,
+            'database': self.db_name,
+            'port': self.db_port
         }
+
+        # --- VEST Field Label Configuration ---
+        self.field_label_file = db_cfg.get('field_label_file', fallback=None)
+        self.field_labels = {}
+        if self.field_label_file and os.path.exists(self.field_label_file):
+            try:
+                label_df = pd.read_csv(self.field_label_file)
+                # Create a dictionary mapping field_id to a formatted name with units
+                self.field_labels = {
+                    row['field_id']: f"{row['field_name']} ({row['field_unit']})"
+                    for _, row in label_df.iterrows()
+                }
+                self.logger.info(f"Successfully loaded {len(self.field_labels)} VEST field labels from {self.field_label_file}.")
+            except Exception as e:
+                self.logger.error(f"Failed to load or parse VEST field label file '{self.field_label_file}': {e}")
+        else:
+            self.logger.warning("VEST field label file not specified or not found. Column names will be field IDs.")
+
 
         # SSH Tunnel configuration
         self.tunnel_enabled = config.getboolean('SSH_TUNNEL', 'enabled', fallback=False)
@@ -42,7 +68,7 @@ class VEST_DB:
                 'ssh_address_or_host': (ssh_cfg.get('ssh_host'), ssh_cfg.getint('ssh_port')),
                 'ssh_username': ssh_cfg.get('ssh_user'),
                 'ssh_pkey': os.path.expanduser(ssh_cfg.get('ssh_pkey_path')),
-                'remote_bind_address': (ssh_cfg.get('remote_mysql_host'), self.db_config['port']),
+                'remote_bind_address': (ssh_cfg.get('remote_mysql_host'), self.db_port),
                 'set_keepalive': 60.0
             }
             SSHTunnelForwarder.SSH_TIMEOUT = conn_cfg.getfloat('ssh_connect_timeout')
@@ -65,7 +91,7 @@ class VEST_DB:
         # 1. Attempt direct connection
         self.logger.info("Attempting direct connection to VEST DB...")
         try:
-            self.connection = pymysql.connect(**self.db_config, connect_timeout=self.direct_connect_timeout)
+            self.connection = pymysql.connect(**self.db_connection_args, connect_timeout=self.direct_connect_timeout)
             if self.connection.open:
                 self.logger.info("Direct connection successful.")
                 return True
@@ -86,7 +112,7 @@ class VEST_DB:
                 self.logger.info(f"SSH tunnel established (localhost:{self.tunnel.local_bind_port}).")
                 
                 # Connect to MySQL through the tunnel
-                tunneled_config = self.db_config.copy()
+                tunneled_config = self.db_connection_args.copy()
                 tunneled_config['host'] = '127.0.0.1'
                 tunneled_config['port'] = self.tunnel.local_bind_port
                 
@@ -234,9 +260,11 @@ class VEST_DB:
                         # Process the loaded data
                         time_corr, data_corr = self.process_vest_data(shot, field, time_raw, data_raw)
                         # Create a Series with time as index
-                        series = pd.Series(data_corr, index=time_corr, name=str(field))
+                        # Use the label mapping if available, otherwise use the field ID string
+                        series_name = self.field_labels.get(field, str(field))
+                        series = pd.Series(data_corr, index=time_corr, name=series_name)
                         all_series.append(series)
-                        self.logger.info(f"Successfully loaded and processed Shot {shot} Field {field}.")
+                        self.logger.info(f"Successfully loaded and processed Shot {shot} Field {field} as '{series_name}'.")
                     else:
                         self.logger.warning(f"Shot {shot} field {field} not found in database.")
 
@@ -308,14 +336,15 @@ if __name__ == '__main__':
     # Example usage and test for the VEST_DB class.
     # Note: This requires a valid 'ifi/config.ini' file with database credentials.
     
-    # Define a test shot and a list of fields.
-    test_shot = 40656
-    test_fields = [109, 101] # Ip and a sign-flipped field
+    # Define a test shot and a list of fields that exist in the label CSV.
+    test_shot = 45821 
+    test_fields = [109, 101] # Corresponds to I_p_raw and H-alpha
 
     logging.info(f"--- Testing VEST_DB with Shot #{test_shot}, Fields #{test_fields} ---")
     
     try:
-        with VEST_DB() as db:
+        # Explicitly provide the config path for robust execution
+        with VEST_DB(config_path='ifi/config.ini') as db:
             # 1. Check if the shot data exists for the first field
             logging.info(f"Checking for existence of first field ({test_fields[0]})...")
             existence = db.exist_shot(test_shot, test_fields[0])

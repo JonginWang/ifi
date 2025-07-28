@@ -87,6 +87,308 @@ def load_and_process_file(nas_instance, file_path, args):
     return file_path, df_processed, stft_result
 
 
+def run_analysis(args):
+    """Core analysis function that takes parsed arguments and executes the pipeline."""
+    logging.info(f"Args parsed for analysis of shot {args.query}: {args}")
+
+    # --- Process Arguments ---
+    # Convert single query item to correct type if possible
+    processed_query: Union[str, int, List[Union[str, int]]]
+    if len(args.query) == 1:
+        item = args.query[0]
+        processed_query = int(item) if item.isdigit() else item
+    else:
+        processed_query = [int(q) if q.isdigit() else q for q in args.query]
+    
+    data_folders_list = None
+    if args.data_folders:
+        data_folders_list = [folder.strip() for folder in args.data_folders.split(',')]
+
+    logging.info("Starting IFI Analysis...")
+    logging.info(f"Query: {processed_query}, Folders: {data_folders_list or 'Default'}, Results Dir: {args.results_dir}")
+
+    # --- Main Analysis Steps ---
+    try:
+        with NAS_DB(config_path='ifi/config.ini') as nas:
+            nas.dumping_folder = args.results_dir
+            os.makedirs(nas.dumping_folder, exist_ok=True)
+
+            search_folders = None
+            if args.data_folders:
+                user_folders = [folder.strip() for folder in args.data_folders.split(',')]
+                if args.add_path:
+                    search_folders = nas.default_data_folders + user_folders
+                    logging.info(f"Adding to default search paths. Searching {len(search_folders)} folders.")
+                else:
+                    search_folders = user_folders
+            
+            logging.info("Finding files...")
+            target_files = nas.find_files(query=processed_query, data_folders=search_folders, force_remote=args.force_remote)
+
+            if not target_files:
+                logging.warning("No files found for the given query. Exiting.")
+                return
+
+            logging.info(f"Found {len(target_files)} files to process. Building Dask graph...")
+            
+            tasks = [load_and_process_file(nas, f, args) for f in target_files]
+            
+            logging.info(f"Executing {len(tasks)} tasks in parallel using '{args.scheduler}' scheduler...")
+            results = dask.compute(*tasks, scheduler='single-threaded')
+            
+            results = [res for res in results if res is not None]
+            if not results:
+                logging.error("All processing tasks failed. Exiting.")
+                return
+                
+            analysis_data = {file_path: df for file_path, df, stft in results}
+            stft_results = {k: v for stft in (res[2] for res in results if res[2] is not None) for k, v in stft.items()}
+
+    except FileNotFoundError as e:
+        logging.error(f"Configuration file not found: {e}")
+        return
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during data loading and processing: {e}", exc_info=True)
+        return
+
+    all_filenames = list(analysis_data.keys())
+    ref_time_axis = analysis_data[all_filenames[0]].index
+    logging.info(f"Using time axis from '{os.path.basename(all_filenames[0])}' as reference for combining data.")
+
+    def combine_dataframes(data_dict):
+        df_list = []
+        for filename, df in data_dict.items():
+            prefix = os.path.basename(filename).split(".")[0]
+            df_renamed = df.rename(columns={c: f"{prefix}_{c}" for c in df.columns})
+            df_reindexed = df_renamed.reindex(ref_time_axis, method="nearest", limit=1)
+            df_list.append(df_reindexed)
+        return pd.concat(df_list, axis=1)
+
+    combined_analysis_data = combine_dataframes(analysis_data)
+    logging.info(f"All processed data combined into a single DataFrame with shape {combined_analysis_data.shape}.")
+
+    if args.stft:
+        logging.info("STFT analysis was performed in parallel.")
+    else:
+        stft_results = {}
+
+    cwt_results = {}
+    if args.cwt:
+        logging.info("Performing CWT analysis...")
+        analyzer = spectrum.SpectrumAnalysis()
+        for filename, df in analysis_data.items():
+            all_data_cols = [col for col in df.columns]
+            cols_to_analyze = args.cwt_cols if args.cwt_cols is not None else all_data_cols
+            fs = 1 / df.index.to_series().diff().mean()
+            cwt_results[filename] = {}
+            for col_name in cols_to_analyze:
+                if col_name not in df.columns:
+                    logging.warning(f"Column '{col_name}' not found in {os.path.basename(filename)}. Skipping CWT.")
+                    continue
+                logging.info(f"  Analyzing {col_name} in {os.path.basename(filename)}...")
+                signal = df[col_name].to_numpy()
+                t = df.index.to_numpy()
+                cwt_matrix, freqs = analyzer.compute_cwt(signal, fs)
+                cwt_results[filename][col_name] = {"t": t, "freqs": freqs, "cwt_matrix": cwt_matrix}
+        logging.info("CWT analysis complete.")
+
+    density_dfs = []
+    if args.density:
+        logging.info("Calculating phase and density...")
+        phase_converter = phi2ne.PhaseConverter()
+        analyzer = spectrum.SpectrumAnalysis()
+        for filename, df in analysis_data.items():
+            params = get_density_analysis_params(filename)
+            if not params:
+                logging.warning(f"No density analysis recipe for {os.path.basename(filename)}. Skipping.")
+                continue
+            fs = 1 / df['TIME'].diff().mean()
+            ref_col_name = params['ref_col']
+            if ref_col_name not in df.columns:
+                logging.warning(f"Reference column '{ref_col_name}' not found in {os.path.basename(filename)}. Skipping.")
+                continue
+            ref_signal = df[ref_col_name].to_numpy()
+            for probe_col_name in params['probe_cols']:
+                logging.info(f"  Processing {probe_col_name} in {os.path.basename(filename)} using {params['method']} method...")
+                phase = None
+                if params['method'] == 'iq':
+                    if not isinstance(probe_col_name, tuple) or len(probe_col_name) != 2:
+                        logging.warning(f"IQ method requires a tuple of (I, Q) column names. Got {probe_col_name}. Skipping.")
+                        continue
+                    i_col, q_col = probe_col_name
+                    if i_col not in df.columns or q_col not in df.columns:
+                        logging.warning(f"I/Q columns '{i_col}' or '{q_col}' not found in {os.path.basename(filename)}. Skipping.")
+                        continue
+                    i_signal = df[i_col].to_numpy()
+                    q_signal = df[q_col].to_numpy()
+                    phase = phase_converter.calc_phase_iq_asin2(i_signal, q_signal)
+                elif params['method'] == 'fpga':
+                    if not isinstance(probe_col_name, tuple) or len(probe_col_name) != 2:
+                        logging.warning(f"FPGA method requires a tuple of (phase, amp) column names. Got {probe_col_name}. Skipping.")
+                        continue
+                    p_col, a_col = probe_col_name
+                    if p_col not in df.columns or a_col not in df.columns or ref_col_name not in df.columns:
+                        logging.warning(f"FPGA columns '{p_col}', '{a_col}', or ref '{ref_col_name}' not found. Skipping.")
+                        continue
+                    ref_phase = df[ref_col_name].to_numpy()
+                    probe_phase = df[p_col].to_numpy()
+                    amp_signal = df[a_col].to_numpy()
+                    time_signal = df['TIME'].to_numpy()
+                    phase = phase_converter.calc_phase_fpga(ref_phase, probe_phase, time_signal, amp_signal)
+                elif params['method'] == 'cdm':
+                    if probe_col_name not in df.columns:
+                        logging.warning(f"Probe column '{probe_col_name}' not found in {os.path.basename(filename)}. Skipping.")
+                        continue
+                    probe_signal = df[probe_col_name].to_numpy()
+                    f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
+                    if f_center == 0.0:
+                        logging.warning(f"Could not determine a valid center frequency for '{ref_col_name}' in {os.path.basename(filename)}. Skipping CDM.")
+                        continue
+                    logging.info(f"    - Determined center frequency via FFT: {f_center/1e6:.2f} MHz")
+                    phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
+                if phase is not None:
+                    density = phase_converter.phase_to_density(phase, params['freq'])
+                    result_key = str(probe_col_name) if isinstance(probe_col_name, tuple) else probe_col_name
+                    prefix = os.path.basename(filename).split('.')[0]
+                    density_df = pd.DataFrame({
+                        f"{prefix}_{result_key}_phase": phase,
+                        f"{prefix}_{result_key}_density": density
+                    }, index=df.index)
+                    density_dfs.append(density_df)
+                    logging.info(f"    - Successfully calculated density for {result_key}.")
+
+    vest_data = pd.DataFrame(index=ref_time_axis)
+    shot_num_for_vest = None
+    if isinstance(processed_query, int):
+        shot_num_for_vest = processed_query
+    elif isinstance(processed_query, list) and isinstance(processed_query[0], int):
+        shot_num_for_vest = processed_query[0]
+    else:
+        match = re.match(r'(\d+)', str(processed_query))
+        if match:
+            shot_num_for_vest = int(match.group(1))
+
+    if args.vest_fields and shot_num_for_vest:
+        logging.info(f"Loading VEST data for shot {shot_num_for_vest}, fields: {args.vest_fields}...")
+        try:
+            with VEST_DB(config_path='ifi/config.ini') as vest_db:
+                vest_df_raw = vest_db.load_shot(shot_num_for_vest, args.vest_fields)
+                if not vest_df_raw.empty:
+                    interp_data = {}
+                    for col in vest_df_raw.columns:
+                        interp_data[col] = np.interp(
+                            ref_time_axis.to_numpy(),
+                            vest_df_raw.index.to_numpy(),
+                            vest_df_raw[col].to_numpy(),
+                            left=np.nan, right=np.nan
+                        )
+                    vest_data = pd.DataFrame(interp_data, index=ref_time_axis)
+                    logging.info(f"Successfully loaded and processed VEST data. Shape: {vest_data.shape}")
+                else:
+                    logging.warning("No VEST data returned for the given fields.")
+        except Exception as e:
+            logging.error(f"An error occurred while loading VEST data: {e}", exc_info=True)
+    elif args.vest_fields:
+        logging.warning("Could not determine a shot number from query to load VEST data.")
+
+    combined_density_data = pd.DataFrame(index=ref_time_axis)
+    if density_dfs:
+        reindexed_dfs = [df.reindex(ref_time_axis, method='nearest', limit=1) for df in density_dfs]
+        combined_density_data = pd.concat(reindexed_dfs, axis=1)
+        if args.baseline:
+            logging.info(f"Performing '{args.baseline}' baseline correction on density data...")
+            time_axis_for_density = combined_analysis_data.index.to_numpy()
+            combined_density_data = phase_converter.correct_baseline(
+                combined_density_data,
+                time_axis_for_density,
+                args.baseline,
+                vest_data=vest_data
+            )
+    elif args.density:
+        logging.info("Density calculation did not produce any results.")
+    else:
+        logging.info("Skipping density calculation as per arguments.")
+
+    if not args.plot and not args.overview_plot:
+        logging.info("No plots requested. Skipping visualization.")
+    else:
+        logging.info("Generating plots...")
+        title_prefix = f"Shot #{shot_num_for_vest} - " if shot_num_for_vest else "IFI Analysis - "
+        plt.ion()
+        if args.plot:
+            plots.plot_signals(
+                {"Raw": combined_analysis_data},
+                trigger_time=args.trigger_time,
+                downsample=args.downsample,
+                title_prefix=title_prefix
+            )
+        if stft_results:
+            plots.plot_spectrograms(
+                stft_results,
+                title_prefix=title_prefix,
+                trigger_time=args.trigger_time,
+                downsample=args.downsample
+            )
+        if cwt_results:
+            plots.plot_cwt(
+                cwt_results,
+                trigger_time=args.trigger_time,
+                title_prefix=title_prefix
+            )
+        if args.overview_plot:
+            plots.plot_analysis_overview(
+                shot_num_for_vest,
+                {"Processed Signals": combined_analysis_data},
+                {"Density": combined_density_data},
+                vest_data,
+                trigger_time=args.trigger_time,
+                downsample=args.downsample,
+                title_prefix=title_prefix,
+            )
+        if args.save_plots and shot_num_for_vest:
+            output_dir = os.path.join(args.results_dir, str(shot_num_for_vest))
+            os.makedirs(output_dir, exist_ok=True)
+            for i in plt.get_fignums():
+                fig = plt.figure(i)
+                filename = fig._suptitle.get_text() if fig._suptitle else f"figure_{i}"
+                filename = "".join(c for c in filename if c.isalnum() or c in (" ", "_", "-")).rstrip()
+                filename = filename.replace(" ", "_").replace("#", "")
+                filepath = os.path.join(output_dir, f"{filename}.png")
+                logging.info(f"Saving figure to {filepath}")
+                fig.savefig(filepath, dpi=300)
+        
+        if plt.get_fignums():
+            logging.info("Displaying plots. Close all plot windows to exit.")
+            plt.ioff()
+            plt.show()
+        else:
+            logging.info("No plots were generated.")
+
+    if args.save_data and shot_num_for_vest:
+        logging.info("Saving analysis results to HDF5 files...")
+        output_dir = os.path.join(args.results_dir, str(shot_num_for_vest))
+        os.makedirs(output_dir, exist_ok=True)
+        save_results_to_hdf5(
+            output_dir,
+            shot_num_for_vest,
+            combined_analysis_data,
+            stft_results,
+            cwt_results,
+            combined_density_data,
+            vest_data,
+        )
+
+    logging.info("IFI Analysis Finished.")
+
+    return {
+        "processed_data": combined_analysis_data,
+        "stft_results": stft_results,
+        "cwt_results": cwt_results,
+        "density_data": combined_density_data,
+        "vest_data": vest_data,
+    }
+
+
 def main():
     """Main function to run the analysis pipeline."""
     parser = argparse.ArgumentParser(description="IFI Analysis Pipeline")
@@ -213,154 +515,12 @@ def main():
     )
 
     args = parser.parse_args()
-
-    logging.info(f"Args parsed for analysis of shot {args.query}: {args}")
-
-    # --- Process Arguments ---
-    # Convert single query item to correct type if possible
-    processed_query: Union[str, int, List[Union[str, int]]]
-    if len(args.query) == 1:
-        item = args.query[0]
-        processed_query = int(item) if item.isdigit() else item
-    else:
-        processed_query = [int(q) if q.isdigit() else q for q in args.query]
+    run_analysis(args)
     
-    data_folders_list = None
-    if args.data_folders:
-        data_folders_list = [folder.strip() for folder in args.data_folders.split(',')]
 
-    logging.info("Starting IFI Analysis...")
-    logging.info(f"Query: {processed_query}, Folders: {data_folders_list or 'Default'}, Results Dir: {args.results_dir}")
-
-    # --- Main Analysis Steps ---
-    try:
-        with NAS_DB(config_path='ifi/config.ini') as nas:
-            # Override the default dumping_folder with the one from arguments
-            nas.dumping_folder = args.results_dir
-            os.makedirs(nas.dumping_folder, exist_ok=True)
-
-            # Determine the final list of folders to search
-            search_folders = None
-            if args.data_folders:
-                user_folders = [folder.strip() for folder in args.data_folders.split(',')]
-                if args.add_path:
-                    # Combine user-specified folders with defaults from the config
-                    search_folders = nas.default_data_folders + user_folders
-                    logging.info(f"Adding to default search paths. Searching {len(search_folders)} folders.")
-                else:
-                    # Override the defaults with user-specified folders
-                    search_folders = user_folders
-            # If search_folders is still None, nas.find_files will use its defaults
-
-            logging.info("Finding files...")
-            # Instead of loading all data, just find the file paths first.
-            target_files = nas.find_files(query=processed_query, data_folders=search_folders)
-
-            if not target_files:
-                logging.warning("No files found for the given query. Exiting.")
-                return
-
-            logging.info(f"Found {len(target_files)} files to process. Building Dask graph...")
-            
-            # --- Dask Parallel Processing ---
-            # 1. Create a list of delayed tasks
-            tasks = [load_and_process_file(nas, f, args) for f in target_files]
-            
-            # 2. Execute tasks in parallel
-            logging.info(f"Executing {len(tasks)} tasks in parallel using '{args.scheduler}' scheduler...")
-            # For debugging, force single-threaded execution to see logs properly
-            results = dask.compute(*tasks, scheduler='single-threaded')
-            
-            # 3. Process results
-            # Filter out None results from failed tasks
-            results = [res for res in results if res is not None]
-            if not results:
-                logging.error("All processing tasks failed. Exiting.")
-                return
-                
-            # Unpack results into separate dictionaries
-            analysis_data = {file_path: df for file_path, df, stft in results}
-            stft_results = {k: v for stft in (res[2] for res in results if res[2] is not None) for k, v in stft.items()}
-
-    except FileNotFoundError as e:
-        logging.error(f"Configuration file not found: {e}")
-        return
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during data loading and processing: {e}", exc_info=True)
-        return
-
-    # --- Combine data from multiple files into single dataframes for easier processing ---
-    # We will use the time axis from the first file as the reference
-    all_filenames = list(analysis_data.keys())
-    ref_time_axis = analysis_data[all_filenames[0]].index
-    logging.info(f"Using time axis from '{os.path.basename(all_filenames[0])}' as reference for combining data.")
-
-    def combine_dataframes(data_dict):
-        """Combines a dictionary of dataframes into a single dataframe."""
-        df_list = []
-        for filename, df in data_dict.items():
-            # Rename columns to include filename prefix to avoid collision
-            prefix = os.path.basename(filename).split(".")[0]
-            df_renamed = df.rename(
-                columns={c: f"{prefix}_{c}" for c in df.columns}
-            )
-            # Reindex to the common time axis
-            df_reindexed = df_renamed.reindex(ref_time_axis, method="nearest", limit=1)
-            df_list.append(df_reindexed)
-        return pd.concat(df_list, axis=1)
-
-    # Combined dataframes for plotting and further analysis
-    # NOTE: The concept of "raw_data" and "refined_data" is simplified in the Dask workflow
-    # as processing is done in one go. We will use the final 'analysis_data' for combinations.
-    # If raw/refined plots are needed, the delayed function would need to return them.
-    combined_analysis_data = combine_dataframes(analysis_data)
-    logging.info(f"All processed data combined into a single DataFrame with shape {combined_analysis_data.shape}.")
-
-
-    # 4. Perform frequency analysis
-    # STFT is now done in parallel within the Dask tasks.
-    # We just need to ensure the results are correctly formatted.
-    if args.stft:
-        logging.info("STFT analysis was performed in parallel.")
-    else:
-        stft_results = {}
-
-
-    # --- Perform CWT Analysis ---
-    cwt_results = {}
-    if args.cwt:
-        logging.info("Performing CWT analysis...")
-        analyzer = spectrum.SpectrumAnalysis()
-
-        for filename, df in analysis_data.items():
-            # Determine which columns to analyze
-            all_data_cols = [col for col in df.columns]
-            if args.cwt_cols is None:
-                cols_to_analyze = all_data_cols
-            else:
-                cols_to_analyze = args.cwt_cols
-
-            fs = 1 / df.index.to_series().diff().mean()
-            cwt_results[filename] = {}
-
-            for col_name in cols_to_analyze:
-                if col_name not in df.columns:
-                    logging.warning(f"Column '{col_name}' not found in {os.path.basename(filename)}. Skipping CWT.")
-                    continue
-
-                logging.info(f"  Analyzing {col_name} in {os.path.basename(filename)}...")
-                signal = df[col_name].to_numpy()
-                
-                # Create a time vector corresponding to the signal
-                t = df.index.to_numpy()
-
-                cwt_matrix, freqs = analyzer.compute_cwt(signal, fs)
-                cwt_results[filename][col_name] = {
-                    "t": t,
-                    "freqs": freqs,
-                    "cwt_matrix": cwt_matrix,
-                }
-        logging.info("CWT analysis complete.")
+def save_results_to_hdf5(
+    output_dir, shot_num, processed_data, stft_results, cwt_results, density_data, vest_data
+):
 
 
     # 5. Calculate density
@@ -430,15 +590,13 @@ def main():
                             continue
                         probe_signal = df[probe_col_name].to_numpy()
 
-                        # Get f_center from STFT results of the reference channel
-                        if filename not in stft_results or ref_col_name not in stft_results[filename]:
-                            logging.warning(f"STFT results for reference '{ref_col_name}' not found in {os.path.basename(filename)}. Cannot perform CDM. Skipping.")
+                        # --- Use new FFT method to find f_center ---
+                        f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
+                        if f_center == 0.0:
+                            logging.warning(f"Could not determine a valid center frequency for '{ref_col_name}' in {os.path.basename(filename)}. Skipping CDM.")
                             continue
                         
-                        stft_data = stft_results[filename][ref_col_name]
-                        ridge = analyzer.find_freq_ridge(stft_data['Zxx'], stft_data['f'])
-                        f_center = np.nanmean(ridge)
-                        logging.info(f"    - Determined center frequency: {f_center/1e6:.2f} MHz")
+                        logging.info(f"    - Determined center frequency via FFT: {f_center/1e6:.2f} MHz")
 
                         phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
 
@@ -476,48 +634,6 @@ def main():
     else:
         combined_density_data = pd.DataFrame()
         logging.info("Skipping density calculation as per arguments.")
-
-    # 6. Load VEST data
-    vest_data = pd.DataFrame(index=ref_time_axis)
-    shot_num_for_vest = None
-    if args.vest_fields:
-        # We need a shot number to load VEST data. We'll use the first one from the query.
-        if isinstance(processed_query, int):
-            shot_num_for_vest = processed_query
-        elif isinstance(processed_query, list) and isinstance(processed_query[0], int):
-            shot_num_for_vest = processed_query[0]
-        else:
-            # Try to extract from string pattern
-            match = re.match(r'(\d+)', str(processed_query))
-            if match:
-                shot_num_for_vest = int(match.group(1))
-
-        if shot_num_for_vest:
-            logging.info(f"Loading VEST data for shot {shot_num_for_vest}, fields: {args.vest_fields}...")
-            try:
-                with VEST_DB(config_path='ifi/config.ini') as vest_db:
-                    vest_df_raw = vest_db.load_shot(shot_num_for_vest, args.vest_fields)
-                    
-                    if not vest_df_raw.empty:
-                        # Interpolate VEST data onto the main time axis
-                        interp_data = {}
-                        for col in vest_df_raw.columns:
-                            interp_data[col] = np.interp(
-                                ref_time_axis.to_numpy(),
-                                vest_df_raw.index.to_numpy(),
-                                vest_df_raw[col].to_numpy(),
-                                left=np.nan,
-                                right=np.nan,
-                            )
-                        vest_data = pd.DataFrame(interp_data, index=ref_time_axis)
-                        logging.info(f"Successfully loaded and processed VEST data. Shape: {vest_data.shape}")
-                    else:
-                        logging.warning("No VEST data returned for the given fields.")
-            except Exception as e:
-                logging.error(f"An error occurred while loading VEST data: {e}", exc_info=True)
-        else:
-            logging.warning("Could not determine a shot number from query to load VEST data.")
-
 
     # --- Plotting ---
     if not args.plot and not args.overview_plot:
@@ -606,6 +722,15 @@ def main():
 
     logging.info("IFI Analysis Finished.")
 
+    # For interactive use, return the main data artifacts
+    return {
+        "processed_data": combined_analysis_data,
+        "stft_results": stft_results,
+        "cwt_results": cwt_results,
+        "density_data": combined_density_data,
+        "vest_data": vest_data,
+    }
+
 
 def save_results_to_hdf5(
     output_dir, shot_num, processed_data, stft_results, cwt_results, density_data, vest_data
@@ -689,7 +814,7 @@ def get_density_analysis_params(filename: str) -> dict:
     # Rule 3: Shots 41542 and above
     if shot_num >= 41542:
         if "_ALL" in basename:
-            # {shot번호}_ALL 파일: 280GHz / CDM 분석
+            # {shot번호}_ALL 파일: 280GHz / CDM 분석 
             # MATLAB script: ref282 = csv_data282(:,2); prob282 = csv_data282(:,3);
             # This maps to CH1 and CH2 if TIME is the first column.
             return {
