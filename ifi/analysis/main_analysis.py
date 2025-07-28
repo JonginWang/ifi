@@ -29,9 +29,10 @@ from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
 from ifi.analysis.plots import plot_cwt
+from ifi.utils import setup_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging at the very beginning
+setup_logging()
 
 @dask.delayed
 def load_and_process_file(nas_instance, file_path, args):

@@ -2,6 +2,10 @@ import argparse
 from argparse import Namespace
 import matplotlib.pyplot as plt
 from ifi.analysis.main_analysis import run_analysis
+from ifi.utils import setup_logging
+
+# Configure logging at the very beginning
+setup_logging()
 
 def create_mock_args():
     """
