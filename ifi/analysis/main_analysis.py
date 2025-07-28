@@ -296,14 +296,36 @@ def run_analysis(args):
     if density_dfs:
         reindexed_dfs = [df.reindex(ref_time_axis, method='nearest', limit=1) for df in density_dfs]
         combined_density_data = pd.concat(reindexed_dfs, axis=1)
+
         if args.baseline:
             logging.info(f"Performing '{args.baseline}' baseline correction on density data...")
             time_axis_for_density = combined_analysis_data.index.to_numpy()
+
+            # --- Refined logic to find the correct plasma current column ---
+            ip_column_name = None
+            if not vest_data.empty:
+                # Find all possible candidates for plasma current
+                candidate_cols = [col for col in vest_data.columns if 'ip' in col.lower() or 'i_p' in col.lower()]
+                
+                if candidate_cols:
+                    # Prioritize candidates that do NOT contain 'raw'
+                    preferred_cols = [col for col in candidate_cols if 'raw' not in col.lower()]
+                    
+                    if preferred_cols:
+                        # If we found non-raw candidates (e.g., "Ip (kA)"), use the first one
+                        ip_column_name = preferred_cols[0]
+                    else:
+                        # If only raw candidates were found (e.g., "Ip_raw (V)"), use the first of those
+                        ip_column_name = candidate_cols[0]
+
+                    logging.info(f"Found plasma current column for baseline correction: '{ip_column_name}' from candidates {candidate_cols}")
+
             combined_density_data = phase_converter.correct_baseline(
                 combined_density_data,
                 time_axis_for_density,
                 args.baseline,
-                vest_data=vest_data
+                vest_data=vest_data,
+                ip_column_name=ip_column_name # Pass the found column name
             )
     elif args.density:
         logging.info("Density calculation did not produce any results.")

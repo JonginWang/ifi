@@ -73,7 +73,7 @@ def ensure_dir_exists(path: str):
         logging.info(f"Created directory: {path}")
 
 
-def setup_logging():
+def setup_logging(level="INFO"):
     """
     Configures the root logger to save all log levels to a file and
     stream INFO and above to the console.
@@ -81,6 +81,11 @@ def setup_logging():
     Log files are saved in the 'logs' directory with the format:
     YYYY-MM-DD_executed_script_name.log
     """
+    if level.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+        log_level = getattr(logging, level.upper())
+    else:
+        log_level = logging.INFO
+
     try:
         # Determine the name of the script that is being executed.
         if hasattr(sys.modules['__main__'], '__file__'):
@@ -100,7 +105,7 @@ def setup_logging():
         
         # Get the root logger
         root_logger = logging.getLogger()
-        root_logger.setLevel(logging.DEBUG) # Set the lowest level to capture everything
+        root_logger.setLevel(logging.DEBUG) # Always set root to the lowest level to capture everything
 
         # Clear any existing handlers to avoid duplicate logs
         if root_logger.hasHandlers():
@@ -115,7 +120,7 @@ def setup_logging():
 
         # --- Console Handler (logs INFO and above) ---
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+        console_handler.setLevel(log_level) # Set console level based on the function argument
         console_formatter = logging.Formatter('%(levelname)s: %(message)s')
         console_handler.setFormatter(console_formatter)
         root_logger.addHandler(console_handler)

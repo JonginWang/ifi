@@ -323,7 +323,7 @@ class PhaseConverter:
 
         return phase_diff
 
-    def correct_baseline(self, density_df: pd.DataFrame, time_axis: np.ndarray, mode: str, vest_data: pd.DataFrame = None):
+    def correct_baseline(self, density_df: pd.DataFrame, time_axis: np.ndarray, mode: str, vest_data: pd.DataFrame = None, ip_column_name: str = None):
         """
         Corrects the baseline of the calculated density.
 
@@ -332,6 +332,7 @@ class PhaseConverter:
             time_axis: The common time axis for the data.
             mode: The baseline correction mode ('ip' or 'trig').
             vest_data: DataFrame containing VEST data, required for 'ip' mode.
+            ip_column_name: The name of the plasma current column in vest_data.
         """
         corrected_df = density_df.copy()
 
@@ -340,16 +341,21 @@ class PhaseConverter:
                 logging.warning("Warning: 'ip' baseline mode selected but VEST data is not available. Skipping correction.")
                 return corrected_df
             
-            # Assuming the Ip data column is named '109' from vest_db
-            ip_col = '109'
-            if ip_col not in vest_data.columns:
-                logging.warning(f"Warning: Plasma current column '{ip_col}' not in VEST data. Skipping 'ip' baseline correction.")
+            if ip_column_name is None or ip_column_name not in vest_data.columns:
+                logging.warning(f"Warning: Plasma current column '{ip_column_name}' not in VEST data. Skipping 'ip' baseline correction.")
                 return corrected_df
             
-            ip_data = vest_data[ip_col]
-            # Find the ramp-up point (first time Ip > 10kA)
+            ip_data = vest_data[ip_column_name]
+            # Find the ramp-up point (first time Ip > 5kA)
+            # Note: Assuming Ip is in Amperes. If in kA, this threshold should be 5.
+            ip_threshold = 5e3 if np.nanmax(ip_data) > 1000 else 5
+
             try:
-                ramp_up_index = np.where(ip_data > 10e3)[0][0]
+                ramp_up_indices = np.where(ip_data > ip_threshold)[0]
+                if len(ramp_up_indices) == 0:
+                    raise IndexError("Threshold not exceeded")
+                
+                ramp_up_index = ramp_up_indices[0]
                 t_rampup = ip_data.index[ramp_up_index]
                 
                 # Define baseline window: 3 to 8 ms before ramp-up
@@ -357,7 +363,7 @@ class PhaseConverter:
                 t_end = t_rampup - 3e-3
 
             except IndexError:
-                logging.warning("Warning: Plasma current never exceeded 10kA. Cannot determine ramp-up for 'ip' baseline. Skipping.")
+                logging.warning(f"Warning: Plasma current never exceeded threshold ({ip_threshold}). Cannot determine ramp-up for 'ip' baseline. Skipping.")
                 return corrected_df
 
         elif mode == 'trig':
