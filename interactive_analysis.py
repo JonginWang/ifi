@@ -1,7 +1,7 @@
 import argparse
 from argparse import Namespace
 import matplotlib.pyplot as plt
-from .main_analysis import run_analysis
+from ifi.analysis.main_analysis import run_analysis
 
 def create_mock_args():
     """

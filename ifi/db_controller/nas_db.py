@@ -197,7 +197,7 @@ class NAS_DB:
             self.logger.info("NAS authentication successful.")
 
 
-    def find_files(self, query: Union[int, str, List[Union[int, str]]], data_folders: List[str] = None) -> List[str]:
+    def find_files(self, query: Union[int, str, List[Union[int, str]]], data_folders: List[str] = None, force_remote: bool = False) -> List[str]:
         """
         Finds all files matching a query across multiple folders.
 
