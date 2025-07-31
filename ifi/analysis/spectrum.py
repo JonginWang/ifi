@@ -17,7 +17,7 @@ class SpectrumAnalysis:
     def __init__(self):
         self.kwargs_stft_fallback = {
             'window': ('kaiser', 8), 'nperseg': 10000, 'noverlap': 5000, 'mfft': None,
-            'dual_win': None, 'scale_to': 'magnitude', 'phase_shift': 0, 'padtype': 'reflect'
+            'dual_win': None, 'scale_to': 'magnitude', 'phase_shift': 0, 'padtype': 'reflect',
             'padding': 'even'
         }
         self._cached_stft_kwargs = {}
