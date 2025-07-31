@@ -30,7 +30,7 @@ from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
 from ifi.analysis.plots import plot_cwt
-from ifi.utils import LogManager
+from ifi.utils import LogManager, FlatShotList, file_io
 
 # The LogManager class ensures this setup runs only once per session.
 # It's better to initialize it inside the main() function or at the start of the script logic.
@@ -124,7 +124,7 @@ def run_analysis(
     Performs a complete analysis workflow for a given query.
     """
     logging.info("\n========== Parsing Analysis Query ==========")
-    flat_list = utils.FlatShotList(query)
+    flat_list = FlatShotList(query)
     logging.info(f"Found {len(flat_list.nums)} unique shot numbers: {flat_list.nums}")
     logging.info(f"Found {len(flat_list.paths)} unique file paths: {flat_list.paths}")
 
@@ -334,10 +334,11 @@ def main():
     )
     parser.add_argument(
         '--stft_cols',
+        nargs='*',
         type=int,
-        default=None,
+        default=[],
         help='''The indices of the columns to perform STFT analysis on.
-            If None, all columns will be analyzed.'''
+            If empty, all columns will be analyzed.'''
     )
     parser.add_argument(
         '--cwt',
