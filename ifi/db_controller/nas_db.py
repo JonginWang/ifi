@@ -12,6 +12,7 @@ import h5py
 import re
 import tempfile
 from stat import S_ISDIR
+import threading
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -97,7 +98,7 @@ class NAS_DB:
         self.ssh_port = ssh_cfg.getint('ssh_port')
         self.ssh_user = ssh_cfg.get('ssh_user')
         self.ssh_pkey = os.path.expanduser(ssh_cfg.get('ssh_pkey_path'))
-        self.remote_temp_dir = ssh_cfg.get('remote_temp_dir')
+        self.remote_temp_dir = ssh_cfg.get('remote_temp_dir', None) # Read optional from config
 
         # Connection settings
         conn_cfg = config['CONNECTION_SETTINGS']
@@ -119,6 +120,7 @@ class NAS_DB:
         self._file_cache = {} # Cache for file paths for find_files method
 
         self._is_connected = False
+        self.ssh_lock = threading.Lock()
 
     def _ensure_remote_dir_exists(self, remote_path: str):
         """
@@ -126,6 +128,17 @@ class NAS_DB:
         """
         if self.access_mode != 'remote' or not self.sftp_client:
             return
+
+        # If remote_temp_dir is not set in config, create it in the user's home dir.
+        if not remote_path:
+            try:
+                home_dir = self.sftp_client.normalize('.')
+                remote_path = os.path.join(home_dir, '.ifi_temp').replace('\\', '/')
+                self.remote_temp_dir = remote_path # Store for later use
+                self.logger.info(f"Remote temp directory not configured, using dynamic path: {remote_path}")
+            except Exception as e:
+                self.logger.error(f"Could not determine remote home directory: {e}")
+                raise
 
         try:
             # Check if the path exists and is a directory
@@ -141,49 +154,54 @@ class NAS_DB:
 
     def connect(self):
         """
-        Establishes connection. Checks for local access first, then SSH.
+        Establishes connection. Checks for local access first, then SSH. Thread-safe.
         """
         if self._is_connected:
             return True
 
-        if os.path.isdir(self.nas_mount):
-            self.logger.info(f"Local NAS mount found at '{self.nas_mount}'. Using direct access.")
-            self.access_mode = 'local'
-            self._is_connected = True
-            return True
-        
-        self.logger.info("Local NAS mount not found. Attempting SSH connection.")
-        self.access_mode = 'remote'
-        
-        for attempt in range(self.ssh_max_retries):
-            try:
-                self.logger.info(f"SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
-                self.ssh_client = paramiko.SSHClient()
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                self.ssh_client.connect(
-                    hostname=self.ssh_host,
-                    port=self.ssh_port,
-                    username=self.ssh_user,
-                    key_filename=self.ssh_pkey,
-                    timeout=self.ssh_connect_timeout
-                )
-                self.sftp_client = self.ssh_client.open_sftp()
-                self.logger.info(f"SSH connection to {self.ssh_host} successful.")
-                
-                self._authenticate_nas_remote() 
-                self._is_connected = True
+        with self.ssh_lock:
+            # Double-check inside the lock to prevent a race condition
+            if self._is_connected:
                 return True
 
-            except Exception as e:
-                self.logger.error(f"SSH connection attempt {attempt + 1} failed: {e}")
-                self.disconnect()
-                if attempt < self.ssh_max_retries - 1:
-                    self.logger.info("Retrying in 3 seconds...")
-                    time.sleep(3)
-        
-        self._is_connected = False
-        self.logger.error("All SSH connection attempts failed.")
-        return False
+            if os.path.isdir(self.nas_mount):
+                self.logger.info(f"Local NAS mount found at '{self.nas_mount}'. Using direct access.")
+                self.access_mode = 'local'
+                self._is_connected = True
+                return True
+            
+            self.logger.info("Local NAS mount not found. Attempting SSH connection.")
+            self.access_mode = 'remote'
+            
+            for attempt in range(self.ssh_max_retries):
+                try:
+                    self.logger.info(f"SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
+                    self.ssh_client = paramiko.SSHClient()
+                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    self.ssh_client.connect(
+                        hostname=self.ssh_host,
+                        port=self.ssh_port,
+                        username=self.ssh_user,
+                        key_filename=self.ssh_pkey,
+                        timeout=self.ssh_connect_timeout
+                    )
+                    self.sftp_client = self.ssh_client.open_sftp()
+                    self.logger.info(f"SSH connection to {self.ssh_host} successful.")
+                    
+                    self._authenticate_nas_remote() 
+                    self._is_connected = True
+                    return True
+
+                except Exception as e:
+                    self.logger.error(f"SSH connection attempt {attempt + 1} failed: {e}")
+                    self.disconnect() # disconnect sets _is_connected to False
+                    if attempt < self.ssh_max_retries - 1:
+                        self.logger.info("Retrying in 3 seconds...")
+                        time.sleep(3)
+            
+            self._is_connected = False
+            self.logger.error("All SSH connection attempts failed.")
+            return False
 
     def _authenticate_nas_remote(self):
         """
@@ -496,6 +514,19 @@ class NAS_DB:
     def _read_shot_file(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         """
         Master parser that dispatches to the correct reader based on file extension.
+        This method is a thread-safe wrapper for remote operations.
+        """
+        if self.access_mode == 'remote':
+            with self.ssh_lock:
+                # Ensures that each dask task gets exclusive access to the SSH client.
+                return self._dispatch_read(file_path, **kwargs)
+        else:
+            # No lock needed for local access
+            return self._dispatch_read(file_path, **kwargs)
+
+    def _dispatch_read(self, file_path: str, **kwargs) -> pd.DataFrame | None:
+        """
+        Internal dispatcher for reading files. Assumes any necessary locks are held.
         """
         _, ext = os.path.splitext(file_path)
         ext = ext.lower()

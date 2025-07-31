@@ -204,23 +204,28 @@ def run_analysis(
             axis=1
         )
         current_vest_data = vest_data_by_shot.get(shot_num, {})
-        vest_lf_data = current_vest_data.get('25k') or current_vest_data.get('250k')
+        vest_lf_data = current_vest_data.get('25k')
+        if vest_lf_data is None:
+            vest_lf_data = current_vest_data.get('250k')
         
         # --- 5. Density Calculation & Baseline Correction ---
         phase_converter = phi2ne.PhaseConverter()
+        # NOTE: Density calculation is temporarily disabled due to missing 'get_density_analysis_params'
         density_data = pd.DataFrame(index=combined_signals.index)
-        if args.density:
-            params = file_io.get_density_analysis_params(f"{shot_num}_ALL.csv")
-            if params:
-                ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
-                fs = 1 / combined_signals.index.to_series().diff().mean()
-                f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
-                for probe_col in params['probe_cols']:
-                    if probe_col in combined_signals.columns:
-                        phase = phase_converter.calc_phase_cdm(ref_signal, combined_signals[probe_col].to_numpy(), fs, f_center)
-                        density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
-                if args.baseline and vest_lf_data is not None:
-                    density_data = phase_converter.correct_baseline(density_data, vest_lf_data, mode=args.baseline, trigger_time=args.trigger_time)
+        # phase_converter = phi2ne.PhaseConverter()
+        # density_data = pd.DataFrame(index=combined_signals.index)
+        # if args.density:
+        #     params = file_io.get_density_analysis_params(f"{shot_num}_ALL.csv")
+        #     if params:
+        #         ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
+        #         fs = 1 / combined_signals.index.to_series().diff().mean()
+        #         f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
+        #         for probe_col in params['probe_cols']:
+        #             if probe_col in combined_signals.columns:
+        #                 phase = phase_converter.calc_phase_cdm(ref_signal, combined_signals[probe_col].to_numpy(), fs, f_center)
+        #                 density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
+        #         if args.baseline and vest_lf_data is not None:
+        #             density_data = phase_converter.correct_baseline(density_data, vest_lf_data, mode=args.baseline, trigger_time=args.trigger_time)
         
         # --- 6. Final Output Bundle ---
         analysis_bundle = {

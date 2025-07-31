@@ -40,9 +40,8 @@ def create_mock_args():
         downsample=10,
         
         # --- STFT/CWT Arguments ---
-        stft_cols=None, # e.g., [0, 1] or None for all
+        ft_cols=None, # e.g., [0, 1] or None for all
         cwt=False,
-        cwt_cols=None,
 
         # --- Saving Arguments ---
         results_dir='ifi/results',
