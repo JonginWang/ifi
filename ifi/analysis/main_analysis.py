@@ -30,7 +30,8 @@ from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
 from ifi.analysis.plots import plot_cwt
-from ifi.utils import LogManager, FlatShotList, file_io
+from ifi.utils import LogManager, FlatShotList
+from ifi import file_io
 
 # The LogManager class ensures this setup runs only once per session.
 # It's better to initialize it inside the main() function or at the start of the script logic.
