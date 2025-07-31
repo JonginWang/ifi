@@ -1,13 +1,12 @@
 import numpy as np
 import pandas as pd
-from scipy import signal as sp_signal
+from scipy import signal as spsig
 from scipy.fft import fft, fftfreq
-from squeezepy import Wavelet, cwt, stft
-from squeezepy.experimental import scale_to_freq
+import ssqueezepy as ssqpy
+from ssqueezepy.experimental import scale_to_freq
 import pywt
 from typing import Tuple, Union
 from collections import defaultdict
-from ssqueezepy import stft
 import logging
 
 from ifi.utils import assign_kwargs
@@ -35,7 +34,7 @@ class SpectrumAnalysis:
             window_spec = final_kwargs['window']
             
             if isinstance(window_spec, (str, tuple)):
-                self._cached_window = sp_signal.get_window(window_spec, nperseg)
+                self._cached_window = spsig.get_window(window_spec, nperseg)
             elif isinstance(window_spec, np.ndarray) and len(window_spec) == nperseg:
                 self._cached_window = window_spec
             else:
@@ -51,7 +50,7 @@ class SpectrumAnalysis:
     def _translate_kwargs(self, kwargs, target_lib='scipy'):
         """Translates kwargs for different libraries."""
         translated = kwargs.copy()
-        if target_lib == 'squeezepy':
+        if target_lib == 'ssqueezepy':
             if 'mfft' in translated:
                 translated['n_fft'] = translated.pop('mfft')
             if 'hop' in translated:
@@ -67,7 +66,7 @@ class SpectrumAnalysis:
         all_kwargs = self._get_stft_kwargs(**kwargs)
         scipy_kwargs = self._translate_kwargs(all_kwargs, 'scipy')
         
-        SFT = sp_signal.ShortTimeFFT(scipy_kwargs['win'], scipy_kwargs['hop'], fs=fs, mfft=scipy_kwargs['mfft'],
+        SFT = spsig.ShortTimeFFT(scipy_kwargs['win'], scipy_kwargs['hop'], fs=fs, mfft=scipy_kwargs['mfft'],
                                      dual_win=scipy_kwargs['dual_win'], scale_to=scipy_kwargs['scale_to'],
                                      phase_shift=scipy_kwargs['phase_shift'])
         Zxx = SFT.stft(signal, p0=0, p1=None, k_offset=0, padding=scipy_kwargs['padding'], axis=-1)
@@ -75,17 +74,17 @@ class SpectrumAnalysis:
 
     def compute_stft_sqpy(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         all_kwargs = self._get_stft_kwargs(**kwargs)
-        sqpy_kwargs = self._translate_kwargs(all_kwargs, 'squeezepy')
+        sqpy_kwargs = self._translate_kwargs(all_kwargs, 'ssqueezepy')
 
-        Sxx, f, t = stft(signal, window=sqpy_kwargs['win'], n_fft=sqpy_kwargs['n_fft'], 
+        Sxx, f, t = ssqpy.stft(signal, window=sqpy_kwargs['win'], n_fft=sqpy_kwargs['n_fft'], 
                          hop_len=sqpy_kwargs['hop_len'], fs=fs, padtype=sqpy_kwargs['padtype'])
         return f, t, Sxx
 
     def compute_cwt(self, signal: np.ndarray, fs: float, wavelet: str = "gmw", **kwargs):
-        logging.debug(f"Computing CWT with squeezepy using '{wavelet}' wavelet.")
-        wav = Wavelet(wavelet)
-        # Squeezepy cwt returns Tx, Wx, ssq_freqs, scales, ...
-        Wx, scales, *_ = cwt(signal, wavelet=wav, fs=fs, **kwargs)
+        logging.debug(f"Computing CWT with ssqueezepy using '{wavelet}' wavelet.")
+        wav = ssqpy.Wavelet(wavelet)
+        # ssqueezepy cwt returns Tx, Wx, ssq_freqs, scales, ...
+        Wx, scales, *_ = ssqpy.cwt(signal, wavelet=wav, fs=fs, **kwargs)
         freqs_cwt = scale_to_freq(scales, wav, len(signal), fs=fs)
         return freqs_cwt, Wx
 
