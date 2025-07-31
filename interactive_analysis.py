@@ -1,11 +1,14 @@
 import argparse
 from argparse import Namespace
+import logging
 import matplotlib.pyplot as plt
+from ifi.utils import LogManager
 from ifi.analysis.main_analysis import run_analysis
-from ifi.utils import setup_logging
 
-# Configure logging at the very beginning
-setup_logging()
+# --- Setup Logging ---
+# Initialize the LogManager. It will only configure logging once per session.
+# All subsequent calls to LogManager() in other modules will do nothing.
+LogManager(level="DEBUG")
 
 def create_mock_args():
     """

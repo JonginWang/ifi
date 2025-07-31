@@ -37,7 +37,7 @@ def run_nas_db_test():
     """
     Executes a series of tests on the new refactored NAS_DB controller.
     """
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
     
     if not os.path.exists(CONFIG_PATH):
         logging.error(f"Configuration file not found at '{CONFIG_PATH}'. Please create it from the template.")
@@ -118,7 +118,7 @@ def run_vest_db_test():
     """
     Executes a test on the VEST_DB controller.
     """
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
     
     if not os.path.exists(CONFIG_PATH):
         logging.error(f"Configuration file not found at '{CONFIG_PATH}'. Please create it from the template.")

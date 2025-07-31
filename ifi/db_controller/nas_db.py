@@ -75,7 +75,7 @@ class NAS_DB:
             raise FileNotFoundError(f"Config file not found: '{config_path}'")
 
         self.logger = logging.getLogger(__name__)
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
         
         config = configparser.ConfigParser()
         config.read(config_path)
@@ -117,6 +117,8 @@ class NAS_DB:
         self.sftp_client = None
         self.access_mode = None  # 'local' or 'remote'
         self._file_cache = {} # Cache for file paths for find_files method
+
+        self._ext_list = ALLOWED_EXTENSIONS
 
     def _ensure_remote_dir_exists(self, remote_path: str):
         """
@@ -197,7 +199,7 @@ class NAS_DB:
             self.logger.info("NAS authentication successful.")
 
 
-    def find_files(self, query: Union[int, str, List[Union[int, str]]], data_folders: List[str] = None, force_remote: bool = False) -> List[str]:
+    def find_files(self, query: Union[int, str, List[Union[int, str]]], data_folders: List[str] = None, add_path: bool = False, force_remote: bool = False) -> List[str]:
         """
         Finds all files matching a query across multiple folders.
 
@@ -214,10 +216,22 @@ class NAS_DB:
         If `data_folders` is not provided, it uses the default folders from config.ini.
         The method caches results based on the query and data_folders.
         """
-        if data_folders is None:
+        if data_folders is not None:
+            if isinstance(data_folders, str):
+                data_folders = [data_folders]
+            elif isinstance(data_folders, list):
+                for i, folder in enumerate(data_folders):
+                    if not isinstance(folder, str):
+                        self.logger.warning(f"Invalid data folder type: {type(folder)}. Converting to string. {folder}")
+                        data_folders[i] = str(folder)
+            else:
+                self.logger.warning(f"Invalid data folder type: {type(data_folders)}. {data_folders}")
+                data_folders = [data_folders]
+        else:
             data_folders = self.default_data_folders
-        elif not isinstance(data_folders, list):
-            data_folders = [data_folders]
+
+        if add_path:
+            data_folders = list(set(self.default_data_folders + data_folders))
 
         cache_key = (str(query), tuple(sorted(data_folders)))
         if cache_key in self._file_cache:
@@ -339,7 +353,7 @@ class NAS_DB:
             self.logger.error(f"Error calculating file sizes: {e}")
             return -1 # Return -1 to indicate an error
 
-    def get_shot_data(self, query: Union[int, str, List[Union[int, str]]], data_folders: Union[list, str] = None, force_remote: bool = False, **kwargs) -> Dict[str, pd.DataFrame]:
+    def get_shot_data(self, query: Union[int, str, List[Union[int, str]]], data_folders: Union[list, str] = None, add_path: bool = False, force_remote: bool = False, **kwargs) -> Dict[str, pd.DataFrame]:
         """
         Retrieves data for a given shot number, pattern, or list of files.
         Caches each file to a dedicated HDF5 file based on its shot number.
@@ -354,13 +368,9 @@ class NAS_DB:
         Returns:
             A dictionary mapping each successfully read filename to its DataFrame.
         """
-        if data_folders is None:
-            data_folders = self.default_data_folders
-        elif isinstance(data_folders, str):
-            data_folders = [data_folders]
         
         # --- Find all target files on the NAS ---
-        target_files = self.find_files(query, data_folders)
+        target_files = self.find_files(query, data_folders, add_path, force_remote, **kwargs)
         if not target_files:
             self.logger.warning(f"No files found on NAS for query: {query}")
             return {}
@@ -925,7 +935,8 @@ class NAS_DB:
 if __name__ == '__main__':
     # This example demonstrates how to use the NAS_DB class.
     # It requires a valid 'ifi/config.ini' file with [NAS] and [SSH_NAS] sections.
-    
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+            
     logging.info("--- Testing NAS_DB ---")
     
     # Example usage:
@@ -939,7 +950,7 @@ if __name__ == '__main__':
             # 1. First call: Data is not cached. It will be fetched from the remote source
             #    and then saved to the local cache (e.g., './cache/45821.h5').
             logging.info("\n--- 1. First call to get_shot_data (should fetch and cache) ---")
-            data_dict = nas.get_shot_data(shot_to_find, folder_to_search)
+            data_dict = nas.get_shot_data(shot_to_find, folder_to_search, add_path=True)
             if data_dict:
                 logging.info("   -> Data loaded successfully on first call.")
                 logging.info(f"   -> Number of dataframes: {len(data_dict)}")
@@ -949,7 +960,7 @@ if __name__ == '__main__':
             # 2. Second call: The local cache file now exists. This call should be much faster
             #    as it reads directly from the local HDF5 file.
             logging.info("\n--- 2. Second call to get_shot_data (should load from cache) ---")
-            df_from_cache = nas.get_shot_data(shot_to_find, folder_to_search)
+            df_from_cache = nas.get_shot_data(shot_to_find, folder_to_search, add_path=True)
             if df_from_cache:
                 logging.info("   -> Data loaded successfully from cache.")
                 logging.info(f"   -> Number of dataframes: {len(df_from_cache)}")

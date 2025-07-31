@@ -6,6 +6,7 @@ import time
 import logging
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 import pandas as pd
+from collections import defaultdict
 
 class VEST_DB:
     """
@@ -18,7 +19,7 @@ class VEST_DB:
             raise FileNotFoundError(f"Configuration file not found at '{config_path}'. Please create it from 'config.ini.template'.")
         
         self.logger = logging.getLogger(__name__)
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 
         config = configparser.ConfigParser()
         config.read(config_path)
@@ -221,32 +222,46 @@ class VEST_DB:
             self.logger.error(f"Query Error: {err}")
             return 0
 
-    def load_shot(self, shot: int, fields: list[int]) -> pd.DataFrame:
+    def _classify_sample_rate(self, fs: float) -> str:
+        """Classifies a float sampling rate into a string key (e.g., '25k', '2M')."""
+        if 20_000 <= fs < 40_000:
+            return '25k'
+        if 200_000 <= fs < 400_000:
+            return '250k'
+        if fs >= 1_500_000:
+            return '2M'
+        
+        # Fallback for other rates
+        if fs >= 1000:
+            return f'{round(fs / 1000)}k'
+        else:
+            return f'{round(fs)}Hz'
+
+    def load_shot(self, shot: int, fields: list[int]) -> dict[str, pd.DataFrame]:
         """
         Loads time and data for a given shot and a list of fields from the VEST database.
-        It combines the results into a single pandas DataFrame.
-        Each column in the DataFrame corresponds to a field, and its index is the time.
+        It groups the resulting signals by their sampling rate into separate DataFrames.
+
+        Returns:
+            A dictionary where keys are sampling rates (e.g., '25k', '2M') and
+            values are pandas DataFrames containing all signals for that rate.
         """
         if not self.connect():
             self.logger.error("Failed to connect to database.")
-            return pd.DataFrame()
+            return {}
         
         if shot <= 29349:
-            self.logger.warning(f"Shot {shot} is too old. Only shots > 29349 are supported in this version.")
-            return pd.DataFrame()
+            self.logger.warning(f"Shot {shot} is too old. Only shots > 29349 in MySQL are supported in this version.")
+            return {}
 
-        all_series = []
+        grouped_series = defaultdict(list)
         for field in fields:
             time_raw, data_raw = None, None
             try:
                 with self.connection.cursor() as cursor:
-                    # exist_shot is called within load_shot in the original code,
-                    # but it's better to get the table number first then query.
-                    # Replicating original logic for now.
                     table_num = self.exist_shot(shot, field)
 
                     if table_num == 3:
-                        # Data is in the new shotDataWaveform_3 table.
                         query = "SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_3 WHERE shotCode = %s AND shotDataFieldCode = %s"
                         cursor.execute(query, (shot, field))
                         result = cursor.fetchone()
@@ -257,7 +272,6 @@ class VEST_DB:
                             data_raw = np.fromstring(val_str.strip('[]'), sep=',')
 
                     elif table_num == 2:
-                        # Data is in the old shotDataWaveform_2 table.
                         query = "SELECT shotDataWaveformTime, shotDataWaveformValue FROM shotDataWaveform_2 WHERE shotCode = %s AND shotDataFieldCode = %s ORDER BY shotDataWaveformTime ASC"
                         cursor.execute(query, (shot, field))
                         results = cursor.fetchall()
@@ -267,14 +281,17 @@ class VEST_DB:
                             data_raw = np.array([row[1] for row in results])
                     
                     if time_raw is not None and data_raw is not None:
-                        # Process the loaded data
-                        time_corr, data_corr = self.process_vest_data(shot, field, time_raw, data_raw)
-                        # Create a Series with time as index
-                        # Use the label mapping if available, otherwise use the field ID string
+                        # Process the loaded data and get the sampling rate
+                        time_corr, data_corr, sample_rate = self.process_vest_data(shot, field, time_raw, data_raw)
+                        
+                        # Classify the sample rate into a key
+                        rate_key = self._classify_sample_rate(sample_rate)
+                        
                         series_name = self.field_labels.get(field, str(field))
                         series = pd.Series(data_corr, index=time_corr, name=series_name)
-                        all_series.append(series)
-                        self.logger.info(f"Successfully loaded and processed Shot {shot} Field {field} as '{series_name}'.")
+                        
+                        grouped_series[rate_key].append(series)
+                        self.logger.info(f"Successfully loaded and processed Shot {shot} Field {field} as '{series_name}' (Rate Group: {rate_key}).")
                     else:
                         self.logger.warning(f"Shot {shot} field {field} not found in database.")
 
@@ -282,19 +299,21 @@ class VEST_DB:
                 self.logger.error(f"Query Error for field {field}: {err}")
                 continue # Move to the next field
         
-        if not all_series:
-            return pd.DataFrame()
+        if not grouped_series:
+            return {}
 
-        # Concatenate all series into a single dataframe.
-        # This will result in a DataFrame with different time indices per column, which is fine.
-        # The calling function is responsible for aligning them to a common time axis.
-        return pd.concat(all_series, axis=1)
+        # Concatenate all series for each group into a single dataframe.
+        final_dfs = {}
+        for rate_key, series_list in grouped_series.items():
+            final_dfs[rate_key] = pd.concat(series_list, axis=1)
+            self.logger.info(f"Created DataFrame for '{rate_key}' group with {len(series_list)} signal(s).")
+        
+        return final_dfs
 
 
-    def process_vest_data(self, shot_num: int, field_id: int, time: np.ndarray, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def process_vest_data(self, shot_num: int, field_id: int, time: np.ndarray, data: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         """
         Processes loaded VEST data to apply sign corrections and recalculate the time axis,
-        replicating the logic from the getVESTattr.m and tFastDAQ.m scripts.
 
         Args:
             shot_num: The shot number.
@@ -303,37 +322,52 @@ class VEST_DB:
             data: The original data array from the database.
 
         Returns:
-            A tuple containing the corrected time and data arrays.
+            A tuple containing the corrected time array, data array, and the estimated sampling rate in Hz.
         """
         # 1. Apply sign correction based on field_id
         if field_id in [101, 214, 140]:
             data = -data
             self.logger.info(f"Flipping sign for field_id {field_id}.")
 
-        # 2. Determine t0 and tE from tFastDAQ logic
-        if shot_num >= 41660: # Includes shots >= 43685
-            t_start = 0.26
-            t_end = 0.36
-        else:
-            t_start = 0.24
-            t_end = 0.34
+        # 2. Estimate sampling rate from the final time axis
+        sample_rate = 0.0
+        if len(time) > 1:
+            dt = np.mean(np.diff(time))
+            if dt > 0:
+                sample_rate = 1.0 / dt
         
-        # 3. Recalculate time axis
+        # 3. Determine t0 and tE from tFastDAQ logic
+        if round(sample_rate) >= 2e6: # 2MHz DAQ
+            if shot_num >= 41660: # indentical to 250kHz DAQ
+                t_start = 0.26
+                t_end = 0.36
+            else:
+                t_start = 0.24
+                t_end = 0.34
+        elif round(sample_rate) >= 250e3: # 250kHz DAQ
+            if shot_num >= 41660: # Includes shots >= 43685
+                t_start = 0.26
+                t_end = 0.36
+            else:
+                t_start = 0.24
+                t_end = 0.34
+        
+        # 4. Recalculate time axis
         # The MATLAB condition `diff(time) < 1/25e3` is a bit ambiguous for a whole array.
         # It likely checks if the sampling rate is high (e.g., > 25 kHz).
         # We can check the mean difference.
         if len(time) > 1 and np.mean(np.diff(time)) < (1 / 25e3):
             # High-speed DAQ: create a new time axis
-            self.logger.info("High-speed DAQ detected. Recalculating time axis.")
+            self.logger.info(f"High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis.")
             new_time = np.linspace(t_start, t_end, len(time) + 1)
             time = new_time[:-1]
         else:
             # Low-speed DAQ: time values are already in seconds
-            # The MATLAB script multiplies by 1e3 for ms, but we keep it in seconds.
-            self.logger.info("Low-speed DAQ detected. Using original time values.")
+            self.logger.info("normal-speed DAQ detected. Using original time values.")
             pass # Time is already correct
 
-        return time, data
+
+        return time, data, sample_rate
 
     def __enter__(self):
         self.connect()
@@ -362,15 +396,17 @@ if __name__ == '__main__':
                 logging.info("  -> Shot seems to exist. Attempting to load multiple fields...")
                 
                 # 2. Load all fields into a DataFrame
-                result_df = db.load_shot(test_shot, test_fields)
+                result_dfs = db.load_shot(test_shot, test_fields)
                 
-                if not result_df.empty:
-                    logging.info("  -> Data loaded successfully into DataFrame.")
-                    logging.info(f"     DataFrame shape: {result_df.shape}")
-                    logging.info(f"     Columns: {result_df.columns.tolist()}")
-                    logging.info("--- Head of DataFrame ---")
-                    print(result_df.head())
-                    logging.info("-------------------------")
+                if result_dfs:
+                    logging.info("  -> Data loaded successfully into groups.")
+                    for rate, df in result_dfs.items():
+                        logging.info(f"--- Group: {rate} ---")
+                        logging.info(f"     DataFrame shape: {df.shape}")
+                        logging.info(f"     Columns: {df.columns.tolist()}")
+                        logging.info("--- Head of DataFrame ---")
+                        print(df.head())
+                        logging.info("-------------------------")
                 else:
                     logging.info("  -> Data loading failed or returned no data.")
             else:

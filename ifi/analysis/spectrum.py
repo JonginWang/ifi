@@ -1,7 +1,12 @@
 import numpy as np
-from scipy.signal import get_window, ShortTimeFFT, cwt, ricker, find_peaks
+import pandas as pd
+from scipy import signal as sp_signal
+from scipy.fft import fft, fftfreq
+from squeezepy import Wavelet, cwt, stft
+from squeezepy.experimental import scale_to_freq
 import pywt
 from typing import Tuple, Union
+from collections import defaultdict
 from ssqueezepy import stft
 import logging
 
@@ -10,129 +15,79 @@ from ifi.utils import assign_kwargs
 
 class SpectrumAnalysis:
     def __init__(self):
-        self.kwargs_fallback = {
-            'window': ('kaiser', 8),
-            'nperseg': 10000,
-            'noverlap': 5000,
-            'mfft': 10000,
-            'dual_win': None,
-            'scale_to': 'magnitude',
-            'phase_shift': 0
+        self.kwargs_stft_fallback = {
+            'window': ('kaiser', 8), 'nperseg': 10000, 'noverlap': 5000, 'mfft': None,
+            'dual_win': None, 'scale_to': 'magnitude', 'phase_shift': 0, 'padtype': 'reflect'
+            'padding': 'even'
         }
+        self._cached_stft_kwargs = {}
+        self._cached_window = None
 
-    # @assign_kwargs(['window', 'nperseg', 'noverlap', 'mfft', 'dual_win', 'scale_to', 'phase_shift'])
-    # def compute_stft(self, signal: np.ndarray, fs: float, window: Union[str, tuple, np.ndarray], 
-    #                  nperseg: int, noverlap: int, mfft: int, 
-    #                  dual_win, scale_to: str, phase_shift: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _get_stft_kwargs(self, **kwargs):
+        # Only recompute window if kwargs have changed
+        if kwargs != self._cached_stft_kwargs:
+            self._cached_stft_kwargs = kwargs
+            
+            final_kwargs = self.kwargs_stft_fallback.copy()
+            final_kwargs.update(kwargs)
+
+            nperseg = final_kwargs['nperseg']
+            window_spec = final_kwargs['window']
+            
+            if isinstance(window_spec, (str, tuple)):
+                self._cached_window = sp_signal.get_window(window_spec, nperseg)
+            elif isinstance(window_spec, np.ndarray) and len(window_spec) == nperseg:
+                self._cached_window = window_spec
+            else:
+                raise TypeError(f"Unsupported window type or length: {window_spec}")
+            
+            final_kwargs['win'] = self._cached_window
+            final_kwargs['hop'] = nperseg - final_kwargs['noverlap']
+            final_kwargs['mfft'] = nperseg if final_kwargs['mfft'] is None else final_kwargs['mfft']
+            self._cached_kwargs_full = final_kwargs
+        
+        return self._cached_kwargs_full
+
+    def _translate_kwargs(self, kwargs, target_lib='scipy'):
+        """Translates kwargs for different libraries."""
+        translated = kwargs.copy()
+        if target_lib == 'squeezepy':
+            if 'mfft' in translated:
+                translated['n_fft'] = translated.pop('mfft')
+            if 'hop' in translated:
+                translated['hop_len'] = translated.pop('hop')
+        elif target_lib == 'scipy':
+            if 'n_fft' in translated:
+                translated['mfft'] = translated.pop('n_fft')
+            if 'hop_len' in translated:
+                translated['hop'] = translated.pop('hop_len')
+        return translated
+
     def compute_stft(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Computes the Short-Time Fourier Transform (STFT) of a signal.
+        all_kwargs = self._get_stft_kwargs(**kwargs)
+        scipy_kwargs = self._translate_kwargs(all_kwargs, 'scipy')
         
-        ###### Revise version 0.1 ######
-        Args:
-            signal (np.ndarray): The input signal.
-            fs (float): The sampling frequency.
-            window (str, tuple, or np.ndarray): The window function to use.
-                - If str or tuple, it's passed to `scipy.signal.get_window`.
-                - If np.ndarray, it's used directly as the window.
-            nperseg (int): Length of each segment.
-            noverlap (int): Number of points to overlap between segments.
-            mfft (int): The number of points for the FFT. Defaults to nperseg.
-            dual_win: The dual window for the synthesis (inverse) STFT.
-            scale_to (str): The scaling of the STFT ('magnitude' or 'psd').
-            phase_shift (int): The phase shift applied to the window.
+        SFT = sp_signal.ShortTimeFFT(scipy_kwargs['win'], scipy_kwargs['hop'], fs=fs, mfft=scipy_kwargs['mfft'],
+                                     dual_win=scipy_kwargs['dual_win'], scale_to=scipy_kwargs['scale_to'],
+                                     phase_shift=scipy_kwargs['phase_shift'])
+        Zxx = SFT.stft(signal, p0=0, p1=None, k_offset=0, padding=scipy_kwargs['padding'], axis=-1)
+        return SFT.f, SFT.t(signal.shape[-1]), Zxx
 
-        Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]: Frequencies, times, and the complex STFT matrix.
-        
-        ###### Revise version 0.2 ######
-        # Reviewed 2025-07-22
-        Accepts keyword arguments to override defaults defined in `self.kwargs_fallback`.
-        """
-        # Merge provided kwargs with fallback defaults
-        final_kwargs = self.kwargs_fallback.copy()
-        final_kwargs.update(kwargs)
+    def compute_stft_sqpy(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        all_kwargs = self._get_stft_kwargs(**kwargs)
+        sqpy_kwargs = self._translate_kwargs(all_kwargs, 'squeezepy')
 
-        window = final_kwargs['window']
-        nperseg = final_kwargs['nperseg']
-        noverlap = final_kwargs['noverlap']
-        mfft = final_kwargs['mfft']
-        dual_win = final_kwargs['dual_win']
-        scale_to = final_kwargs['scale_to']
-        phase_shift = final_kwargs['phase_shift']
-        
-        if isinstance(window, (str, tuple)):
-            win = get_window(window, nperseg)
-        elif isinstance(window, np.ndarray):
-            # If the window is already a numpy array, use it directly.
-            if len(window) > 1 and len(window) != nperseg:
-                raise ValueError(f"Provided window is length {len(window)}. To use Kaiser window, put a number (e.g., 8) for the beta parameter. To use a pre-designed filter, use a numpy array of length {nperseg}.")
-            win = window
-        else:
-            raise TypeError(f"Unsupported window type: {type(window)}. Must be str, tuple, or np.ndarray.")
-
-        hop = nperseg - noverlap
-        mfft = nperseg if mfft is None else mfft
-
-        SFT = ShortTimeFFT(win, hop, fs=fs, mfft=mfft, dual_win=dual_win, scale_to=scale_to, phase_shift=phase_shift)
-        
-        # The stft method of a ShortTimeFFT object returns only the Zxx matrix.
-        # Frequencies (f) and times (t) are properties of the object itself.
-        Zxx = SFT.stft(signal)
-        f = SFT.f
-        t = SFT.t(signal.shape[-1])
-        # ShortTimeFFT
-        # f, t, Zxx = stft(signal, fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
-        # nfft=mfft, return_onesided=True if fft_mode is 'onesided' else False)
-        return f, t, Zxx
-
-    def compute_stft_ssq(self, signal: np.ndarray, fs: float, window: str = 'hann',
-                         n_fft: int = 1024, hop_len: int = 512) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Computes the Short-Time Fourier Transform (STFT) of a signal using the ssqueezepy library.
-
-        Args:
-            signal (np.ndarray): The input signal.
-            fs (float): The sampling frequency.
-            window (str): The window function to use. Defaults to 'hann'.
-            n_fft (int): Length of each segment. Defaults to 1024.
-            hop_len (int): Hop length between segments. Defaults to 512.
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]: Frequencies, times, and the complex STFT matrix.
-        """
-        # ssqueezepy returns STFT, frequencies, and times in a different order.
-        Sxx, f, t = stft(signal, window=window, n_fft=n_fft, hop_len=hop_len, fs=fs)
+        Sxx, f, t = stft(signal, window=sqpy_kwargs['win'], n_fft=sqpy_kwargs['n_fft'], 
+                         hop_len=sqpy_kwargs['hop_len'], fs=fs, padtype=sqpy_kwargs['padtype'])
         return f, t, Sxx
 
-    def compute_cwt(self, signal, fs, widths=None):
-        """
-        Computes the Continuous Wavelet Transform (CWT) of a signal.
-
-        Args:
-            signal (np.ndarray): The input signal (1D array).
-            fs (float): The sampling frequency of the signal.
-            widths (np.ndarray, optional): The widths to use for the CWT.
-                                           If None, a default range is used.
-
-        Returns:
-            tuple: A tuple containing:
-                - cwt_matrix (np.ndarray): The CWT matrix.
-                - freqs (np.ndarray): The corresponding frequencies.
-        """
-        from scipy.signal import cwt, ricker
-
-        if widths is None:
-            widths = np.arange(1, 101)
-
-        cwt_matrix = cwt(signal, ricker, widths)
-
-        # For the ricker wavelet, the center frequency is approx. fs / (2 * width * pi)
-        # A common approximation for plotting is f = fs / width
-        # A slightly better one for ricker is:
-        freqs = (5 * fs) / (2 * np.pi * widths)
-
-        return cwt_matrix, freqs
+    def compute_cwt(self, signal: np.ndarray, fs: float, wavelet: str = "gmw", **kwargs):
+        logging.debug(f"Computing CWT with squeezepy using '{wavelet}' wavelet.")
+        wav = Wavelet(wavelet)
+        # Squeezepy cwt returns Tx, Wx, ssq_freqs, scales, ...
+        Wx, scales, *_ = cwt(signal, wavelet=wav, fs=fs, **kwargs)
+        freqs_cwt = scale_to_freq(scales, wav, len(signal), fs=fs)
+        return freqs_cwt, Wx
 
     def find_freq_ridge(self, Zxx: np.ndarray, f: np.ndarray, prominence: float = None, distance: float = None) -> np.ndarray:
         """
@@ -230,7 +185,7 @@ if __name__ == '__main__':
     logging.info(f"Ridge frequency: {np.mean(ridge)}")
     
     # Call using ssqueezepy
-    f_ssq, t_ssq, Sxx = analyzer.compute_stft_ssq(signal, fs, n_fft=1024, hop_len=512)
+    f_ssq, t_ssq, Sxx = analyzer.compute_stft_sqpy(signal, fs, n_fft=1024, hop_len=512)
     ridge_ssq = analyzer.find_freq_ridge(Sxx, f_ssq)
     logging.info("--- ssqueezepy STFT ---")
     logging.info(f"STFT shape: {Sxx.shape}")

@@ -4,10 +4,59 @@ import pandas as pd
 import os
 from typing import List, Dict, Any
 import logging
+from contextlib import contextmanager
 
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis.spectrum import SpectrumAnalysis
 from ifi.analysis.params.params_plot import set_plot_style, FontStyle
+from matplotlib.colors import LogNorm
+from matplotlib.figure import Figure
+
+from ifi.analysis import utils
+
+LogManager = utils.LogManager()
+
+@contextmanager
+def ifi_plotting(interactive: bool, save_dir: str = None, save_prefix: str = "fig_", save_ext: str = "png", dpi: int = 300):
+    """
+    A context manager to handle Matplotlib's plotting state.
+    It manages interactive mode and saves all open figures upon exit if a
+    directory is provided.
+    
+    Args:
+        interactive (bool): If True, plots will be shown in a window.
+        save_dir (str, optional): If provided, all figures will be saved to this
+                                  directory upon exiting the context.
+        save_prefix (str, optional): If provided, all figures will be saved with this prefix.
+        save_ext (str, optional): If provided, all figures will be saved with this extension.
+                                    Default is "png", but can be "pdf", "svg", etc.
+        dpi (int, optional): If provided, all figures will be saved with this DPI.
+                             Default is 300.
+    """
+    if interactive:
+        plt.ion()
+    
+    try:
+        yield
+    finally:
+        if save_dir:
+            utils.ensure_dir(save_dir)
+            for i in plt.get_fignums():
+                fig = plt.figure(i)
+                # Sanitize title for filename
+                title = fig._suptitle.get_text() if fig._suptitle else f"figure_{i}"
+                filename = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).rstrip()
+                filename = filename.replace(" ", "_").replace("#", "")
+                filepath = os.path.join(save_dir, f"{save_prefix}{filename}.{save_ext}")
+                logging.info(f"Saving figure to {filepath}")
+                fig.savefig(filepath, dpi=dpi)
+
+        if interactive:
+            plt.ioff()
+            plt.show(block=True)
+        
+        plt.close('all')
+
 
 def pow2db(x: np.ndarray) -> np.ndarray:
     """Converts power to decibels. A value of 0 is converted to -Inf."""

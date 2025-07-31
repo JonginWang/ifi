@@ -1,6 +1,12 @@
 import os
 import numpy as np
 import pandas as pd
+import argparse
+import logging
+from typing import Tuple, Dict
+
+from . import utils
+from .analysis import spectrum
 
 def save_waveform_to_csv(filepath: str, time_data: np.ndarray, voltage_data: np.ndarray, channel_name: str = "Voltage (V)"):
     """
@@ -76,26 +82,59 @@ def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
         print(f"Error reading file {filepath} in chunks: {e}")
         return
 
-# --- Example of how to use the chunked reader in main_window.py ---
-# This would replace the simple call to read_waveform_file
-#
-# def process_large_file(filepath):
-#     # This function would be called in the worker thread
-#     total_rows = 0
-#     # Assume column names are 'Time (s)', 'CH1', 'CH2', 'CH3', 'CH4'
-#     means = {'CH1': 0, 'CH2': 0, 'CH3': 0, 'CH4': 0}
-#     
-#     chunk_gen = read_csv_chunked(filepath)
-#     for chunk_df in chunk_gen:
-#         # Process each chunk here
-#         # For example, calculate running average
-#         total_rows += len(chunk_df)
-#         for col in means.keys():
-#             means[col] += chunk_df[col].sum()
-#
-#     # Final calculations
-#     for col in means.keys():
-#         means[col] /= total_rows
-#
-#     # Send result to GUI
-#     # self.gui_queue.put(('analysis_result', {'means': means})) 
+def load_and_process_file(nas_db, file_path: str, args: argparse.Namespace) -> Tuple[str, pd.DataFrame, Dict, Dict]:
+    """
+    Loads data from a single file, processes it, and performs initial analysis (STFT/CWT).
+    Designed to be used with Dask for parallel execution.
+    """
+    df = nas_db.get_shot_data(file_path)
+    if df is None or df.empty:
+        logging.warning(f"Could not load data from {file_path}. Skipping.")
+        return file_path, None, None, None
+
+    # Basic Preprocessing (example: offset removal)
+    if not args.no_offset_removal:
+        for col in df.columns:
+            if col != 'TIME':
+                offset = df[col].iloc[:args.offset_window].mean()
+                df[col] -= offset
+
+    # Time-Frequency Analysis
+    analyzer = spectrum.SpectrumAnalysis()
+    stft_results = {}
+    cwt_results = {}
+    
+    fs = 1 / df.index.to_series().diff().mean()
+
+    if args.stft:
+        cols_to_analyze = args.stft_cols if args.stft_cols else [c for c in df.columns if c != 'TIME']
+        stft_results[file_path] = {}
+        for col_name in cols_to_analyze:
+            if col_name in df.columns:
+                f, t, Sxx = analyzer.compute_stft_sqpy(df[col_name].to_numpy(), fs)
+                stft_results[file_path][col_name] = {"t": t, "f": f, "Sxx": Sxx}
+
+    if args.cwt:
+        cols_to_analyze = args.cwt_cols if args.cwt_cols else [c for c in df.columns if c != 'TIME']
+        cwt_results[file_path] = {}
+        for col_name in cols_to_analyze:
+            if col_name in df.columns:
+                freqs, cwt_matrix = analyzer.compute_cwt(df[col_name].to_numpy(), fs)
+                cwt_results[file_path][col_name] = {"t": df.index.to_numpy(), "freqs": freqs, "cwt_matrix": cwt_matrix}
+
+    return file_path, df, stft_results, cwt_results
+
+
+def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_results, density_data, vest_data):
+    """Saves all analysis results to an HDF5 file."""
+    if shot_num == 0 and signals is not None and not signals.empty:
+        # For 'unknown' shots, create a filename from the first source file
+        first_source_file = list(signals.keys())[0]
+        filename = f"{os.path.splitext(first_source_file)[0]}.h5"
+    else:
+        filename = f"{shot_num}.h5"
+    
+    filepath = os.path.join(output_dir, filename)
+    utils.ensure_dir(output_dir)
+
+    # ... (rest of the HDF5 saving logic) 
