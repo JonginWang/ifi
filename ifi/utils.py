@@ -35,7 +35,7 @@ class LogManager:
 
     def _log_shutdown(self):
         """Function registered with atexit to log a shutdown message."""
-        logging.info(f"\n{'\ \ Logging ended\ \ '.center(60, '=')}")
+        logging.info(f"\n{'  Logging ended  '.center(60, '=')}")
 
     def _setup_logging(self, level):
         """
@@ -80,7 +80,7 @@ class LogManager:
             console_handler.setFormatter(console_formatter)
             root_logger.addHandler(console_handler)
             
-            logging.info(f"\n{'\ \ Logging started\ \ '.center(60, '=')}")
+            logging.info(f"\n{'  Logging started  '.center(60, '=')}")
             logging.info(f" All logs for this execution will be saved to: {log_file}")
             
             atexit.register(self._log_shutdown)
