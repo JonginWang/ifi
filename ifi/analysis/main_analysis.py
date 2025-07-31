@@ -239,7 +239,7 @@ def run_analysis(
             with plots.ifi_plotting(interactive=args.plot, save_dir=os.path.join(args.results_dir, str(shot_num)) if args.save_plots else None, save_prefix=title_prefix):
                 if not args.no_plot_ft:
                     if shot_stft_data:
-                        plots.plot_spectrograms(shot_stft_data, title_prefix=title_prefix, trigger_time=args.trigger_time, downsample_factor=args.downsample)
+                        plots.plot_spectrograms(shot_stft_data, title_prefix=title_prefix, trigger_time=args.trigger_time, downsample=args.downsample)
                     if shot_cwt_data:
                         plots.plot_cwt(shot_cwt_data, trigger_time=args.trigger_time, title_prefix=title_prefix)
                 
@@ -251,7 +251,7 @@ def run_analysis(
                         vest_lf_data,
                         trigger_time=args.trigger_time,
                         title_prefix=title_prefix,
-                        downsample_factor=args.downsample
+                        downsample=args.downsample
                     )
 
         # --- Saving Logic Update ---
@@ -298,7 +298,8 @@ def main():
     parser.add_argument(
         '--add_path',
         action='store_true',
-        help='If specified, adds the --data_folders paths to the default paths from config.ini instead of overriding them.'
+        help='''If specified, adds the --data_folders paths to the default paths 
+            from config.ini instead of overriding them.'''
     )
     parser.add_argument(
         '--force_remote',
@@ -311,6 +312,8 @@ def main():
         default='ifi/results',
         help='The directory to store analysis results and cached data.'
     )
+
+    # Flags for data processing
     parser.add_argument(
         '--no_offset_removal',
         action='store_true',
@@ -322,6 +325,28 @@ def main():
         default=2001,
         help='The window size for the moving average offset removal.'
     )
+
+    # Flags for data processing with freq.-time transform
+    parser.add_argument(
+        '--stft',
+        action='store_true',
+        help='Perform STFT analysis when retrieving data.'
+    )
+    parser.add_argument(
+        '--stft_cols',
+        type=int,
+        default=None,
+        help='''The indices of the columns to perform STFT analysis on.
+            If None, all columns will be analyzed.'''
+    )
+    parser.add_argument(
+        '--cwt',
+        action='store_true',
+        help='Perform CWT analysis when retrieving data.'
+    )
+    parser.add_argument(
+
+    # Flags for plotting
     parser.add_argument(
         '--plot',
         action='store_true',
