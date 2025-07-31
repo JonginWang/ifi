@@ -12,9 +12,9 @@ from ifi.analysis.params.params_plot import set_plot_style, FontStyle
 from matplotlib.colors import LogNorm
 from matplotlib.figure import Figure
 
-from ifi.analysis import utils
+from ifi.utils import LogManager, ensure_dir_exists
 
-LogManager = utils.LogManager()
+LogManager()
 
 @contextmanager
 def ifi_plotting(interactive: bool, save_dir: str = None, save_prefix: str = "fig_", save_ext: str = "png", dpi: int = 300):
@@ -40,7 +40,7 @@ def ifi_plotting(interactive: bool, save_dir: str = None, save_prefix: str = "fi
         yield
     finally:
         if save_dir:
-            utils.ensure_dir(save_dir)
+            ensure_dir_exists(save_dir)
             for i in plt.get_fignums():
                 fig = plt.figure(i)
                 # Sanitize title for filename
