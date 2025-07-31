@@ -344,7 +344,6 @@ def main():
         action='store_true',
         help='Perform CWT analysis when retrieving data.'
     )
-    parser.add_argument(
 
     # Flags for plotting
     parser.add_argument(
