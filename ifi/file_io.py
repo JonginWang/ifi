@@ -107,7 +107,7 @@ def load_and_process_file(nas_db, file_path: str, args: argparse.Namespace) -> T
     fs = 1 / df.index.to_series().diff().mean()
 
     if args.stft:
-        cols_to_analyze = args.stft_cols if args.stft_cols else [c for c in df.columns if c != 'TIME']
+        cols_to_analyze = args.ft_cols if args.ft_cols else [c for c in df.columns if c != 'TIME']
         stft_results[file_path] = {}
         for col_name in cols_to_analyze:
             if col_name in df.columns:
@@ -115,7 +115,7 @@ def load_and_process_file(nas_db, file_path: str, args: argparse.Namespace) -> T
                 stft_results[file_path][col_name] = {"t": t, "f": f, "Sxx": Sxx}
 
     if args.cwt:
-        cols_to_analyze = args.cwt_cols if args.cwt_cols else [c for c in df.columns if c != 'TIME']
+        cols_to_analyze = args.ft_cols if args.ft_cols else [c for c in df.columns if c != 'TIME']
         cwt_results[file_path] = {}
         for col_name in cols_to_analyze:
             if col_name in df.columns:

@@ -118,7 +118,7 @@ class NAS_DB:
         self.access_mode = None  # 'local' or 'remote'
         self._file_cache = {} # Cache for file paths for find_files method
 
-        self._ext_list = ALLOWED_EXTENSIONS
+        self._is_connected = False
 
     def _ensure_remote_dir_exists(self, remote_path: str):
         """
@@ -143,9 +143,13 @@ class NAS_DB:
         """
         Establishes connection. Checks for local access first, then SSH.
         """
+        if self._is_connected:
+            return True
+
         if os.path.isdir(self.nas_mount):
             self.logger.info(f"Local NAS mount found at '{self.nas_mount}'. Using direct access.")
             self.access_mode = 'local'
+            self._is_connected = True
             return True
         
         self.logger.info("Local NAS mount not found. Attempting SSH connection.")
@@ -167,6 +171,7 @@ class NAS_DB:
                 self.logger.info(f"SSH connection to {self.ssh_host} successful.")
                 
                 self._authenticate_nas_remote() 
+                self._is_connected = True
                 return True
 
             except Exception as e:
@@ -176,6 +181,7 @@ class NAS_DB:
                     self.logger.info("Retrying in 3 seconds...")
                     time.sleep(3)
         
+        self._is_connected = False
         self.logger.error("All SSH connection attempts failed.")
         return False
 
@@ -216,6 +222,10 @@ class NAS_DB:
         If `data_folders` is not provided, it uses the default folders from config.ini.
         The method caches results based on the query and data_folders.
         """
+        if not self._is_connected:
+            if not self.connect():
+                raise ConnectionError("Failed to establish connection to NAS.")
+
         if data_folders is not None:
             if isinstance(data_folders, str):
                 data_folders = [data_folders]
@@ -368,6 +378,9 @@ class NAS_DB:
         Returns:
             A dictionary mapping each successfully read filename to its DataFrame.
         """
+        if not self._is_connected:
+            if not self.connect():
+                raise ConnectionError("Failed to establish connection to NAS.")
         
         # --- Find all target files on the NAS ---
         target_files = self.find_files(query, data_folders, add_path, force_remote, **kwargs)
@@ -852,6 +865,10 @@ class NAS_DB:
         Retrieves the first few lines of the first file found for a shot.
         Useful for inspecting headers.
         """
+        if not self._is_connected:
+            if not self.connect():
+                raise ConnectionError("Failed to establish connection to NAS.")
+
         if isinstance(data_folders, str):
             data_folders = [data_folders]
             
@@ -922,6 +939,7 @@ class NAS_DB:
         if self.ssh_client:
             self.ssh_client.close()
             self.ssh_client = None
+        self._is_connected = False
         self.logger.info("Disconnected.")
 
     def __enter__(self):

@@ -70,8 +70,8 @@ def load_and_process_file(nas_instance, file_path, args):
         all_data_cols = [col for col in df_processed.columns if col != 'TIME']
         
         cols_to_analyze_indices = range(len(all_data_cols))
-        if args.stft_cols is not None:
-            cols_to_analyze_indices = args.stft_cols
+        if args.ft_cols is not None:
+            cols_to_analyze_indices = args.ft_cols
 
         fs = 1 / df_processed['TIME'].diff().mean()
         
@@ -94,8 +94,8 @@ def load_and_process_file(nas_instance, file_path, args):
         all_data_cols = [col for col in df_processed.columns if col != 'TIME']
         
         cols_to_analyze_indices = range(len(all_data_cols))
-        if args.cwt_cols is not None:
-            cols_to_analyze_indices = args.cwt_cols
+        if args.ft_cols is not None:
+            cols_to_analyze_indices = args.ft_cols
 
         fs = 1 / df_processed['TIME'].diff().mean()
         
@@ -334,17 +334,17 @@ def main():
         help='Perform STFT analysis when retrieving data.'
     )
     parser.add_argument(
-        '--stft_cols',
-        nargs='*',
-        type=int,
-        default=[],
-        help='''The indices of the columns to perform STFT analysis on.
-            If empty, all columns will be analyzed.'''
-    )
-    parser.add_argument(
         '--cwt',
         action='store_true',
         help='Perform CWT analysis when retrieving data.'
+    )
+    parser.add_argument(
+        '--ft_cols',
+        nargs='*',
+        type=int,
+        default=[],
+        help='''The indices of the columns to perform freq.-time transform analysis on.
+            If empty, all columns will be analyzed.'''
     )
 
     # Flags for plotting
