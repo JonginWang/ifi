@@ -330,12 +330,12 @@ def main():
     parser.add_argument(
         '--no_plot_raw',
         action='store_true',
-        help='Don't show the plots of the raw data.'
+        help='''Don't show the plots of the raw data.'''
     )
     parser.add_argument(
         '--no_plot_ft',
         action='store_true',
-        help='Don't show the plots of the time-frequency trasnforms.'
+        help='''Don't show the plots of the time-frequency trasnforms.'''
     )
     parser.add_argument(
         '--downsample',
