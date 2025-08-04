@@ -19,13 +19,6 @@ import dask
 from dask import delayed
 
 
-# Set a project-local cache directory for numba to avoid permission errors.
-# This directory should be added to .gitignore
-numba_cache_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'cache', 'numba_cache')
-os.makedirs(numba_cache_dir, exist_ok=True)
-os.environ['NUMBA_CACHE_DIR'] = numba_cache_dir
-
-
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
@@ -144,15 +137,25 @@ def run_analysis(
         logging.warning(f"No files found for the given query. Skipping.")
         return
 
-    # Group files by shot number
+    # Group files by shot number and determine interferometry parameters
     files_by_shot = defaultdict(list)
+    interferometry_params_by_file = {}
     for f in target_files:
         match = re.search(r'(\d{5,})', os.path.basename(f))
         if match:
-            files_by_shot[int(match.group(1))].append(f)
+            shot_num = int(match.group(1))
+            files_by_shot[shot_num].append(f)
+            # Get parameters for each individual file (not just shot number)
+            params = file_io.get_interferometry_params(shot_num, os.path.basename(f))
+            interferometry_params_by_file[f] = params
+            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq']}GHz")
         else:
             files_by_shot['unknown'].append(f)
-            
+            # For unknown files, use shot number 0 as default
+            params = file_io.get_interferometry_params(0, os.path.basename(f))
+            interferometry_params_by_file[f] = params
+            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq']}GHz")
+
     logging.info(f"Grouped files into {len(files_by_shot)} shot(s).")
 
     # Load VEST data for all relevant shots
@@ -185,7 +188,7 @@ def run_analysis(
             stft_results[shot_num].update(stft_res)
         if cwt_res:
             cwt_results[shot_num].update(cwt_res)
-
+        
     # --- 2. Process Each Shot ---
     all_analysis_bundles = {}
     shots_to_process = sorted(analysis_data.keys())
@@ -197,6 +200,16 @@ def run_analysis(
         
         logging.info(f"\n========== Post-processing for Shot #{shot_num} with {len(shot_nas_data)} files ==========")
         
+        # --- Collect interferometry parameters for this shot ---
+        shot_files = files_by_shot.get(shot_num, [])
+        shot_interferometry_params = {}
+        for file_path in shot_files:
+            basename = os.path.basename(file_path)
+            if file_path in interferometry_params_by_file:
+                params = interferometry_params_by_file[file_path]
+                shot_interferometry_params[basename] = params
+                logging.info(f"File {basename}: {params['method']} method, {params['freq']}GHz, ref={params['ref_col']}, probes={params['probe_cols']}")
+        
         # --- Combine and Prepare Data ---
         ref_time_axis = list(shot_nas_data.values())[0].index
         combined_signals = pd.concat(
@@ -204,35 +217,62 @@ def run_analysis(
             axis=1
         )
         current_vest_data = vest_data_by_shot.get(shot_num, {})
-        vest_lf_data = current_vest_data.get('25k')
-        if vest_lf_data is None:
-            vest_lf_data = current_vest_data.get('250k')
+        vest_ip_data = current_vest_data.get('25k')
+        if vest_ip_data is None:
+            vest_ip_data = current_vest_data.get('250k')
         
         # --- 5. Density Calculation & Baseline Correction ---
         phase_converter = phi2ne.PhaseConverter()
-        # NOTE: Density calculation is temporarily disabled due to missing 'get_density_analysis_params'
         density_data = pd.DataFrame(index=combined_signals.index)
-        # phase_converter = phi2ne.PhaseConverter()
-        # density_data = pd.DataFrame(index=combined_signals.index)
-        # if args.density:
-        #     params = file_io.get_density_analysis_params(f"{shot_num}_ALL.csv")
-        #     if params:
-        #         ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
-        #         fs = 1 / combined_signals.index.to_series().diff().mean()
-        #         f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
-        #         for probe_col in params['probe_cols']:
-        #             if probe_col in combined_signals.columns:
-        #                 phase = phase_converter.calc_phase_cdm(ref_signal, combined_signals[probe_col].to_numpy(), fs, f_center)
-        #                 density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
-        #         if args.baseline and vest_lf_data is not None:
-        #             density_data = phase_converter.correct_baseline(density_data, vest_lf_data, mode=args.baseline, trigger_time=args.trigger_time)
+        if args.density:
+            params = shot_interferometry_params[file_path]
+            if params:
+                if params['method'] == 'CDM':
+                    ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
+                    analyzer = spectrum.SpectrumAnalysis()
+                    fs = 1 / combined_signals.index.to_series().diff().mean()
+                    f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
+                    for probe_col in params['probe_cols']:
+                        if probe_col in combined_signals.columns:
+                            phase = phase_converter.calc_phase_cdm(ref_signal, combined_signals[probe_col].to_numpy(), fs, f_center)
+                            density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
         
+                elif params['method'] == 'FPGA':
+                    ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
+                    for probe_col in params['probe_cols']:
+                        if probe_col in combined_signals.columns:
+                            phase = phase_converter.calc_phase_fpga(ref_signal, combined_signals[probe_col].to_numpy(), combined_signals.index.to_numpy(), combined_signals[probe_col].to_numpy(), isflip=True)
+                            density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
+                elif params['method'] == 'IQ':
+                    i_signal = combined_signals[params['probe_cols'][0]].dropna().to_numpy()
+                    q_signal = combined_signals[params['probe_cols'][1]].dropna().to_numpy()
+                    phase = phase_converter.calc_phase_iq(i_signal, q_signal)
+                    density_data[f"ne_{params['probe_cols'][0]}"] = phase_converter.phase_to_density(phase, params['freq'])
+                else:
+                    logging.warning(f"Unknown interferometry method: {params['method']}")
+
+                if args.baseline and vest_ip_data is not None:
+                    # Get time axis and IP column name for baseline correction
+                    time_axis = combined_signals.index.to_numpy()
+                    ip_column_name = None
+                    if args.baseline == 'ip':
+                        # Try to find IP column in vest_ip_data - common names
+                        for col_name in vest_ip_data.columns:
+                            if 'ip' in col_name.lower() or 'current' in col_name.lower():
+                                ip_column_name = col_name
+                                break
+                    density_data = phase_converter.correct_baseline(
+                        density_data, time_axis, args.baseline, 
+                        vest_data=vest_ip_data, ip_column_name=ip_column_name
+                    )
+                
         # --- 6. Final Output Bundle ---
         analysis_bundle = {
             'shot_info': {'shot_num': shot_num},
             'raw_data': {'nas': shot_nas_data, 'vest': current_vest_data},
             'processed_data': {'signals': combined_signals, 'density': density_data},
-            'analysis_results': {'stft': shot_stft_data, 'cwt': shot_cwt_data}
+            'analysis_results': {'stft': shot_stft_data, 'cwt': shot_cwt_data},
+            'interferometry_params': shot_interferometry_params
         }
         all_analysis_bundles[shot_num] = analysis_bundle
 
@@ -254,7 +294,7 @@ def run_analysis(
                         shot_num,
                         {"Processed Signals": combined_signals},
                         {"Density": density_data},
-                        vest_lf_data,
+                        vest_ip_data,
                         trigger_time=args.trigger_time,
                         title_prefix=title_prefix,
                         downsample=args.downsample
@@ -266,7 +306,7 @@ def run_analysis(
             output_dir = os.path.join(args.results_dir, str(shot_num) if shot_num != 0 else 'unknown_shots')
             file_io.save_results_to_hdf5(
                 output_dir, shot_num, combined_signals, shot_stft_data,
-                shot_cwt_data, density_data, vest_lf_data
+                shot_cwt_data, density_data, vest_ip_data
             )
 
     logging.info("\n========== Full Analysis Finished ==========")

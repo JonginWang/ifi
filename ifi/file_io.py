@@ -6,7 +6,13 @@ import logging
 from typing import Tuple, Dict
 
 from . import utils
-from .analysis import spectrum
+
+
+"""
+    This section contains the functions for reading and writing data to files when using 
+    the oscilloscope as VISA instruments for data logging.
+"""
+
 
 def save_waveform_to_csv(filepath: str, time_data: np.ndarray, voltage_data: np.ndarray, channel_name: str = "Voltage (V)"):
     """
@@ -82,48 +88,115 @@ def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
         print(f"Error reading file {filepath} in chunks: {e}")
         return
 
-def load_and_process_file(nas_db, file_path: str, args: argparse.Namespace) -> Tuple[str, pd.DataFrame, Dict, Dict]:
-    """
-    Loads data from a single file, processes it, and performs initial analysis (STFT/CWT).
-    Designed to be used with Dask for parallel execution.
-    """
-    df = nas_db.get_shot_data(file_path)
-    if df is None or df.empty:
-        logging.warning(f"Could not load data from {file_path}. Skipping.")
-        return file_path, None, None, None
 
-    # Basic Preprocessing (example: offset removal)
-    if not args.no_offset_removal:
-        for col in df.columns:
-            if col != 'TIME':
-                offset = df[col].iloc[:args.offset_window].mean()
-                df[col] -= offset
+"""
+    This section contains the functions for reading and writing analysis results to and from files.
+"""
 
-    # Time-Frequency Analysis
-    analyzer = spectrum.SpectrumAnalysis()
-    stft_results = {}
-    cwt_results = {}
+
+def get_interferometry_params(shot_num: int, filename: str) -> Dict:
+    """
+    Returns interferometry analysis parameters based on shot number and filename.
     
-    fs = 1 / df.index.to_series().diff().mean()
+    Args:
+        shot_num: Shot number
+        filename: Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv")
+    
+    Returns:
+        Dictionary containing:
+        - method: Analysis method ('CDM', 'FPGA', 'IQ')
+        - freq: Interferometer frequency in GHz (from if_config.ini)
+        - ref_col: Reference channel column name
+        - probe_cols: List of probe channel column names
+        - amp_ref_col: Amplitude reference column (for FPGA method)
+        - amp_probe_cols: List of amplitude probe columns (for FPGA method)
+    """
+    import os
+    import configparser
+    
+    basename = os.path.basename(filename)
+    
+    # Load interferometry configuration
+    config = configparser.ConfigParser()
+    config_path = os.path.join(os.path.dirname(__file__), 'analysis', 'if_config.ini')
+    config.read(config_path)
+    
+    # Extract frequency values from config (convert from Hz to GHz)
+    freq_94ghz = float(config.get('94GHz', 'freq')) / 1e9  # Convert Hz to GHz
+    freq_280ghz = float(config.get('280GHz', 'freq')) / 1e9  # Convert Hz to GHz
+    n_path_94ghz = int(config.get('94GHz', 'n_path'))
+    n_path_280ghz = int(config.get('280GHz', 'n_path'))
 
-    if args.stft:
-        cols_to_analyze = args.ft_cols if args.ft_cols else [c for c in df.columns if c != 'TIME']
-        stft_results[file_path] = {}
-        for col_name in cols_to_analyze:
-            if col_name in df.columns:
-                f, t, Sxx = analyzer.compute_stft_sqpy(df[col_name].to_numpy(), fs)
-                stft_results[file_path][col_name] = {"t": t, "f": f, "Sxx": Sxx}
+    # Rule 3: Shots 41542 and above
+    if shot_num >= 41542:
+        if "_ALL" in basename:
+            # <shot_num>_ALL.csv: 280GHz / CDM method
+            # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
+            return {
+                'method': 'CDM',
+                'freq': freq_280ghz,
+                'ref_col': 'CH0',
+                'probe_cols': ['CH1'],
+                'n_path': n_path_280ghz
+            }
+        elif "_0" in basename:
+            # <shot_num>_0XX.csv: 94GHz / CDM method
+            # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
+            return {
+                'method': 'CDM',
+                'freq': freq_94ghz,
+                'ref_col': 'CH1',
+                'probe_cols': ['CH2', 'CH3'],  # Mapping for channels 5, 6
+                'n_path': n_path_94ghz
+            }
+        else:
+            # <shot_num>_XXX.csv: 94GHz / CDM method
+            # Other probe channels
+            return {
+                'method': 'CDM',
+                'freq': freq_94ghz,
+                'ref_col': '',
+                'probe_cols': ['CH0', 'CH1', 'CH2'],  # Mapping for channels 7-9
+                'n_path': n_path_94ghz
+            }
 
-    if args.cwt:
-        cols_to_analyze = args.ft_cols if args.ft_cols else [c for c in df.columns if c != 'TIME']
-        cwt_results[file_path] = {}
-        for col_name in cols_to_analyze:
-            if col_name in df.columns:
-                freqs, cwt_matrix = analyzer.compute_cwt(df[col_name].to_numpy(), fs)
-                cwt_results[file_path][col_name] = {"t": df.index.to_numpy(), "freqs": freqs, "cwt_matrix": cwt_matrix}
+    # Rule 2: Shots 39302–41398
+    elif 39302 <= shot_num <= 41398:
+        # 94GHz / FPGA method
+        # The first 8 channels: phase ref(CH0) and probes (CH1-CH7) [rad]
+        # The second 8 channels: nothing
+        # The last 8 channels: amplitude of ref(CH16) and probes(CH17-CH23) [V]
+        return {
+            'method': 'FPGA',
+            'freq': freq_94ghz,
+            'ref_col': 'CH0', 
+            'probe_cols': ['CH1', 'CH2', 'CH3', 'CH4', 'CH5'],  # ch. 5-9 of 94G interferometer
+            'amp_ref_col': 'CH16',
+            'amp_probe_cols': ['CH17', 'CH18', 'CH19', 'CH20', 'CH21'],  # ch. 5-9 of 94G interferometer
+            'n_path': n_path_94ghz
+        }
 
-    return file_path, df, stft_results, cwt_results
-
+    # Rule 1: Shots 0–39265
+    elif 0 <= shot_num <= 39265:
+        # 94GHz / IQ method
+        # Assuming the two columns for I and Q are named 'CH0' and 'CH1' for simplicity.
+        return {
+            'method': 'IQ',
+            'freq': freq_94ghz,
+            'ref_col': None,  # IQ method does not use a separate reference signal from another channel
+            'probe_cols': [('CH0', 'CH1')],
+            'n_path': n_path_94ghz
+        }
+    
+    # Default case for shots outside defined ranges
+    else:
+        return {
+            'method': 'unknown',
+            'freq': freq_94ghz,  # Default to 94GHz if unknown
+            'ref_col': None,
+            'probe_cols': [],
+            'n_path': n_path_94ghz
+        }
 
 def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_results, density_data, vest_data):
     """Saves all analysis results to an HDF5 file."""

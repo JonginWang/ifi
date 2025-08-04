@@ -142,6 +142,22 @@ class PhaseConverter:
 
         return accumulated_phase
 
+    def calc_phase_iq(self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False) -> np.ndarray:
+        """
+        Calculates phase from I and Q signals using the default atan2 method.
+        
+        This is a convenience method that calls calc_phase_iq_atan2.
+        
+        Args:
+            i_signal: In-phase signal array
+            q_signal: Quadrature signal array  
+            isflip: Whether to flip the sign of the result
+            
+        Returns:
+            Phase array in radians
+        """
+        return self.calc_phase_iq_asin2(i_signal, q_signal, isflip=isflip)
+
     def _create_lpf(self, f_pass, f_stop, fs, approx=False):
         """Creates a low-pass FIR filter using the remez algorithm."""
         nyq = 0.5 * fs

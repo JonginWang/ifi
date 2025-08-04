@@ -682,9 +682,9 @@ class NAS_DB:
                 encoding_errors='ignore'
             )
             
-            # The first column is TIME
-            time_col_name = 'TIME'
-            df.columns = [time_col_name] + ch_names[:len(df.columns)-1]
+            # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
+            standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
+            df.columns = standardized_cols
             
             df.attrs['metadata'] = metadata
             return df
@@ -751,8 +751,9 @@ class NAS_DB:
                 skipfooter=0
             )
 
-            # Clean up column names that may have been read with extra spaces
-            df.columns = df.columns.str.strip()
+            # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
+            standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
+            df.columns = standardized_cols
 
             # Verification log
             actual_len = len(df)
@@ -820,8 +821,9 @@ class NAS_DB:
                 low_memory=False,
                 encoding_errors='ignore'
             )
-            # Clean up column names (remove leading/trailing spaces)
-            df.columns = df.columns.str.strip()
+            # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
+            standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
+            df.columns = standardized_cols
             
             # Add metadata to the DataFrame's attributes for later use
             df.attrs['metadata'] = metadata
@@ -846,10 +848,12 @@ class NAS_DB:
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
 
-            cols = ['TIME'] + [f'PHI{i}' for i in range(1, 9)] + \
-                   [f'LID{i}' for i in range(1, 9)] + \
-                   [f'AMP{i}' for i in range(1, 9)]
-            df = pd.read_csv(read_target, sep=r'\s+', header=None, names=cols)
+            # Read data first without column names
+            df = pd.read_csv(read_target, sep=r'\s+', header=None)
+            
+            # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
+            standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
+            df.columns = standardized_cols
             df.attrs['source_file_type'] = 'dat'
             df.attrs['source_file_format'] = 'FPGA'
             return df
