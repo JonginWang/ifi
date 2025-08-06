@@ -1,3 +1,10 @@
+# ============================================================================
+# CRITICAL: Set up numba cache BEFORE numba imports
+# ============================================================================
+from ifi.utils.cache_setup import setup_project_cache
+cache_config = setup_project_cache()
+
+import os
 import numpy as np
 import configparser
 from scipy import constants
@@ -6,11 +13,234 @@ import matplotlib.pyplot as plt
 from typing import Dict, Any
 import pandas as pd
 import logging
+import numba
 
 # "eegpy" is a package that contains the remezord function, translated from MATLAB
 # Though remezord is not in scipy, we could import by piece of script under ifi/analysis/utils/remezord.py
 from ifi.analysis.utils.remezord import remezord
 from ifi.analysis.plots import plot_response
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _normalize_iq_signals(i_signal, q_signal):
+    """
+    Numba-optimized function to normalize I and Q signals.
+    """
+    iq_mag = np.sqrt(i_signal**2 + q_signal**2)
+    # Avoid division by zero
+    for i in range(len(iq_mag)):
+        if iq_mag[i] == 0:
+            iq_mag[i] = 1.0
+    
+    i_norm = i_signal / iq_mag
+    q_norm = q_signal / iq_mag
+    return i_norm, q_norm
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _calculate_differential_phase(i_norm, q_norm):
+    """
+    Numba-optimized function to calculate differential phase using cross-product method.
+    """
+    n = len(i_norm)
+    phase_diff = np.zeros(n-1)
+    
+    for i in range(n-1):
+        # Numerator: I_n(i) * Q_n(i+1) - Q_n(i) * I_n(i+1)
+        numerator = i_norm[i] * q_norm[i+1] - q_norm[i] * i_norm[i+1]
+        
+        # Denominator: sqrt((I_n(i)+I_n(i+1))^2 + (Q_n(i)+Q_n(i+1))^2)
+        denominator = np.sqrt((i_norm[i] + i_norm[i+1])**2 + (q_norm[i] + q_norm[i+1])**2)
+        if denominator == 0:
+            denominator = 1.0
+        
+        # Clip ratio to [-1, 1] for arcsin
+        ratio = numerator / denominator
+        if ratio > 1.0:
+            ratio = 1.0
+        elif ratio < -1.0:
+            ratio = -1.0
+        
+        phase_diff[i] = np.arcsin(ratio)
+    
+    return phase_diff
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _cumulative_sum_phase(phase_diff):
+    """
+    Numba-optimized cumulative sum with zero padding.
+    """
+    n = len(phase_diff)
+    phase_accum = np.zeros(n + 1)
+    
+    for i in range(n):
+        phase_accum[i + 1] = phase_accum[i] + phase_diff[i]
+    
+    return phase_accum
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _phase_to_density_core(phase, freq, c, m_e, eps0, qe, n_path):
+    """
+    Numba-optimized core calculation for phase to density conversion.
+    """
+    # Calculate critical density
+    n_c = m_e * eps0 * (2 * np.pi * freq)**2 / qe**2
+    
+    # Calculate line-integrated density
+    nedl = (c * n_c / (np.pi * freq)) * phase
+    
+    if n_path > 0:
+        nedl /= n_path
+    
+    return nedl
+
+
+# The formula: \int {n_{e} dl}
+#              = ( 2 * c * n_c / (2 * pi * freqRF) ) * phi (radian) / n_path
+# The phase (degree) : phi * (2*pi/360)
+# The phase (radians): phi
+# Nedl = (2 * c * n_c / omega) * phase / n_path
+# Let's re-check the formula.
+# d(phi) = (omega / c) * (k_plasam - k) * dl
+#        = (omega / c) * (N - 1) * dl
+#        = (omega / c) * (sqrt(1 - (omega_p^2 / omega^2)) - 1) * dl
+#        = (omega / c) * (sqrt(1 - (n_e / n_c)) - 1) * dl
+#
+# omega_p^2 = n_e * qe^2 / (m_e * eps0)
+# n_c = (m_e * eps0) * omega^2 / qe^2 
+#
+# 1) d(phi) = (omega / c) * (sqrt(1 - (omega_p^2 / omega^2)) - 1) * dl
+#         --> (omega / c) * (omega_p^2 / omega^2) / 2 * dl
+#           = omega_p^2 / (2 * c * omega) * dl
+#           = n_e * qe^2 / (2 * c * omega * m_e * eps0) * dl
+#           = n_e * (qe^2 / (omega * m_e * eps0)) / (2 * c) * dl
+# -->  nedl = d(phi) * (2 * c * n_c / omega)
+#           = d(phi) * (2 * c * (m_e * eps0) * omega^2 / qe^2 / omega)
+#           = d(phi) * (2 * c * (m_e * eps0) * omega / qe^2)
+#           = d(phi) * (2 * c * (m_e * eps0) * 2 * pi * freq / qe^2   
+# 2) d(phi) = (omega / c) * (sqrt(1 - (n_e / n_c)) - 1) * dl
+#         --> (omega / c) * (n_e / n_c) / 2 * dl
+#           = omega / (2 * c * n_c) * n_e * dl
+# -->  nedl = d(phi) * (2 * c * n_c / omega)
+
+
+def get_interferometry_params(shot_num: int, filename: str, config_path: str = None) -> Dict:
+    """
+    Returns interferometry analysis parameters based on shot number and filename.
+    
+    Args:
+        shot_num: Shot number
+        filename: Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv")
+        config_path: Path to if_config.ini file (optional, will auto-detect if None)
+    
+    Returns:
+        Dictionary containing:
+        - method: Analysis method ('CDM', 'FPGA', 'IQ')
+        - freq: Interferometer frequency in Hz (raw frequency for calculations)
+        - freq_ghz: Interferometer frequency in GHz (for display/reference)
+        - ref_col: Reference channel column name
+        - probe_cols: List of probe channel column names
+        - amp_ref_col: Amplitude reference column (for FPGA method)
+        - amp_probe_cols: List of amplitude probe columns (for FPGA method)
+        - n_path: Number of interferometer passes
+    """
+    basename = os.path.basename(filename)
+    
+    # Load interferometry configuration
+    config = configparser.ConfigParser()
+    
+    if config_path is None:
+        # Auto-detect config path relative to this file
+        config_path = os.path.join(os.path.dirname(__file__), 'if_config.ini')
+    
+    config.read(config_path)
+    
+    # Extract frequency values from config (keep as Hz for calculations, also provide GHz)
+    freq_94_hz = float(config.get('94GHz', 'freq'))  # Keep in Hz
+    freq_280_hz = float(config.get('280GHz', 'freq'))  # Keep in Hz
+    freq_94ghz = freq_94_hz / 1e9  # Convert to GHz for display
+    freq_280ghz = freq_280_hz / 1e9  # Convert to GHz for display
+    n_path_94ghz = int(config.get('94GHz', 'n_path'))
+    n_path_280ghz = int(config.get('280GHz', 'n_path'))
+
+    # Rule 3: Shots 41542 and above
+    if shot_num >= 41542:
+        if "_ALL" in basename:
+            # <shot_num>_ALL.csv: 280GHz / CDM method
+            # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
+            return {
+                'method': 'CDM',
+                'freq': freq_280_hz,  # Hz for calculations
+                'freq_ghz': freq_280ghz,  # GHz for display
+                'ref_col': 'CH0',
+                'probe_cols': ['CH1'],
+                'n_path': n_path_280ghz
+            }
+        elif "_0" in basename:
+            # <shot_num>_0XX.csv: 94GHz / CDM method
+            # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
+            return {
+                'method': 'CDM',
+                'freq': freq_94_hz,  # Hz for calculations
+                'freq_ghz': freq_94ghz,  # GHz for display
+                'ref_col': 'CH0',
+                'probe_cols': ['CH1', 'CH2'],  # Mapping for channels 5, 6 (corrected by user)
+                'n_path': n_path_94ghz
+            }
+        else:
+            # <shot_num>_XXX.csv: 94GHz / CDM method
+            # Other probe channels
+            return {
+                'method': 'CDM',
+                'freq': freq_94_hz,  # Hz for calculations
+                'freq_ghz': freq_94ghz,  # GHz for display
+                'ref_col': '',
+                'probe_cols': ['CH0', 'CH1', 'CH2'],  # Mapping for channels 7-9
+                'n_path': n_path_94ghz
+            }
+
+    # Rule 2: Shots 39302–41398
+    elif 39302 <= shot_num <= 41398:
+        # 94GHz / FPGA method
+        # The first 8 channels: phase ref(CH0) and probes (CH1-CH7) [rad]
+        # The second 8 channels: nothing
+        # The last 8 channels: amplitude of ref(CH16) and probes(CH17-CH23) [V]
+        return {
+            'method': 'FPGA',
+            'freq': freq_94_hz,  # Hz for calculations
+            'freq_ghz': freq_94ghz,  # GHz for display
+            'ref_col': 'CH0', 
+            'probe_cols': ['CH1', 'CH2', 'CH3', 'CH4', 'CH5'],  # ch. 5-9 of 94G interferometer
+            'amp_ref_col': 'CH16',
+            'amp_probe_cols': ['CH17', 'CH18', 'CH19', 'CH20', 'CH21'],  # ch. 5-9 of 94G interferometer
+            'n_path': n_path_94ghz
+        }
+
+    # Rule 1: Shots 30000–39265 (modified range as per user's file)
+    elif 30000 <= shot_num <= 39265:
+        # 94GHz / IQ method
+        # Assuming the two columns for I and Q are named 'CH0' and 'CH1' for simplicity.
+        return {
+            'method': 'IQ',
+            'freq': freq_94_hz,  # Hz for calculations
+            'freq_ghz': freq_94ghz,  # GHz for display
+            'ref_col': None,  # IQ method does not use a separate reference signal from another channel
+            'probe_cols': [('CH0', 'CH1')],
+            'n_path': n_path_94ghz
+        }
+    
+    # Default case for shots outside defined ranges
+    else:
+        return {
+            'method': 'unknown',
+            'freq': freq_94_hz,  # Hz for calculations, default to 94GHz if unknown
+            'freq_ghz': freq_94ghz,  # GHz for display
+            'ref_col': None,
+            'probe_cols': [],
+            'n_path': n_path_94ghz
+        }
 
 
 class PhaseConverter:
@@ -36,54 +266,62 @@ class PhaseConverter:
         params['n_ch'] = int(params['n_ch'])
         params['n_path'] = self.config.getint(section, 'n_path')
         return params
+    
+    def get_analysis_params(self, shot_num: int, filename: str) -> Dict:
+        """
+        Returns interferometry analysis parameters based on shot number and filename.
+        This method uses the class's config path and provides better integration
+        with phase_to_density calculations.
+        
+        Args:
+            shot_num: Shot number
+            filename: Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv")
+        
+        Returns:
+            Dictionary containing analysis parameters compatible with phase_to_density
+        """
+        # Use the standalone function but with our config path
+        params = get_interferometry_params(shot_num, filename, config_path=None)
+        return params
 
-    def phase_to_density(self, phase: np.ndarray, freq_ghz: int) -> np.ndarray:
+    def phase_to_density(self, phase: np.ndarray, freq_hz: float = None, n_path: int = None, analysis_params: Dict = None) -> np.ndarray:
         """
         Converts phase (in radians) to line-integrated density (m^-2).
-        """
-        params = self.get_interferometer_params(freq_ghz)
-        freq = params['freq']
         
+        🚀 OPTIMIZED: Uses numba JIT compilation for enhanced performance.
+        
+        Args:
+            phase: Phase array in radians
+            freq_hz: Frequency in Hz (takes precedence over analysis_params)
+            n_path: Number of interferometer passes (takes precedence over analysis_params)
+            analysis_params: Dictionary from get_analysis_params() containing 'freq' and 'n_path'
+        
+        Returns:
+            Line-integrated density in m^-2
+        """
+        # Determine frequency and n_path from various sources
+        if freq_hz is not None and n_path is not None:
+            # Direct parameters provided
+            freq = freq_hz
+            passes = n_path
+        elif analysis_params is not None:
+            # Use parameters from analysis params dictionary
+            freq = analysis_params['freq']  # Should be in Hz
+            passes = analysis_params['n_path']
+        else:
+            # Fallback to default 94GHz parameters
+            freq_params = self.get_interferometer_params(94)
+            freq = freq_params['freq']
+            passes = freq_params['n_path']
+        
+        # Get physical constants
         m_e = self.constants['m_e']
         eps0 = self.constants['eps0']
         qe = self.constants['qe']
         c = self.constants['c']
-
-        n_c = m_e * eps0 * (2 * np.pi * freq)**2 / qe**2
         
-        # The formula: \int {n_{e} dl}
-        #              = ( 2 * c * n_c / (2 * pi * freqRF) ) * phi (radian) / n_path
-        # The phase (degree) : phi * (2*pi/360)
-        # The phase (radians): phi
-        # Nedl = (2 * c * n_c / omega) * phase / n_path
-        # Let's re-check the formula.
-        # d(phi) = (omega / c) * (k_plasam - k) * dl
-        #        = (omega / c) * (N - 1) * dl
-        #        = (omega / c) * (sqrt(1 - (omega_p^2 / omega^2)) - 1) * dl
-        #        = (omega / c) * (sqrt(1 - (n_e / n_c)) - 1) * dl
-        #
-        # omega_p^2 = n_e * qe^2 / (m_e * eps0)
-        # n_c = (m_e * eps0) * omega^2 / qe^2 
-        #
-        # 1) d(phi) = (omega / c) * (sqrt(1 - (omega_p^2 / omega^2)) - 1) * dl
-        #         --> (omega / c) * (omega_p^2 / omega^2) / 2 * dl
-        #           = omega_p^2 / (2 * c * omega) * dl
-        #           = n_e * qe^2 / (2 * c * omega * m_e * eps0) * dl
-        #           = n_e * (qe^2 / (omega * m_e * eps0)) / (2 * c) * dl
-        # -->  nedl = d(phi) * (2 * c * n_c / omega)
-        #           = d(phi) * (2 * c * (m_e * eps0) * omega^2 / qe^2 / omega)
-        #           = d(phi) * (2 * c * (m_e * eps0) * omega / qe^2)
-        #           = d(phi) * (2 * c * (m_e * eps0) * 2 * pi * freq / qe^2   
-        # 2) d(phi) = (omega / c) * (sqrt(1 - (n_e / n_c)) - 1) * dl
-        #         --> (omega / c) * (n_e / n_c) / 2 * dl
-        #           = omega / (2 * c * n_c) * n_e * dl
-        # -->  nedl = d(phi) * (2 * c * n_c / omega)
-        nedl = (c * n_c / (np.pi * freq)) * phase
-
-        if params['n_path'] > 0:
-            nedl /= params['n_path']
-            
-        return nedl
+        # Use numba-optimized core calculation
+        return _phase_to_density_core(phase, freq, c, m_e, eps0, qe, passes)
 
     def calc_phase_iq_atan2(self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False) -> np.ndarray:
         """
@@ -107,34 +345,23 @@ class PhaseConverter:
         """
         Calculates the phase from I and Q signals using a differential cross-product method.
         This is based on the IQPostprocessing(...).m script.
+        
+        🚀 OPTIMIZED: Uses numba JIT compilation for enhanced performance.
         """
-        # 1. Normalize I and Q signals
-        iq_mag = np.sqrt(i_signal**2 + q_signal**2)
-        # Avoid division by zero, set magnitude to 1 if it's 0.
-        iq_mag[iq_mag == 0] = 1.0
-        i_norm = i_signal / iq_mag
-        q_norm = q_signal / iq_mag
+        # 1. Normalize I and Q signals (numba-optimized)
+        i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
 
-        # 2. Calculate the phase difference between consecutive points (vectorized)
-        # Numerator of the arcsin argument: I_n(i) * Q_n(i+1) - Q_n(i) * I_n(i+1)
-        numerator = i_norm[:-1] * q_norm[1:] - q_norm[:-1] * i_norm[1:]
-
-        # Denominator of the arcsin argument: sqrt((I_n(i)+I_n(i+1))^2 + (Q_n(i)+Q_n(i+1))^2)
-        denominator = np.sqrt((i_norm[:-1] + i_norm[1:])**2 + (q_norm[:-1] + q_norm[1:])**2)
-        denominator[denominator == 0] = 1.0 # Avoid division by zero
-
-        # The argument for arcsin can be > 1 or < -1 due to floating point inaccuracies. Clip it.
-        ratio = np.clip(numerator / denominator, -1.0, 1.0)
-
-        # Calculate the differential phase in radians
-        del_phase = 2 * np.arcsin(ratio)
-
+        # 2. Calculate the differential phase (numba-optimized)
+        del_phase = _calculate_differential_phase(i_norm, q_norm)
+        
         # Handle any potential NaNs, as in the MATLAB code
         del_phase[np.isnan(del_phase)] = 0.0
+        
+        # Scale by factor of 2 as in original algorithm
+        del_phase *= 2.0
 
-        # 3. Accumulate the phase differences
-        # The first phase value is 0 since it's a differential measurement.
-        accumulated_phase = np.concatenate(([0.0], np.cumsum(del_phase)))
+        # 3. Accumulate the phase differences (numba-optimized)
+        accumulated_phase = _cumulative_sum_phase(del_phase)
 
         # Match the sign from the MATLAB script
         if isflip:

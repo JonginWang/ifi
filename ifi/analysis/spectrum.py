@@ -9,7 +9,7 @@ os.environ['NUMBA_CACHE_DIR'] = numba_cache_dir
 import numpy as np
 import pandas as pd
 from scipy import signal as spsig
-from scipy.fft import fft, fftfreq
+from scipy.fft import fft, fftfreq, rfft, rfftfreq
 import ssqueezepy as ssqpy
 from ssqueezepy.experimental import scale_to_freq
 import pywt
@@ -17,8 +17,10 @@ from typing import Tuple, Union
 from collections import defaultdict
 import logging
 
-from ifi.utils import assign_kwargs
+from ifi.utils.common import assign_kwargs
+from ifi.utils.common import LogManager
 
+LogManager()
 
 class SpectrumAnalysis:
     def __init__(self):
@@ -29,10 +31,11 @@ class SpectrumAnalysis:
         }
         self._cached_stft_kwargs = {}
         self._cached_window = None
+        self._cached_kwargs_full = None
 
     def _get_stft_kwargs(self, **kwargs):
-        # Only recompute window if kwargs have changed
-        if kwargs != self._cached_stft_kwargs:
+        # Only recompute window if kwargs have changed or cache is empty
+        if kwargs != self._cached_stft_kwargs or self._cached_kwargs_full is None:
             self._cached_stft_kwargs = kwargs
             
             final_kwargs = self.kwargs_stft_fallback.copy()
@@ -84,9 +87,15 @@ class SpectrumAnalysis:
         all_kwargs = self._get_stft_kwargs(**kwargs)
         sqpy_kwargs = self._translate_kwargs(all_kwargs, 'ssqueezepy')
 
-        Sxx, f, t = ssqpy.stft(signal, window=sqpy_kwargs['win'], n_fft=sqpy_kwargs['n_fft'], 
+        Sxx = ssqpy.stft(signal, window=sqpy_kwargs['win'], n_fft=sqpy_kwargs['n_fft'], 
                          hop_len=sqpy_kwargs['hop_len'], fs=fs, padtype=sqpy_kwargs['padtype'])
-        return f, t, Sxx
+        
+        # Create frequency and time axes manually
+        n_fft = sqpy_kwargs['n_fft']
+        hop_len = sqpy_kwargs['hop_len']
+        freqs_stft = np.fft.rfftfreq(n_fft, 1/fs)  # Only positive frequencies
+        time_stft = np.arange(0, (len(signal) - 1)//hop_len + 1) / fs
+        return freqs_stft, time_stft, Sxx
 
     def compute_cwt(self, signal: np.ndarray, fs: float, wavelet: str = "gmw", **kwargs):
         logging.debug(f"Computing CWT with ssqueezepy using '{wavelet}' wavelet.")
@@ -180,10 +189,17 @@ class SpectrumAnalysis:
 if __name__ == '__main__':
     # Example usage:
     analyzer = SpectrumAnalysis()
-    fs = 1e7
+    fs1 = 5e6
+    fs2 = 8e6
+    fs = 50e6
     t = np.arange(0, 1, 1/fs)
-    signal = np.sin(2 * np.pi * 1e6 * t)
-    
+    signal1 = np.sin(2 * np.pi * fs1 * t)
+    signal2 = np.sin(2 * np.pi * fs2 * t)
+    signal = signal1 + 0.5 *signal2 + 0.1 * np.random.randn(len(t))
+
+    f_center = analyzer.find_center_frequency_fft(signal, fs)
+    logging.info(f"Center frequency: {f_center/1e6:.2f} MHz")
+
     # Call with default parameters using SciPy
     f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
     ridge = analyzer.find_freq_ridge(Zxx, f)

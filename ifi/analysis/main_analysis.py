@@ -6,6 +6,15 @@ This script orchestrates the data analysis workflow for the IFI project.
 It handles data loading, processing, analysis, and visualization.
 """
 
+# ============================================================================
+# CRITICAL: Set up numba cache BEFORE any imports that use numba/ssqueezepy
+# ============================================================================
+from ifi.utils.cache_setup import setup_project_cache
+
+# Configure cache for the entire project
+cache_config = setup_project_cache()
+
+# Now safe to import other modules
 import argparse
 import logging
 import os
@@ -23,8 +32,9 @@ from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
 from ifi.analysis.plots import plot_cwt
-from ifi.utils import LogManager, FlatShotList
-from ifi import file_io
+from ifi.utils.common import LogManager, FlatShotList
+from ifi.utils import file_io
+from ifi.analysis.phi2ne import get_interferometry_params
 
 # The LogManager class ensures this setup runs only once per session.
 # It's better to initialize it inside the main() function or at the start of the script logic.
@@ -146,15 +156,15 @@ def run_analysis(
             shot_num = int(match.group(1))
             files_by_shot[shot_num].append(f)
             # Get parameters for each individual file (not just shot number)
-            params = file_io.get_interferometry_params(shot_num, os.path.basename(f))
+            params = get_interferometry_params(shot_num, os.path.basename(f))
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq']}GHz")
+            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq_ghz']}GHz")
         else:
             files_by_shot['unknown'].append(f)
             # For unknown files, use shot number 0 as default
-            params = file_io.get_interferometry_params(0, os.path.basename(f))
+            params = get_interferometry_params(0, os.path.basename(f))
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq']}GHz")
+            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq_ghz']}GHz")
 
     logging.info(f"Grouped files into {len(files_by_shot)} shot(s).")
 
@@ -208,14 +218,106 @@ def run_analysis(
             if file_path in interferometry_params_by_file:
                 params = interferometry_params_by_file[file_path]
                 shot_interferometry_params[basename] = params
-                logging.info(f"File {basename}: {params['method']} method, {params['freq']}GHz, ref={params['ref_col']}, probes={params['probe_cols']}")
+                logging.info(f"File {basename}: {params['method']} method, {params['freq_ghz']}GHz, ref={params['ref_col']}, probes={params['probe_cols']}")
         
-        # --- Combine and Prepare Data ---
-        ref_time_axis = list(shot_nas_data.values())[0].index
-        combined_signals = pd.concat(
-            [df.reindex(ref_time_axis, method="nearest", limit=1) for df in shot_nas_data.values()],
-            axis=1
-        )
+        # --- Group Data by Frequency ---
+        # Group files by frequency based on interferometry parameters
+        freq_groups = {}
+        for basename, params in shot_interferometry_params.items():
+            freq_ghz = params.get('freq_ghz', 94.0)  # Default to 94GHz
+            if freq_ghz not in freq_groups:
+                freq_groups[freq_ghz] = {'files': [], 'params': []}
+            freq_groups[freq_ghz]['files'].append(basename)
+            freq_groups[freq_ghz]['params'].append(params)
+        
+        logging.info(f"Frequency groups found: {list(freq_groups.keys())} GHz")
+        
+        # Create frequency-specific combined signals
+        freq_combined_signals = {}
+        for freq_ghz, group_info in freq_groups.items():
+            files_in_group = group_info['files']
+            logging.info(f"Processing {freq_ghz}GHz group with files: {files_in_group}")
+            
+            if freq_ghz == 280.0:
+                # 280GHz: Use _ALL file independently
+                all_file = None
+                for basename in files_in_group:
+                    if '_ALL' in basename and basename in shot_nas_data:
+                        all_file = basename
+                        break
+                
+                if all_file:
+                    df = shot_nas_data[all_file].copy()
+                    if 'TIME' in df.columns:
+                        df.index = df['TIME']
+                        df = df.drop('TIME', axis=1)
+                        df.index.name = 'TIME'
+                    freq_combined_signals[freq_ghz] = df
+                    logging.info(f"280GHz: Using {all_file} with shape {df.shape}")
+                else:
+                    logging.warning(f"No _ALL file found for 280GHz group")
+                    
+            elif freq_ghz == 94.0:
+                # 94GHz: Use _0XX file as reference time axis, combine with other files
+                ref_file = None
+                other_files = []
+                
+                # Find reference file (_0XX pattern) and other files
+                for basename in files_in_group:
+                    if '_0' in basename and basename in shot_nas_data:
+                        ref_file = basename
+                    elif basename in shot_nas_data:
+                        other_files.append(basename)
+                
+                if ref_file:
+                    # Use reference file's time axis
+                    ref_df = shot_nas_data[ref_file].copy()
+                    if 'TIME' in ref_df.columns:
+                        ref_time_axis = ref_df['TIME']
+                        ref_df.index = ref_time_axis
+                        ref_df = ref_df.drop('TIME', axis=1)
+                        ref_df.index.name = 'TIME'
+                    else:
+                        ref_time_axis = ref_df.index
+                    
+                    # Rename reference file columns
+                    ref_suffix = ref_file.replace('.csv', '').replace('.dat', '')
+                    ref_df.columns = [f"{col}_{ref_suffix}" for col in ref_df.columns]
+                    
+                    combined_dfs = [ref_df]
+                    logging.info(f"📍 94GHz reference: {ref_file} with shape {ref_df.shape}")
+                    
+                    # Add other files, reindexed to reference time axis
+                    for other_file in other_files:
+                        other_df = shot_nas_data[other_file].copy()
+                        if 'TIME' in other_df.columns:
+                            other_df.index = other_df['TIME']
+                            other_df = other_df.drop('TIME', axis=1)
+                        
+                        # Reindex to reference time axis
+                        other_df_reindexed = other_df.reindex(ref_time_axis, method="nearest", limit=1)
+                        
+                        # Rename columns to avoid conflicts
+                        other_suffix = other_file.replace('.csv', '').replace('.dat', '')
+                        other_df_reindexed.columns = [f"{col}_{other_suffix}" for col in other_df_reindexed.columns]
+                        
+                        combined_dfs.append(other_df_reindexed)
+                        logging.info(f"94GHz additional: {other_file} reindexed to reference")
+                    
+                    # Combine all 94GHz files
+                    freq_combined_signals[freq_ghz] = pd.concat(combined_dfs, axis=1)
+                    freq_combined_signals[freq_ghz].index.name = 'TIME'
+                    logging.info(f"94GHz: Combined shape {freq_combined_signals[freq_ghz].shape}")
+                else:
+                    logging.warning(f"No reference _0XX file found for 94GHz group")
+            else:
+                logging.warning(f"Unknown frequency group: {freq_ghz}GHz")
+        
+        # For backward compatibility, use the largest frequency group as main combined_signals
+        if freq_combined_signals:
+            main_freq = max(freq_combined_signals.keys())
+            combined_signals = freq_combined_signals[main_freq]
+            logging.info(f"Using {main_freq}GHz as main combined_signals")
         current_vest_data = vest_data_by_shot.get(shot_num, {})
         vest_ip_data = current_vest_data.get('25k')
         if vest_ip_data is None:
@@ -224,47 +326,192 @@ def run_analysis(
         # --- 5. Density Calculation & Baseline Correction ---
         phase_converter = phi2ne.PhaseConverter()
         density_data = pd.DataFrame(index=combined_signals.index)
-        if args.density:
-            params = shot_interferometry_params[file_path]
-            if params:
-                if params['method'] == 'CDM':
-                    ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
-                    analyzer = spectrum.SpectrumAnalysis()
-                    fs = 1 / combined_signals.index.to_series().diff().mean()
-                    f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
-                    for probe_col in params['probe_cols']:
-                        if probe_col in combined_signals.columns:
-                            phase = phase_converter.calc_phase_cdm(ref_signal, combined_signals[probe_col].to_numpy(), fs, f_center)
-                            density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
         
-                elif params['method'] == 'FPGA':
-                    ref_signal = combined_signals[params['ref_col']].dropna().to_numpy()
-                    for probe_col in params['probe_cols']:
-                        if probe_col in combined_signals.columns:
-                            phase = phase_converter.calc_phase_fpga(ref_signal, combined_signals[probe_col].to_numpy(), combined_signals.index.to_numpy(), combined_signals[probe_col].to_numpy(), isflip=True)
-                            density_data[f"ne_{probe_col}"] = phase_converter.phase_to_density(phase, params['freq'])
-                elif params['method'] == 'IQ':
-                    i_signal = combined_signals[params['probe_cols'][0]].dropna().to_numpy()
-                    q_signal = combined_signals[params['probe_cols'][1]].dropna().to_numpy()
-                    phase = phase_converter.calc_phase_iq(i_signal, q_signal)
-                    density_data[f"ne_{params['probe_cols'][0]}"] = phase_converter.phase_to_density(phase, params['freq'])
+        # 🔍 DEBUG: Check combined_signals structure
+        logging.info(f"=== DEBUGGING combined_signals ===")
+        logging.info(f"Combined signals shape: {combined_signals.shape}")
+        logging.info(f"Available columns: {list(combined_signals.columns)}")
+        logging.info(f"Index info: {combined_signals.index.name}, range: {combined_signals.index.min():.6f} to {combined_signals.index.max():.6f}")
+        logging.info(f"Index length: {len(combined_signals.index)}")
+        
+        if len(combined_signals) > 0:
+            logging.info(f"First 5 rows of combined_signals:")
+            logging.info(f"{combined_signals.head()}")
+            
+            # Check time resolution
+            time_diff = combined_signals.index.to_series().diff().mean()
+            logging.info(f"     Time resolution analysis:")
+            logging.info(f"   - Mean time diff: {time_diff}")
+            logging.info(f"   - Time diff type: {type(time_diff)}")
+            logging.info(f"   - Is NaN?: {pd.isna(time_diff)}")
+            logging.info(f"   - Is zero?: {time_diff == 0}")
+            
+            # Check first few time differences
+            time_diffs = combined_signals.index.to_series().diff().head(10)
+            logging.info(f"   - First 10 time diffs: {time_diffs.tolist()}")
+        
+        logging.info(f"=== END DEBUG ===")
+        
+        if args.density:
+            # Process each frequency group separately for density calculation
+            for freq_ghz, freq_data in freq_combined_signals.items():
+                logging.info(f"Processing density calculation for {freq_ghz}GHz")
+                
+                # Get files for this frequency
+                freq_files = freq_groups[freq_ghz]['files']
+                freq_params_list = freq_groups[freq_ghz]['params']
+                
+                # Calculate time difference from this frequency's data
+                time_diff = freq_data.index.to_series().diff().mean()
+                if time_diff == 0 or pd.isna(time_diff):
+                    # Fallback: use 4ns resolution from file metadata
+                    fs = 250e6  # 250 MHz sampling rate
+                    logging.warning(f"Invalid time resolution detected for {freq_ghz}GHz, using default fs={fs/1e6:.1f}MHz")
                 else:
-                    logging.warning(f"Unknown interferometry method: {params['method']}")
+                    fs = 1 / time_diff
+                
+                logging.info(f" {freq_ghz}GHz - Sampling frequency: {fs/1e6:.2f} MHz (time_diff: {time_diff})")
+                
+                # Process each file in this frequency group
+                for i, basename in enumerate(freq_files):
+                    params = freq_params_list[i]
+                    if params and params['method'] != 'unknown':
+                        file_suffix = basename.replace('.csv', '').replace('.dat', '')
+                        logging.info(f"🔬 Processing {basename}: {params['method']} method, {freq_ghz}GHz")
+                        
+                        if params['method'] == 'CDM':
+                            # Find reference signal for this frequency group
+                            ref_signal = None
+                            ref_col_name = None
+                            f_center = None
+                            
+                            if params['ref_col']:
+                                # This file has its own reference
+                                if freq_ghz == 280.0:
+                                    # Single file case - no suffix
+                                    ref_col_name = params['ref_col']
+                                else:
+                                    # Multi-file case - with suffix
+                                    ref_col_name = f"{params['ref_col']}_{file_suffix}"
+                                
+                                if ref_col_name in freq_data.columns:
+                                    ref_signal = freq_data[ref_col_name].dropna().to_numpy()
+                                    logging.info(f"📍 Using own reference {ref_col_name} for {basename}")
+                                else:
+                                    logging.warning(f"❌ Reference column {ref_col_name} not found for {basename}")
+                                    continue
+                            else:
+                                # This file has no reference - try to use group reference
+                                group_ref_signal = None
+                                group_ref_col = None
+                                
+                                # Find reference from other files in the same frequency group
+                                for other_basename, other_params in zip(freq_files, freq_params_list):
+                                    if other_params['ref_col'] and other_basename != basename:
+                                        other_suffix = other_basename.replace('.csv', '').replace('.dat', '')
+                                        potential_ref_col = f"{other_params['ref_col']}_{other_suffix}"
+                                        if potential_ref_col in freq_data.columns:
+                                            group_ref_signal = freq_data[potential_ref_col].dropna().to_numpy()
+                                            group_ref_col = potential_ref_col
+                                            logging.info(f"📍 Using shared reference {potential_ref_col} from {other_basename} for {basename}")
+                                            break
+                                
+                                if group_ref_signal is not None:
+                                    ref_signal = group_ref_signal
+                                    ref_col_name = group_ref_col
+                                else:
+                                    logging.warning(f"⚠️  No reference signal available for {basename} - skipping CDM analysis")
+                                    continue
+                            
+                            # Calculate center frequency for this reference
+                            analyzer = spectrum.SpectrumAnalysis()
+                            f_center = analyzer.find_center_frequency_fft(ref_signal, fs)
+                            
+                            # If center frequency detection fails, use a reasonable default
+                            if f_center == 0.0:
+                                f_center = min(fs / 8, 20e6)
+                                logging.warning(f"🎯 Center frequency detection failed for {basename}, using default: {f_center/1e6:.2f} MHz")
+                            else:
+                                logging.info(f"🎯 {basename}: f_center = {f_center/1e6:.2f} MHz")
+                            
+                            # Process each probe channel
+                            for probe_col in params['probe_cols']:
+                                if freq_ghz == 280.0:
+                                    # Single file case - no suffix
+                                    probe_col_name = probe_col
+                                else:
+                                    # Multi-file case - with suffix
+                                    probe_col_name = f"{probe_col}_{file_suffix}"
+                                
+                                if probe_col_name in freq_data.columns:
+                                    probe_signal = freq_data[probe_col_name].dropna().to_numpy()
+                                    phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
+                                    density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
+                                    logging.info(f"✅ CDM: Calculated density for {probe_col} in {basename}")
+                                else:
+                                    logging.warning(f"❌ Probe column {probe_col_name} not found for {basename}")
+                        
+                        elif params['method'] == 'FPGA':
+                            if params['ref_col']:
+                                ref_col_name = f"{params['ref_col']}_{file_suffix}"
+                                if ref_col_name in freq_data.columns:
+                                    ref_signal = freq_data[ref_col_name].dropna().to_numpy()
+                                    time_axis = freq_data.index.to_numpy()
+                                    
+                                    # Process each probe channel
+                                    for probe_col in params['probe_cols']:
+                                        probe_col_name = f"{probe_col}_{file_suffix}"
+                                        if probe_col_name in freq_data.columns:
+                                            probe_signal = freq_data[probe_col_name].dropna().to_numpy()
+                                            phase = phase_converter.calc_phase_fpga(ref_signal, probe_signal, time_axis, probe_signal, isflip=True)
+                                            density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
+                                            logging.info(f"✅ FPGA: Calculated density for {probe_col} in {basename}")
+                                        else:
+                                            logging.warning(f"❌ Probe column {probe_col_name} not found for {basename}")
+                                else:
+                                    logging.warning(f"❌ Reference column {ref_col_name} not found for {basename}")
+                            else:
+                                logging.warning(f"⚠️  No reference signal for {basename} - skipping FPGA analysis")
+                        
+                        elif params['method'] == 'IQ':
+                            # IQ method expects probe_cols to contain tuples like [('CH0', 'CH1')]
+                            if params['probe_cols'] and len(params['probe_cols']) > 0:
+                                probe_cols_tuple = params['probe_cols'][0]  # Should be a tuple (CH0, CH1)
+                                if isinstance(probe_cols_tuple, tuple) and len(probe_cols_tuple) == 2:
+                                    i_col, q_col = probe_cols_tuple
+                                    i_col_name = f"{i_col}_{file_suffix}"
+                                    q_col_name = f"{q_col}_{file_suffix}"
+                                    
+                                    if i_col_name in freq_data.columns and q_col_name in freq_data.columns:
+                                        i_signal = freq_data[i_col_name].dropna().to_numpy()
+                                        q_signal = freq_data[q_col_name].dropna().to_numpy()
+                                        phase = phase_converter.calc_phase_iq(i_signal, q_signal)
+                                        density_data[f"ne_IQ_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
+                                        logging.info(f"✅ IQ: Calculated density for {basename}")
+                                    else:
+                                        logging.warning(f"❌ IQ columns {i_col_name}, {q_col_name} not found for {basename}")
+                                else:
+                                    logging.warning(f"❌ Invalid IQ probe_cols format for {basename}: {probe_cols_tuple}")
+                            else:
+                                logging.warning(f"❌ No probe_cols defined for IQ method in {basename}")
+                        
+                        else:
+                            logging.warning(f"❌ Unknown interferometry method: {params['method']} for file {basename}")
 
-                if args.baseline and vest_ip_data is not None:
-                    # Get time axis and IP column name for baseline correction
-                    time_axis = combined_signals.index.to_numpy()
-                    ip_column_name = None
-                    if args.baseline == 'ip':
-                        # Try to find IP column in vest_ip_data - common names
-                        for col_name in vest_ip_data.columns:
-                            if 'ip' in col_name.lower() or 'current' in col_name.lower():
-                                ip_column_name = col_name
-                                break
-                    density_data = phase_converter.correct_baseline(
-                        density_data, time_axis, args.baseline, 
-                        vest_data=vest_ip_data, ip_column_name=ip_column_name
-                    )
+            # Apply baseline correction to all density columns
+            if args.baseline and vest_ip_data is not None and not density_data.empty:
+                time_axis = combined_signals.index.to_numpy()
+                ip_column_name = None
+                if args.baseline == 'ip':
+                    # Try to find IP column in vest_ip_data - common names
+                    for col_name in vest_ip_data.columns:
+                        if 'ip' in col_name.lower() or 'current' in col_name.lower():
+                            ip_column_name = col_name
+                            break
+                density_data = phase_converter.correct_baseline(
+                    density_data, time_axis, args.baseline, 
+                    vest_data=vest_ip_data, ip_column_name=ip_column_name
+                )
                 
         # --- 6. Final Output Bundle ---
         analysis_bundle = {
