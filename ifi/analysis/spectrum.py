@@ -73,7 +73,7 @@ class SpectrumAnalysis:
                 translated['hop'] = translated.pop('hop_len')
         return translated
 
-    def compute_stft(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute_stft(self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         all_kwargs = self._get_stft_kwargs(**kwargs)
         scipy_kwargs = self._translate_kwargs(all_kwargs, 'scipy')
         
@@ -81,9 +81,9 @@ class SpectrumAnalysis:
                                      dual_win=scipy_kwargs['dual_win'], scale_to=scipy_kwargs['scale_to'],
                                      phase_shift=scipy_kwargs['phase_shift'])
         Zxx = SFT.stft(signal, p0=0, p1=None, k_offset=0, padding=scipy_kwargs['padding'], axis=-1)
-        return SFT.f, SFT.t(signal.shape[-1]), Zxx
+        return SFT.f, SFT.t(signal.shape[-1]) + t_start, Zxx
 
-    def compute_stft_sqpy(self, signal: np.ndarray, fs: float, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute_stft_sqpy(self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         all_kwargs = self._get_stft_kwargs(**kwargs)
         sqpy_kwargs = self._translate_kwargs(all_kwargs, 'ssqueezepy')
 
@@ -94,15 +94,50 @@ class SpectrumAnalysis:
         n_fft = sqpy_kwargs['n_fft']
         hop_len = sqpy_kwargs['hop_len']
         freqs_stft = np.fft.rfftfreq(n_fft, 1/fs)  # Only positive frequencies
-        time_stft = np.arange(0, (len(signal) - 1)//hop_len + 1) / fs
+        
+        # Time axis with hopping consideration and original start time
+        n_frames = Sxx.shape[1]
+        time_stft = np.arange(0, (len(signal) - 1)//hop_len + 1) / fs + t_start
+        
         return freqs_stft, time_stft, Sxx
 
-    def compute_cwt(self, signal: np.ndarray, fs: float, wavelet: str = "gmw", **kwargs):
+    def compute_cwt(self, signal: np.ndarray, fs: float, wavelet: str = "gmw", 
+                    f_min: float = None, f_max: float = None,
+                   nv: int = 32, scales: str = 'log-piecewise', **kwargs):
+        """
+        Compute Continuous Wavelet Transform using ssqueezepy.
+        
+        Args:
+            signal: Input signal
+            fs: Sampling frequency  
+            wavelet: Wavelet type
+            f_min: Minimum frequency (Hz)
+            f_max: Maximum frequency (Hz)
+            nv: Number of voices (wavelets per octave)
+            scales: Scale distribution ('log', 'log-piecewise', 'linear' or array)
+            **kwargs: Additional arguments for ssqpy.cwt
+        """
         logging.debug(f"Computing CWT with ssqueezepy using '{wavelet}' wavelet.")
         wav = ssqpy.Wavelet(wavelet)
-        # ssqueezepy cwt returns Tx, Wx, ssq_freqs, scales, ...
-        Wx, scales, *_ = ssqpy.cwt(signal, wavelet=wav, fs=fs, **kwargs)
-        freqs_cwt = scale_to_freq(scales, wav, len(signal), fs=fs)
+        
+        # Convert frequency range to scales if provided
+        if f_min is not None and f_max is not None:
+            # Calculate appropriate scales for frequency range
+            scale_min = fs / (2 * f_max)  # Higher freq -> smaller scale
+            scale_max = fs / (2 * f_min)  # Lower freq -> larger scale
+            
+            # Generate logarithmically spaced scales
+            n_scales = int(nv * np.log2(scale_max / scale_min))
+            scales = np.logspace(np.log10(scale_min), np.log10(scale_max), n_scales)
+            
+            Wx, scales_out = ssqpy.cwt(signal, fs=fs, wavelet=wav, scales=scales, **kwargs)
+        else:
+            # Use default scaling
+            Wx, scales_out = ssqpy.cwt(signal, fs=fs, wavelet=wav, nv=nv, **kwargs)
+        
+        # Convert scales to frequencies
+        freqs_cwt = scale_to_freq(scales_out, wav, len(signal), fs=fs)
+
         return freqs_cwt, Wx
 
     def find_freq_ridge(self, Zxx: np.ndarray, f: np.ndarray, prominence: float = None, distance: float = None) -> np.ndarray:

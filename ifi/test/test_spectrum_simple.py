@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from ifi.analysis.spectrum import SpectrumAnalysis
 
 def test_synthetic_signal():
-    print("🧪 Testing synthetic signal with noise...")
+    print("Testing synthetic signal with noise...")
     
     # Create synthetic signal with proper Nyquist consideration
     fs1 = 5e6   # 5 MHz component
@@ -25,7 +25,7 @@ def test_synthetic_signal():
     
     signal = signal1 + 0.5 * signal2 + noise
     
-    print(f"📊 Signal parameters:")
+    print(f"Signal parameters:")
     print(f"   - Sampling rate: {fs/1e6:.1f} MHz")
     print(f"   - Duration: {duration} s")
     print(f"   - Signal length: {len(signal)} samples")
@@ -37,7 +37,7 @@ def test_synthetic_signal():
     analyzer = SpectrumAnalysis()
     f_center = analyzer.find_center_frequency_fft(signal, fs)
     
-    print(f"\n🎯 Center frequency detection:")
+    print(f"\nCenter frequency detection:")
     print(f"   - Detected: {f_center/1e6:.2f} MHz")
     print(f"   - Expected: ~{fs2/1e6:.1f} MHz (stronger component)")
     
@@ -46,28 +46,28 @@ def test_synthetic_signal():
         f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
         ridge = analyzer.find_freq_ridge(Zxx, f)
         
-        print(f"\n📈 SciPy STFT Analysis:")
+        print(f"\nSciPy STFT Analysis:")
         print(f"   - STFT shape: {Zxx.shape}")
         print(f"   - Frequency range: {f[0]/1e6:.1f} to {f[-1]/1e6:.1f} MHz")
         print(f"   - Ridge frequency: {np.mean(ridge)/1e6:.2f} MHz")
         
     except Exception as e:
-        print(f"❌ SciPy STFT failed: {e}")
+        print(f"SciPy STFT failed: {e}")
     
     # Test ssqueezepy STFT
     try:
         f_ssq, t_ssq, Sxx = analyzer.compute_stft_sqpy(signal, fs, n_fft=1024, hop_len=512)
         ridge_ssq = analyzer.find_freq_ridge(Sxx, f_ssq)
         
-        print(f"\n📈 ssqueezepy STFT Analysis:")
+        print(f"\nssqueezepy STFT Analysis:")
         print(f"   - STFT shape: {Sxx.shape}")
         print(f"   - Frequency range: {f_ssq[0]/1e6:.1f} to {f_ssq[-1]/1e6:.1f} MHz")
         print(f"   - Ridge frequency: {np.mean(ridge_ssq)/1e6:.2f} MHz")
         
     except Exception as e:
-        print(f"❌ ssqueezepy STFT failed: {e}")
+        print(f"ssqueezepy STFT failed: {e}")
     
-    print("\n✅ Test completed!")
+    print("\nTest completed!")
     return signal, fs
 
 if __name__ == '__main__':

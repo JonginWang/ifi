@@ -28,5 +28,8 @@ scipy==1.13.0
 PyWavelets==1.4.1
 ssqueezepy==0.6.5
 
+# Performance Libraries
+tbb==2022.2.0
+
 # Building Tools
 pyinstaller==6.14.2

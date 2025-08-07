@@ -40,10 +40,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 try:
     from ifi.utils.cache_setup import setup_project_cache
     from ifi.analysis.phi2ne import PhaseConverter, _normalize_iq_signals, _calculate_differential_phase, _cumulative_sum_phase, _phase_to_density_core
-    print("✅ All modules imported successfully")
+    print("All modules imported successfully")
 except ImportError as e:
-    print(f"❌ Import error: {e}")
-    print("📝 Make sure you're running from the project root directory")
+    print(f"Import error: {e}")
+    print("Make sure you're running from the project root directory")
     sys.exit(1)
 
 class PerformanceTester:
@@ -54,7 +54,7 @@ class PerformanceTester:
         
     def generate_test_data(self, n_samples=1000000):
         """Generate realistic I/Q signals for testing."""
-        print(f"🔧 Generating test data: {n_samples:,} samples")
+        print(f"Generating test data: {n_samples:,} samples")
         
         # Create realistic interferometry-like signals
         t = np.linspace(0, 1, n_samples)
@@ -90,22 +90,22 @@ class PerformanceTester:
         avg_time = np.mean(times)
         std_time = np.std(times)
         
-        print(f"   📊 Average: {avg_time:.4f} ± {std_time:.4f} seconds")
+        print(f"Average: {avg_time:.4f} ± {std_time:.4f} seconds")
         if hasattr(result, 'shape'):
-            print(f"   📈 Result shape: {result.shape}")
+            print(f"Result shape: {result.shape}")
         
         return avg_time, result
     
     def test_cache_configuration(self):
         """Test numba cache configuration."""
-        print("\n🔧 Testing Cache Configuration")
+        print("\nTesting Cache Configuration")
         print("=" * 40)
         
         try:
             import numba
-            print(f"✅ Numba version: {numba.__version__}")
-            print(f"📁 Cache directory: {numba.config.CACHE_DIR}")
-            print(f"🧵 Threading layer: {os.environ.get('NUMBA_THREADING_LAYER', 'default')}")
+            print(f"Numba version: {numba.__version__}")
+            print(f"Cache directory: {numba.config.CACHE_DIR}")
+            print(f"Threading layer: {os.environ.get('NUMBA_THREADING_LAYER', 'default')}")
             
             # Test if cache directory is writable
             test_file = os.path.join(numba.config.CACHE_DIR, 'test_write.tmp')
@@ -113,19 +113,19 @@ class PerformanceTester:
                 with open(test_file, 'w') as f:
                     f.write('test')
                 os.remove(test_file)
-                print("✅ Cache directory is writable")
+                print("Cache directory is writable")
             except Exception as e:
-                print(f"❌ Cache directory not writable: {e}")
+                print(f"Cache directory not writable: {e}")
                 
             return True
             
         except Exception as e:
-            print(f"❌ Cache configuration error: {e}")
+            print(f"Cache configuration error: {e}")
             return False
     
     def test_numba_functions(self):
         """Test individual numba-optimized functions."""
-        print("\n🧪 Testing Numba-Optimized Functions")
+        print("\nTesting Numba-Optimized Functions")
         print("=" * 40)
         
         # Generate test data
@@ -175,10 +175,10 @@ class PerformanceTester:
         data_size_mb = len(i_signal) * 16 / 1024 / 1024  # 2 arrays * 8 bytes
         processing_rate = data_size_mb / total_time
         
-        print(f"\n📊 Performance Summary:")
-        print(f"   💾 Data processed: {data_size_mb:.1f} MB")
-        print(f"   ⏱️  Total time: {total_time:.4f} seconds")
-        print(f"   🚀 Processing rate: {processing_rate:.1f} MB/s")
+        print(f"\nPerformance Summary:")
+        print(f"Data processed: {data_size_mb:.1f} MB")
+        print(f"Total time: {total_time:.4f} seconds")
+        print(f"Processing rate: {processing_rate:.1f} MB/s")
         
         self.results['numba_functions'] = results
         self.results['processing_rate_mb_s'] = processing_rate
@@ -187,7 +187,7 @@ class PerformanceTester:
     
     def test_phase_converter_methods(self):
         """Test PhaseConverter class methods."""
-        print("\n🔬 Testing PhaseConverter Methods")
+        print("\nTesting PhaseConverter Methods")
         print("=" * 40)
         
         # Generate test data
@@ -229,10 +229,10 @@ class PerformanceTester:
         # Performance comparison
         speedup = time_atan2 / time_asin2
         
-        print(f"\n🏆 Method Comparison:")
-        print(f"   📈 asin2 (optimized): {time_asin2:.4f} seconds")
-        print(f"   📉 atan2 (original):  {time_atan2:.4f} seconds")
-        print(f"   🚀 Speedup factor:    {speedup:.2f}x")
+        print(f"\nMethod Comparison:")
+        print(f"asin2 (optimized): {time_asin2:.4f} seconds")
+        print(f"atan2 (original):  {time_atan2:.4f} seconds")
+        print(f"Speedup factor:    {speedup:.2f}x")
         
         self.results['phase_converter'] = results
         self.results['speedup_factor'] = speedup
@@ -241,7 +241,7 @@ class PerformanceTester:
     
     def test_jit_compilation_effect(self):
         """Test the effect of JIT compilation over multiple runs."""
-        print("\n🔥 Testing JIT Compilation Effect")
+        print("\nTesting JIT Compilation Effect")
         print("=" * 40)
         
         # Generate smaller dataset for multiple runs
@@ -268,10 +268,10 @@ class PerformanceTester:
         steady_state = np.mean(times[2:])  # Skip first 2 runs
         jit_speedup = first_run / steady_state
         
-        print(f"\n📊 JIT Analysis:")
-        print(f"   🥶 First run (cold):     {first_run:.4f} seconds")
-        print(f"   🔥 Steady state (warm):  {steady_state:.4f} seconds")
-        print(f"   🚀 JIT speedup:          {jit_speedup:.1f}x")
+        print(f"\nJIT Analysis:")
+        print(f"First run (cold):     {first_run:.4f} seconds")
+        print(f"Steady state (warm):  {steady_state:.4f} seconds")
+        print(f"JIT speedup:          {jit_speedup:.1f}x")
         
         self.results['jit_speedup'] = jit_speedup
         
@@ -279,9 +279,9 @@ class PerformanceTester:
     
     def run_full_test_suite(self):
         """Run the complete performance test suite."""
-        print("🧪 IFI Comprehensive Performance Test Suite")
+        print("IFI Comprehensive Performance Test Suite")
         print("=" * 60)
-        print(f"🗂️  Cache directory: {cache_dir}")
+        print(f"Cache directory: {cache_dir}")
         
         success = True
         
@@ -293,32 +293,32 @@ class PerformanceTester:
         try:
             self.test_numba_functions()
         except Exception as e:
-            print(f"❌ Numba functions test failed: {e}")
+            print(f"Numba functions test failed: {e}")
             success = False
         
         # Test 3: PhaseConverter methods
         try:
             self.test_phase_converter_methods()
         except Exception as e:
-            print(f"❌ PhaseConverter test failed: {e}")
+            print(f"PhaseConverter test failed: {e}")
             success = False
         
         # Test 4: JIT compilation effect
         try:
             self.test_jit_compilation_effect()
         except Exception as e:
-            print(f"❌ JIT compilation test failed: {e}")
+            print(f"JIT compilation test failed: {e}")
             success = False
         
         # Final summary
         print("\n" + "=" * 60)
         if success:
-            print("✅ All performance tests passed!")
-            print(f"🚀 Peak processing rate: {self.results.get('processing_rate_mb_s', 0):.1f} MB/s")
-            print(f"📈 Numba speedup: {self.results.get('speedup_factor', 1):.1f}x")
-            print(f"🔥 JIT speedup: {self.results.get('jit_speedup', 1):.1f}x")
+            print("All performance tests passed!")
+            print(f"Peak processing rate: {self.results.get('processing_rate_mb_s', 0):.1f} MB/s")
+            print(f"Numba speedup: {self.results.get('speedup_factor', 1):.1f}x")
+            print(f"JIT speedup: {self.results.get('jit_speedup', 1):.1f}x")
         else:
-            print("❌ Some performance tests failed. Check the errors above.")
+            print("Some performance tests failed. Check the errors above.")
         
         return success, self.results
 

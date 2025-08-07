@@ -742,14 +742,25 @@ class NAS_DB:
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
 
-            df = pd.read_csv(
-                read_target,
-                skiprows=header_row_index,
-                header=0, # Use the found line as the header
-                encoding_errors='ignore',
-                engine='python',
-                skipfooter=0
-            )
+            # Retry logic for pandas read_csv
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    df = pd.read_csv(
+                        read_target,
+                        skiprows=header_row_index,
+                        header=0, # Use the found line as the header
+                        encoding_errors='ignore',
+                        engine='python',
+                        skipfooter=0
+                    )
+                    break  # Success, exit retry loop
+                except Exception as read_error:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"Pandas read attempt {attempt + 1} failed: {read_error}. Retrying...")
+                        time.sleep(1)  # Wait 1 second before retry
+                    else:
+                        raise read_error  # Re-raise the last error
 
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
@@ -813,14 +824,25 @@ class NAS_DB:
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
 
-            df = pd.read_csv(
-                read_target,
-                skiprows=header_row_index,
-                encoding='utf-8',
-                on_bad_lines='warn',
-                low_memory=False,
-                encoding_errors='ignore'
-            )
+            # Retry logic for pandas read_csv
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    df = pd.read_csv(
+                        read_target,
+                        skiprows=header_row_index,
+                        encoding='utf-8',
+                        on_bad_lines='warn',
+                        low_memory=False,
+                        encoding_errors='ignore'
+                    )
+                    break  # Success, exit retry loop
+                except Exception as read_error:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"Pandas read attempt {attempt + 1} failed: {read_error}. Retrying...")
+                        time.sleep(1)  # Wait 1 second before retry
+                    else:
+                        raise read_error  # Re-raise the last error
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
             df.columns = standardized_cols

@@ -50,7 +50,7 @@ def setup_numba_cache(project_root=None, verbose=True):
     os.environ['NUMBA_THREADING_LAYER'] = 'safe'  # Use thread-safe layer
     
     if verbose:
-        print(f"✅ Numba cache directory set to: {cache_dir}")
+        print(f"Numba cache directory set to: {cache_dir}")
     
     return cache_dir
 

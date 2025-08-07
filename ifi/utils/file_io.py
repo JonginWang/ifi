@@ -106,6 +106,6 @@ def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_result
         filename = f"{shot_num}.h5"
     
     filepath = os.path.join(output_dir, filename)
-    utils.ensure_dir(output_dir)
+    ensure_dir_exists(output_dir)
 
     # ... (rest of the HDF5 saving logic) 

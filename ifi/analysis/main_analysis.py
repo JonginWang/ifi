@@ -285,7 +285,7 @@ def run_analysis(
                     ref_df.columns = [f"{col}_{ref_suffix}" for col in ref_df.columns]
                     
                     combined_dfs = [ref_df]
-                    logging.info(f"📍 94GHz reference: {ref_file} with shape {ref_df.shape}")
+                    logging.info(f"94GHz reference: {ref_file} with shape {ref_df.shape}")
                     
                     # Add other files, reindexed to reference time axis
                     for other_file in other_files:
@@ -341,10 +341,10 @@ def run_analysis(
             # Check time resolution
             time_diff = combined_signals.index.to_series().diff().mean()
             logging.info(f"     Time resolution analysis:")
-            logging.info(f"   - Mean time diff: {time_diff}")
-            logging.info(f"   - Time diff type: {type(time_diff)}")
-            logging.info(f"   - Is NaN?: {pd.isna(time_diff)}")
-            logging.info(f"   - Is zero?: {time_diff == 0}")
+            logging.info(f"     - Mean time diff: {time_diff}")
+            logging.info(f"     - Time diff type: {type(time_diff)}")
+            logging.info(f"     - Is NaN?: {pd.isna(time_diff)}")
+            logging.info(f"     - Is zero?: {time_diff == 0}")
             
             # Check first few time differences
             time_diffs = combined_signals.index.to_series().diff().head(10)
@@ -396,9 +396,9 @@ def run_analysis(
                                 
                                 if ref_col_name in freq_data.columns:
                                     ref_signal = freq_data[ref_col_name].dropna().to_numpy()
-                                    logging.info(f"📍 Using own reference {ref_col_name} for {basename}")
+                                    logging.info(f"Using own reference {ref_col_name} for {basename}")
                                 else:
-                                    logging.warning(f"❌ Reference column {ref_col_name} not found for {basename}")
+                                    logging.warning(f"Reference column {ref_col_name} not found for {basename}")
                                     continue
                             else:
                                 # This file has no reference - try to use group reference
@@ -413,14 +413,14 @@ def run_analysis(
                                         if potential_ref_col in freq_data.columns:
                                             group_ref_signal = freq_data[potential_ref_col].dropna().to_numpy()
                                             group_ref_col = potential_ref_col
-                                            logging.info(f"📍 Using shared reference {potential_ref_col} from {other_basename} for {basename}")
+                                            logging.info(f"Using shared reference {potential_ref_col} from {other_basename} for {basename}")
                                             break
                                 
                                 if group_ref_signal is not None:
                                     ref_signal = group_ref_signal
                                     ref_col_name = group_ref_col
                                 else:
-                                    logging.warning(f"⚠️  No reference signal available for {basename} - skipping CDM analysis")
+                                    logging.warning(f"No reference signal available for {basename} - skipping CDM analysis")
                                     continue
                             
                             # Calculate center frequency for this reference
@@ -430,9 +430,9 @@ def run_analysis(
                             # If center frequency detection fails, use a reasonable default
                             if f_center == 0.0:
                                 f_center = min(fs / 8, 20e6)
-                                logging.warning(f"🎯 Center frequency detection failed for {basename}, using default: {f_center/1e6:.2f} MHz")
+                                logging.warning(f"Center frequency detection failed for {basename}, using default: {f_center/1e6:.2f} MHz")
                             else:
-                                logging.info(f"🎯 {basename}: f_center = {f_center/1e6:.2f} MHz")
+                                logging.info(f"{basename}: f_center = {f_center/1e6:.2f} MHz")
                             
                             # Process each probe channel
                             for probe_col in params['probe_cols']:
@@ -447,9 +447,9 @@ def run_analysis(
                                     probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                                     phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
                                     density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                    logging.info(f"✅ CDM: Calculated density for {probe_col} in {basename}")
+                                    logging.info(f"CDM: Calculated density for {probe_col} in {basename}")
                                 else:
-                                    logging.warning(f"❌ Probe column {probe_col_name} not found for {basename}")
+                                    logging.warning(f"Probe column {probe_col_name} not found for {basename}")
                         
                         elif params['method'] == 'FPGA':
                             if params['ref_col']:
@@ -465,13 +465,13 @@ def run_analysis(
                                             probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                                             phase = phase_converter.calc_phase_fpga(ref_signal, probe_signal, time_axis, probe_signal, isflip=True)
                                             density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                            logging.info(f"✅ FPGA: Calculated density for {probe_col} in {basename}")
+                                            logging.info(f"FPGA: Calculated density for {probe_col} in {basename}")
                                         else:
-                                            logging.warning(f"❌ Probe column {probe_col_name} not found for {basename}")
+                                            logging.warning(f"Probe column {probe_col_name} not found for {basename}")
                                 else:
-                                    logging.warning(f"❌ Reference column {ref_col_name} not found for {basename}")
+                                    logging.warning(f"Reference column {ref_col_name} not found for {basename}")
                             else:
-                                logging.warning(f"⚠️  No reference signal for {basename} - skipping FPGA analysis")
+                                logging.warning(f"No reference signal for {basename} - skipping FPGA analysis")
                         
                         elif params['method'] == 'IQ':
                             # IQ method expects probe_cols to contain tuples like [('CH0', 'CH1')]
@@ -487,16 +487,16 @@ def run_analysis(
                                         q_signal = freq_data[q_col_name].dropna().to_numpy()
                                         phase = phase_converter.calc_phase_iq(i_signal, q_signal)
                                         density_data[f"ne_IQ_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                        logging.info(f"✅ IQ: Calculated density for {basename}")
+                                        logging.info(f"IQ: Calculated density for {basename}")
                                     else:
-                                        logging.warning(f"❌ IQ columns {i_col_name}, {q_col_name} not found for {basename}")
+                                        logging.warning(f"IQ columns {i_col_name}, {q_col_name} not found for {basename}")
                                 else:
-                                    logging.warning(f"❌ Invalid IQ probe_cols format for {basename}: {probe_cols_tuple}")
+                                    logging.warning(f"Invalid IQ probe_cols format for {basename}: {probe_cols_tuple}")
                             else:
-                                logging.warning(f"❌ No probe_cols defined for IQ method in {basename}")
+                                logging.warning(f"No probe_cols defined for IQ method in {basename}")
                         
                         else:
-                            logging.warning(f"❌ Unknown interferometry method: {params['method']} for file {basename}")
+                            logging.warning(f"Unknown interferometry method: {params['method']} for file {basename}")
 
             # Apply baseline correction to all density columns
             if args.baseline and vest_ip_data is not None and not density_data.empty:

@@ -378,3 +378,160 @@ def plot_response(freqs_at_response, responses, title="Frequency Response"):
     ax.set_xlabel('Frequency (Hz)', **FontStyle.label)
     ax.set_ylabel('Gain (dB)', **FontStyle.label)
     ax.set_title(title, **FontStyle.title)
+
+
+def plot_waveforms(data, fs=None, title="Waveforms", downsample=1, save_path=None):
+    """
+    Plot multiple waveform signals.
+    
+    Args:
+        data: DataFrame with TIME column and signal columns, or dict of arrays
+        fs: Sampling frequency (optional)
+        title: Plot title
+        downsample: Downsampling factor
+        save_path: Optional path to save figure
+    
+    Returns:
+        fig, axes: Matplotlib figure and axes
+    """
+    set_plot_style()
+    
+    if isinstance(data, pd.DataFrame):
+        if 'TIME' in data.columns:
+            time = data['TIME'].values
+            signal_cols = [col for col in data.columns if col != 'TIME']
+            signals = {col: data[col].values for col in signal_cols}
+        else:
+            # Use index as time
+            time = data.index.values
+            signals = {col: data[col].values for col in data.columns}
+    elif isinstance(data, dict):
+        # Assume dict contains signal arrays
+        signals = data
+        if fs is not None:
+            max_len = max(len(sig) for sig in signals.values())
+            time = np.arange(max_len) / fs
+        else:
+            max_len = max(len(sig) for sig in signals.values())
+            time = np.arange(max_len)
+    else:
+        raise ValueError("Data must be DataFrame or dict")
+    
+    # Downsample if needed
+    if downsample > 1:
+        time = time[::downsample]
+        signals = {k: v[::downsample] for k, v in signals.items()}
+    
+    n_signals = len(signals)
+    fig, axes = plt.subplots(n_signals, 1, figsize=(12, 2 * n_signals), sharex=True)
+    
+    if n_signals == 1:
+        axes = [axes]
+    
+    for i, (name, signal) in enumerate(signals.items()):
+        axes[i].plot(time, signal)
+        axes[i].set_ylabel(name, **FontStyle.label)
+        axes[i].grid(True)
+    
+    axes[-1].set_xlabel("Time (s)", **FontStyle.label)
+    fig.suptitle(title, **FontStyle.title)
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig, axes
+
+
+def plot_spectrogram(freqs, times, Sxx, title="Spectrogram", save_path=None):
+    """
+    Plot a spectrogram.
+    
+    Args:
+        freqs: Frequency array
+        times: Time array
+        Sxx: Spectrogram matrix
+        title: Plot title
+        save_path: Optional path to save figure
+    
+    Returns:
+        fig, ax: Matplotlib figure and axis
+    """
+    set_plot_style()
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Convert to dB scale
+    Sxx_db = 10 * np.log10(np.abs(Sxx) + 1e-12)
+    
+    im = ax.pcolormesh(times, freqs/1e6, Sxx_db, shading='gouraud', cmap='viridis')
+    
+    ax.set_ylabel("Frequency (MHz)", **FontStyle.label)
+    ax.set_xlabel("Time (s)", **FontStyle.label)
+    ax.set_title(title, **FontStyle.title)
+    
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Power (dB)", **FontStyle.label)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig, ax
+
+
+def plot_density_results(density_data, time_data=None, title="Density Results", save_path=None):
+    """
+    Plot density calculation results.
+    
+    Args:
+        density_data: Dict of density arrays or DataFrame with density columns
+        time_data: Optional time array
+        title: Plot title
+        save_path: Optional path to save figure
+    
+    Returns:
+        fig, ax: Matplotlib figure and axis
+    """
+    set_plot_style()
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    if isinstance(density_data, pd.DataFrame):
+        if time_data is None and hasattr(density_data, 'index'):
+            time_data = density_data.index
+        elif time_data is None:
+            time_data = np.arange(len(density_data))
+        
+        for col in density_data.columns:
+            ax.plot(time_data, density_data[col], label=col)
+    
+    elif isinstance(density_data, dict):
+        if time_data is None:
+            max_len = max(len(data) for data in density_data.values())
+            time_data = np.arange(max_len)
+        
+        for name, data in density_data.items():
+            ax.plot(time_data, data, label=name)
+    
+    else:
+        # Single array
+        if time_data is None:
+            time_data = np.arange(len(density_data))
+        ax.plot(time_data, density_data)
+    
+    ax.set_xlabel("Time (s)", **FontStyle.label)
+    ax.set_ylabel("Density (m⁻³)", **FontStyle.label)
+    ax.set_title(title, **FontStyle.title)
+    ax.grid(True)
+    
+    if isinstance(density_data, (dict, pd.DataFrame)) and len(density_data) > 1:
+        ax.legend()
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    
+    return fig, ax

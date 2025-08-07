@@ -18,28 +18,28 @@ project_cache = os.path.join(os.path.abspath('.'), 'cache', 'numba_cache')
 try:
     os.makedirs(project_cache, exist_ok=True)
     cache_dir = project_cache
-    print(f"✅ Using project cache: {cache_dir}")
+    print(f"Using project cache: {cache_dir}")
 except (PermissionError, OSError):
     # Fallback to user temp directory
     cache_dir = os.path.join(tempfile.gettempdir(), 'ifi_numba_cache')
     os.makedirs(cache_dir, exist_ok=True)
-    print(f"⚠️  Using temp cache: {cache_dir}")
+    print(f"Using temp cache: {cache_dir}")
 
 os.environ['NUMBA_CACHE_DIR'] = cache_dir
 os.environ['NUMBA_THREADING_LAYER'] = 'safe'
 os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'
 
-print("🔧 Numba cache configured, now testing main_analysis...")
+print("Numba cache configured, now testing main_analysis...")
 
 def test_main_analysis_import():
     """Test if main_analysis can be imported without cache errors."""
     try:
-        print("📦 Testing imports...")
+        print("Testing imports...")
         
         # Test individual modules first
         print("   - Testing numba...")
         import numba
-        print(f"     ✅ Numba cache: {numba.config.CACHE_DIR}")
+        print(f"Numba cache: {numba.config.CACHE_DIR}")
         
         print("   - Testing pandas, numpy...")
         import pandas as pd
@@ -51,22 +51,22 @@ def test_main_analysis_import():
         print("   - Testing ifi modules...")
         from ifi.db_controller.nas_db import NAS_DB
         from ifi.db_controller.vest_db import VEST_DB
-        print("     ✅ Database modules")
+        print("Database modules")
         
         from ifi.analysis.phi2ne import PhaseConverter
-        print("     ✅ Phase converter (with numba optimizations)")
+        print("Phase converter (with numba optimizations)")
         
         from ifi.analysis import spectrum
-        print("     ✅ Spectrum analysis")
+        print("Spectrum analysis")
         
         print("   - Testing main analysis...")
         from ifi.analysis import main_analysis
-        print("     ✅ Main analysis module")
+        print("Main analysis module")
         
         return True
         
     except Exception as e:
-        print(f"❌ Import error: {e}")
+        print(f"Import error: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -74,7 +74,7 @@ def test_main_analysis_import():
 def test_numba_functions():
     """Test numba-optimized functions."""
     try:
-        print("\n🧪 Testing numba-optimized functions...")
+        print("\nTesting numba-optimized functions...")
         
         from ifi.analysis.phi2ne import _normalize_iq_signals, _calculate_differential_phase
         
@@ -84,16 +84,16 @@ def test_numba_functions():
         
         print("   - Testing _normalize_iq_signals...")
         i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
-        print(f"     ✅ Shape: {i_norm.shape}")
+        print(f"Shape: {i_norm.shape}")
         
         print("   - Testing _calculate_differential_phase...")
         phase_diff = _calculate_differential_phase(i_norm, q_norm)
-        print(f"     ✅ Shape: {phase_diff.shape}")
+        print(f"Shape: {phase_diff.shape}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Numba function error: {e}")
+        print(f"Numba function error: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -101,7 +101,7 @@ def test_numba_functions():
 def test_minimal_analysis():
     """Test minimal analysis workflow."""
     try:
-        print("\n🔬 Testing minimal analysis workflow...")
+        print("\nTesting minimal analysis workflow...")
         
         # Import after cache setup
         from ifi.analysis.phi2ne import PhaseConverter
@@ -113,19 +113,19 @@ def test_minimal_analysis():
         # Test with dummy data
         dummy_phase = np.random.randn(100) * 0.1
         density = converter.phase_to_density(dummy_phase, 94)
-        print(f"     ✅ Density calculation: {density.shape}")
+        print(f"Density calculation: {density.shape}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Analysis error: {e}")
+        print(f"Analysis error: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 def main():
     """Run all tests."""
-    print("🧪 Testing Main Analysis with Cache Setup")
+    print("Testing Main Analysis with Cache Setup")
     print("=" * 50)
     
     success = True
@@ -144,10 +144,10 @@ def main():
     
     print("\n" + "=" * 50)
     if success:
-        print("✅ All tests passed! Main analysis is ready to use.")
-        print(f"💡 Tip: Run with environment variable: NUMBA_CACHE_DIR={cache_dir}")
+        print("All tests passed! Main analysis is ready to use.")
+        print(f"Tip: Run with environment variable: NUMBA_CACHE_DIR={cache_dir}")
     else:
-        print("❌ Some tests failed. Check the errors above.")
+        print("Some tests failed. Check the errors above.")
     
     return success
 
