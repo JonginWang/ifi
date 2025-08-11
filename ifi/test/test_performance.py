@@ -1,40 +1,26 @@
 #!/usr/bin/env python3
 """
-Comprehensive Performance Test Suite for IFI
-=============================================
-
-Tests numba optimizations, cache configuration, and overall system performance.
+Performance benchmarking for IFI analysis components.
 """
 
+# ============================================================================
+# CRITICAL: Set up numba cache BEFORE any imports
+# ============================================================================
+from ifi.utils.cache_setup import setup_project_cache
+cache_config = setup_project_cache()
+
 import os
-import sys
-import time
 import numpy as np
+import pandas as pd
+import time
+import logging
+from pathlib import Path
+import matplotlib.pyplot as plt
 import tempfile
 
-# Setup cache BEFORE any numba imports
-def setup_test_cache():
-    """Set up cache for testing."""
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    cache_dir = os.path.join(project_root, 'cache', 'numba_cache')
-    
-    try:
-        os.makedirs(cache_dir, exist_ok=True)
-    except (PermissionError, OSError):
-        cache_dir = os.path.join(tempfile.gettempdir(), 'ifi_test_numba_cache')
-        os.makedirs(cache_dir, exist_ok=True)
-    
-    os.environ['NUMBA_CACHE_DIR'] = cache_dir
-    os.environ['NUMBA_THREADING_LAYER'] = 'safe'
-    os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'
-    
-    return cache_dir
-
-# Set up cache before imports
-cache_dir = setup_test_cache()
-
-# Add project to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
 
 # Now safe to import project modules
 try:
@@ -108,11 +94,11 @@ class PerformanceTester:
             print(f"Threading layer: {os.environ.get('NUMBA_THREADING_LAYER', 'default')}")
             
             # Test if cache directory is writable
-            test_file = os.path.join(numba.config.CACHE_DIR, 'test_write.tmp')
+            test_file = Path(numba.config.CACHE_DIR) / 'test_write.tmp'
             try:
                 with open(test_file, 'w') as f:
                     f.write('test')
-                os.remove(test_file)
+                test_file.unlink()
                 print("Cache directory is writable")
             except Exception as e:
                 print(f"Cache directory not writable: {e}")

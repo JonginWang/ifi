@@ -5,7 +5,7 @@ Full integration test suite combining analysis, spectrum, and plotting functions
 
 import numpy as np
 import pandas as pd
-import os
+from pathlib import Path
 import time
 import logging
 from ifi.analysis.main_analysis import load_and_process_file
@@ -286,7 +286,7 @@ def test_plotting_integration(results, spectrum_results, density_results, vest_d
                 time_range=(0.000, 0.020)  # First 20ms
             )
             
-            output_path = os.path.join(output_dir, f"waveforms_{filename.replace('.csv', '')}.png")
+            output_path = Path(output_dir) / f"waveforms_{filename.replace('.csv', '')}.png"
             fig.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
             
@@ -309,7 +309,7 @@ def test_plotting_integration(results, spectrum_results, density_results, vest_d
                 freq_range=(5e6, 50e6)
             )
             
-            output_path = os.path.join(output_dir, f"spectrum_{filename.replace('.csv', '')}.png")
+            output_path = Path(output_dir) / f"spectrum_{filename.replace('.csv', '')}.png"
             fig.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
             
@@ -334,7 +334,7 @@ def test_plotting_integration(results, spectrum_results, density_results, vest_d
                 time_range=(-0.005, 0.045)
             )
             
-            output_path = os.path.join(output_dir, "density_combined.png")
+            output_path = Path(output_dir) / "density_combined.png"
             fig.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
             

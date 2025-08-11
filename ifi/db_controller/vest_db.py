@@ -1,7 +1,7 @@
 import pymysql
 import numpy as np
 import configparser
-import os
+from pathlib import Path
 import time
 import logging
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
@@ -15,7 +15,7 @@ class VEST_DB:
     Reads connection info from a config file.
     """
     def __init__(self, config_path='ifi/config.ini'):
-        if not os.path.exists(config_path):
+        if not Path(config_path).exists():
             raise FileNotFoundError(f"Configuration file not found at '{config_path}'. Please create it from 'config.ini.template'.")
         
         self.logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class VEST_DB:
         # --- VEST Field Label Configuration ---
         self.field_label_file = db_cfg.get('field_label_file', fallback=None)
         self.field_labels = {}
-        if self.field_label_file and os.path.exists(self.field_label_file):
+        if self.field_label_file and Path(self.field_label_file).exists():
             try:
                 label_df = pd.read_csv(self.field_label_file)
                 # Create a dictionary mapping field_id to a formatted name with units
@@ -65,15 +65,15 @@ class VEST_DB:
             ssh_cfg = config['SSH_TUNNEL']
             conn_cfg = config['CONNECTION_SETTINGS']
             
-            ssh_key_path = os.path.expanduser(ssh_cfg.get('ssh_pkey_path'))
+            ssh_key_path = Path(ssh_cfg.get('ssh_pkey_path')).expanduser()
             self.logger.info(f"SSH key path resolved to: {ssh_key_path}")
-            if not os.path.exists(ssh_key_path):
+            if not ssh_key_path.exists():
                 self.logger.warning(f"SSH private key file does not exist at '{ssh_key_path}'!")
 
             self.ssh_config = {
                 'ssh_address_or_host': (ssh_cfg.get('ssh_host'), ssh_cfg.getint('ssh_port')),
                 'ssh_username': ssh_cfg.get('ssh_user'),
-                'ssh_pkey': ssh_key_path,
+                'ssh_pkey': str(ssh_key_path),
                 'remote_bind_address': (ssh_cfg.get('remote_mysql_host'), self.db_port),
                 'set_keepalive': 60.0
             }

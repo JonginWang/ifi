@@ -13,6 +13,8 @@ import re
 import tempfile
 from stat import S_ISDIR
 import threading
+from pathlib import Path
+from ifi.utils.path_utils import ensure_str_path
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -72,7 +74,7 @@ class NAS_DB:
     network drive or remotely via an SSH connection.
     """
     def __init__(self, config_path='ifi/config.ini'):
-        if not os.path.exists(config_path):
+        if not Path(config_path).exists():
             raise FileNotFoundError(f"Config file not found: '{config_path}'")
 
         self.logger = logging.getLogger(__name__)
@@ -97,7 +99,7 @@ class NAS_DB:
         self.ssh_host = ssh_cfg.get('ssh_host')
         self.ssh_port = ssh_cfg.getint('ssh_port')
         self.ssh_user = ssh_cfg.get('ssh_user')
-        self.ssh_pkey = os.path.expanduser(ssh_cfg.get('ssh_pkey_path'))
+        self.ssh_pkey = Path(ssh_cfg.get('ssh_pkey_path')).expanduser()
         self.remote_temp_dir = ssh_cfg.get('remote_temp_dir', None) # Read optional from config
 
         # Connection settings
@@ -164,7 +166,7 @@ class NAS_DB:
             if self._is_connected:
                 return True
 
-            if os.path.isdir(self.nas_mount):
+            if Path(self.nas_mount).is_dir():
                 self.logger.info(f"Local NAS mount found at '{self.nas_mount}'. Using direct access.")
                 self.access_mode = 'local'
                 self._is_connected = True
@@ -273,10 +275,10 @@ class NAS_DB:
         # --- Handle full paths directly ---
         if isinstance(query, str) and (os.path.sep in query or '/' in query):
              # A single full path is passed
-             return [query] if os.path.exists(query) else []
+             return [query] if Path(query).exists() else []
         if isinstance(query, list) and all(isinstance(q, str) and (os.path.sep in q or '/' in q) for q in query):
             # A list of full paths is passed
-            return [q for q in query if os.path.exists(q)]
+            return [q for q in query if Path(q).exists()]
 
         # --- Build search patterns for shot numbers and wildcards ---
         query_items = query if isinstance(query, list) else [query]
@@ -292,8 +294,8 @@ class NAS_DB:
         if self.access_mode == 'local':
             for folder in data_folders:
                 for pattern in search_patterns:
-                    search_path = os.path.join(base_path, folder, '**', pattern)
-                    found = glob.glob(search_path, recursive=True)
+                    search_path = Path(base_path) / folder / '**' / pattern
+                    found = glob.glob(str(search_path), recursive=True)
                     all_files.update(found)
         else: # remote access
             all_found_paths = self._find_files_remote(data_folders, search_patterns)
@@ -304,7 +306,7 @@ class NAS_DB:
         # --- Filter by allowed extensions ---
         filtered_files = [
             f for f in sorted_files
-            if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
+            if Path(f).suffix.lower() in ALLOWED_EXTENSIONS
         ]
         if len(filtered_files) < len(sorted_files):
             self.logger.info(
@@ -366,8 +368,8 @@ class NAS_DB:
         try:
             if self.access_mode == 'local':
                 for file_path in file_list:
-                    if os.path.exists(file_path):
-                        total_size += os.path.getsize(file_path)
+                    if Path(file_path).exists():
+                        total_size += Path(file_path).stat().st_size
             else: # remote
                 for file_path in file_list:
                     try:
@@ -414,7 +416,7 @@ class NAS_DB:
         else:
             # --- Check cache for each file individually ---
             for file_path in target_files:
-                basename = os.path.basename(file_path)
+                basename = Path(file_path).name
                 # Try to extract shot number from filename (e.g., "45821_056.csv" -> "45821")
                 match = re.match(r'(\d+)', basename)
                 shot_num_for_cache = int(match.group(1)) if match else None
@@ -424,14 +426,14 @@ class NAS_DB:
                     files_to_fetch.append(file_path)
                     continue
                 
-                cache_dir = os.path.join(self.dumping_folder, str(shot_num_for_cache))
-                cache_file = os.path.join(cache_dir, f'{shot_num_for_cache}.h5')
+                cache_dir = Path(self.dumping_folder) / str(shot_num_for_cache)
+                cache_file = cache_dir / f'{shot_num_for_cache}.h5'
                 
                 # --- Start Diagnostic Logging ---
                 self.logger.info(f"[Cache Check] For file: '{basename}'")
-                self.logger.info(f"[Cache Check] Checking for cache file at: '{os.path.abspath(cache_file)}'")
+                self.logger.info(f"[Cache Check] Checking for cache file at: '{cache_file.absolute()}'")
                 
-                if not os.path.exists(cache_file):
+                if not cache_file.exists():
                     self.logger.warning(f"[Cache Check] -> Cache file NOT FOUND.")
                     files_to_fetch.append(file_path)
                     continue
@@ -489,15 +491,15 @@ class NAS_DB:
                 data_dict[file_path] = df
                 
                 # --- Cache the newly fetched file ---
-                basename = os.path.basename(file_path)
+                basename = Path(file_path).name
                 match = re.match(r'(\d+)', basename)
                 shot_num_for_cache = int(match.group(1)) if match else None
 
                 if shot_num_for_cache is not None:
-                    cache_dir = os.path.join(self.dumping_folder, str(shot_num_for_cache))
-                    cache_file = os.path.join(cache_dir, f'{shot_num_for_cache}.h5')
+                    cache_dir = Path(self.dumping_folder) / str(shot_num_for_cache)
+                    cache_file = cache_dir / f'{shot_num_for_cache}.h5'
                     
-                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_dir.mkdir(parents=True, exist_ok=True)
                     # Sanitize the basename to be a valid HDF5 key
                     key = re.sub(r'[^a-zA-Z0-9_]', '_', basename)
                     if key and not key[0].isalpha() and not key.startswith('_'):
@@ -528,8 +530,7 @@ class NAS_DB:
         """
         Internal dispatcher for reading files. Assumes any necessary locks are held.
         """
-        _, ext = os.path.splitext(file_path)
-        ext = ext.lower()
+        ext = Path(file_path).suffix.lower()
 
         if ext == '.csv':
             return self._read_scope_csv(file_path, **kwargs)
@@ -544,10 +545,11 @@ class NAS_DB:
     def _read_scope_csv(self, file_path: str, **kwargs) -> pd.DataFrame | None:
         """
         Reads a CSV file by first identifying its type from the header.
+        Thread-safe for network drives with file-level locking.
         """
         self.logger.info(f"Reading CSV file: {file_path}")
         
-        # --- Safely get header for both local and remote files ---
+        # Get header without any locks for full parallel processing
         header_text = None
         if self.access_mode == 'local':
             header_text = self._get_data_top_local(file_path, lines=40)
@@ -559,25 +561,35 @@ class NAS_DB:
             return None
 
         header_content = header_text.splitlines()
-
         csv_type = self._identify_csv_type(header_content)
-        self.logger.info(f"Identified CSV type for {os.path.basename(file_path)} as: {csv_type}")
+        self.logger.info(f"Identified CSV type for {Path(file_path).name} as: {csv_type}")
 
+        # All files run in parallel - no locks
+        try:
+            df = self._parse_csv_with_type(csv_type, file_path, header_content, **kwargs)
+            
+            if df is not None:
+                df.attrs['source_file_type'] = 'csv'
+                df.attrs['source_file_format'] = csv_type
+                self.logger.info(f"Successfully parsed file: {file_path}")
+                return df  # Success, return immediately
+        except Exception as read_error:
+            self.logger.error(f"Failed to parse file '{file_path}'. Error: {read_error}")
+            return None
+
+    def _parse_csv_with_type(self, csv_type: str, file_path: str, header_content: list, **kwargs) -> pd.DataFrame:
+        """
+        Parse CSV file based on its identified type.
+        """
         if csv_type == 'MDO3000pc':
-            df = self._parse_mdo3000pc(file_path, header_content, **kwargs)
+            return self._parse_mdo3000pc(file_path, header_content, **kwargs)
         elif csv_type == 'MSO58':
-            df = self._parse_mso58(file_path, header_content, **kwargs)
+            return self._parse_mso58(file_path, header_content, **kwargs)
         elif csv_type in ['MDO3000orig', 'MDO3000fetch', 'ETC']:
-            df = self._parse_standard_csv(file_path, header_content, csv_type, **kwargs)
+            return self._parse_standard_csv(file_path, header_content, csv_type, **kwargs)
         else:
             self.logger.error(f"Unknown CSV type '{csv_type}' for {file_path}")
             return None
-        
-        if df is not None:
-            df.attrs['source_file_type'] = 'csv'
-            df.attrs['source_file_format'] = csv_type
-        
-        return df
 
     def _identify_csv_type(self, header_content: list[str]) -> str:
         """
@@ -671,16 +683,38 @@ class NAS_DB:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
+            else:
+                # Use pathlib.Path for safe local file handling
+                read_target = Path(read_target)
             
-            df = pd.read_csv(
-                read_target,
-                skiprows=17,
-                header=None,
-                usecols=final_data_indices,
-                low_memory=False,
-                on_bad_lines='warn',
-                encoding_errors='ignore'
-            )
+            # Prefer C engine; on failure, fallback to python engine (without low_memory)
+            try:
+                p = ensure_str_path(read_target)
+                # Use file handle to avoid Windows path quirks under threaded IO
+                with open(p, 'rb') as fh:
+                    df = pd.read_csv(
+                        fh,
+                        skiprows=17,
+                        header=None,
+                        usecols=final_data_indices,
+                        low_memory=False,
+                        on_bad_lines='warn',
+                        encoding_errors='ignore',
+                        memory_map=False
+                    )
+            except Exception as e_c:
+                self.logger.warning(f"C engine parse failed for MDO3000pc: {e_c}. Retrying with python engine.")
+                p = ensure_str_path(read_target)
+                with open(p, 'rb') as fh:
+                    df = pd.read_csv(
+                        fh,
+                        skiprows=17,
+                        header=None,
+                        usecols=final_data_indices,
+                        on_bad_lines='warn',
+                        encoding_errors='ignore',
+                        engine='python'
+                    )
             
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
@@ -741,26 +775,18 @@ class NAS_DB:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
+            else:
+                # Use pathlib.Path for safe local file handling
+                read_target = Path(read_target)
 
-            # Retry logic for pandas read_csv
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    df = pd.read_csv(
-                        read_target,
-                        skiprows=header_row_index,
-                        header=0, # Use the found line as the header
-                        encoding_errors='ignore',
-                        engine='python',
-                        skipfooter=0
-                    )
-                    break  # Success, exit retry loop
-                except Exception as read_error:
-                    if attempt < max_retries - 1:
-                        self.logger.warning(f"Pandas read attempt {attempt + 1} failed: {read_error}. Retrying...")
-                        time.sleep(1)  # Wait 1 second before retry
-                    else:
-                        raise read_error  # Re-raise the last error
+            df = pd.read_csv(
+                read_target,
+                skiprows=header_row_index,
+                header=0, # Use the found line as the header
+                encoding_errors='ignore',
+                engine='python',
+                skipfooter=0
+            )
 
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
@@ -769,9 +795,9 @@ class NAS_DB:
             # Verification log
             actual_len = len(df)
             expected_len = metadata.get('record_length')
-            self.logger.info(f"File: {os.path.basename(file_path)}, Record Length from header: {expected_len}, Actual rows read: {actual_len}")
+            self.logger.info(f"File: {Path(file_path).name}, Record Length from header: {expected_len}, Actual rows read: {actual_len}")
             if expected_len is not None and expected_len != actual_len:
-                self.logger.warning(f"RECORD LENGTH MISMATCH for {os.path.basename(file_path)}! Header: {expected_len}, Actual: {actual_len}")
+                self.logger.warning(f"RECORD LENGTH MISMATCH for {Path(file_path).name}! Header: {expected_len}, Actual: {actual_len}")
 
             df.attrs['metadata'] = metadata
             return df
@@ -823,26 +849,39 @@ class NAS_DB:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
-
-            # Retry logic for pandas read_csv
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
+            else:
+                # Use pathlib.Path for safe local file handling
+                read_target = Path(read_target)
+            
+            # Treat the detected header line as the header row (align with MSO58 handling)
+            # Try C engine first; fallback to python engine if needed
+            try:
+                p = ensure_str_path(read_target)
+                with open(p, 'rb') as fh:
                     df = pd.read_csv(
-                        read_target,
+                        fh,
                         skiprows=header_row_index,
+                        header=0,
                         encoding='utf-8',
                         on_bad_lines='warn',
                         low_memory=False,
-                        encoding_errors='ignore'
+                        encoding_errors='ignore',
+                        memory_map=False
                     )
-                    break  # Success, exit retry loop
-                except Exception as read_error:
-                    if attempt < max_retries - 1:
-                        self.logger.warning(f"Pandas read attempt {attempt + 1} failed: {read_error}. Retrying...")
-                        time.sleep(1)  # Wait 1 second before retry
-                    else:
-                        raise read_error  # Re-raise the last error
+            except Exception as e_c:
+                self.logger.warning(f"C engine parse failed for standard CSV: {e_c}. Retrying with python engine.")
+                p = ensure_str_path(read_target)
+                with open(p, 'rb') as fh:
+                    df = pd.read_csv(
+                        fh,
+                        skiprows=header_row_index,
+                        header=0,
+                        encoding='utf-8',
+                        on_bad_lines='warn',
+                        encoding_errors='ignore',
+                        engine='python'
+                    )
+ 
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
             df.columns = standardized_cols
@@ -869,9 +908,14 @@ class NAS_DB:
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.dat')
                 self.sftp_client.get(file_path, temp_file.name)
                 read_target = temp_file.name
+            else:
+                # Use pathlib.Path for safe local file handling
+                read_target = Path(read_target)
 
             # Read data first without column names
-            df = pd.read_csv(read_target, sep=r'\s+', header=None)
+            p = ensure_str_path(read_target)
+            with open(p, 'rb') as fh:
+                df = pd.read_csv(fh, sep=r'\s+', header=None)
             
             # Standardize column names: TIME for first column, CH0, CH1, CH2... for the rest
             standardized_cols = ['TIME'] + [f'CH{i}' for i in range(len(df.columns)-1)]
@@ -894,7 +938,7 @@ class NAS_DB:
             if self.access_mode == 'remote':
                 # .mat are binary, need to be downloaded whole first.
                 self.logger.warning("Remote .mat files will be downloaded to a temporary local file.")
-                local_mat_path = os.path.join(self.dumping_folder, os.path.basename(file_path))
+                local_mat_path = Path(self.dumping_folder) / Path(file_path).name
                 self.sftp_client.get(file_path, local_mat_path)
             
             from scipy.io import loadmat
@@ -1044,8 +1088,18 @@ if __name__ == '__main__':
 
             # 3. Force remote fetch: Use 'force_remote=True' to bypass the local cache and
             #    re-download the data from the source. This is useful if the data has changed.
-            logging.info("\n--- 3. Third call with force_remote=True (should bypass cache) ---")
-            df_forced = nas.get_shot_data(shot_to_find, folder_to_search, force_remote=True)
+            logging.info("\n--- 3. Third call with force_remote=True and add_path=True (should bypass cache) ---")
+            df_forced = nas.get_shot_data(shot_to_find, folder_to_search, force_remote=True, add_path=True)
+            if df_forced:
+                logging.info("   -> Data loaded successfully by forcing remote fetch.")
+                logging.info(f"   -> Number of dataframes: {len(df_forced)}")
+                for key, df in df_forced.items():
+                    logging.info(f"   -> DataFrame '{key}' shape: {df.shape}")
+
+            # 4. Force remote fetch: Use 'force_remote=True' to bypass the local cache and
+            #    find the data at the designated folder without appending the sub-folder name.
+            logging.info("\n--- 4. Fourth call with force_remote=True but add_path=False (should bypass cache) ---")
+            df_forced = nas.get_shot_data(shot_to_find, folder_to_search, force_remote=True, add_path=False)
             if df_forced:
                 logging.info("   -> Data loaded successfully by forcing remote fetch.")
                 logging.info(f"   -> Number of dataframes: {len(df_forced)}")

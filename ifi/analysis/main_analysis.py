@@ -17,8 +17,8 @@ cache_config = setup_project_cache()
 # Now safe to import other modules
 import argparse
 import logging
-import os
 import re
+from pathlib import Path
 from typing import List, Union
 from collections import defaultdict
 import matplotlib.pyplot as plt
@@ -47,14 +47,16 @@ def load_and_process_file(nas_instance, file_path, args):
     through refining, offset removal, and STFT analysis.
     This function is designed to be run in parallel by Dask.
     """
-    logging.info(f"Starting processing for: {os.path.basename(file_path)}")
+    logging.info(f"Starting processing for: {Path(file_path).name}")
     
     # 1. Read single file data
-    # We call the internal _read_shot_file method directly.
-    df_raw = nas_instance._read_shot_file(file_path)
-    if df_raw is None:
+    # Use get_shot_data for better path handling and caching
+    data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
+    if not data_dict or file_path not in data_dict:
         logging.warning(f"Failed to read {file_path}. Skipping.")
         return None, None, None, None # Return None for all results
+    
+    df_raw = data_dict[file_path]
 
     # 2. Refine data
     df_refined = processing.refine_data(df_raw)
@@ -151,20 +153,20 @@ def run_analysis(
     files_by_shot = defaultdict(list)
     interferometry_params_by_file = {}
     for f in target_files:
-        match = re.search(r'(\d{5,})', os.path.basename(f))
+        match = re.search(r'(\d{5,})', Path(f).name)
         if match:
             shot_num = int(match.group(1))
             files_by_shot[shot_num].append(f)
             # Get parameters for each individual file (not just shot number)
-            params = get_interferometry_params(shot_num, os.path.basename(f))
+            params = get_interferometry_params(shot_num, Path(f).name)
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq_ghz']}GHz")
+            logging.info(f"Interferometry params for {Path(f).name}: {params['method']} method, {params['freq_ghz']}GHz")
         else:
             files_by_shot['unknown'].append(f)
             # For unknown files, use shot number 0 as default
-            params = get_interferometry_params(0, os.path.basename(f))
+            params = get_interferometry_params(0, Path(f).name)
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {os.path.basename(f)}: {params['method']} method, {params['freq_ghz']}GHz")
+            logging.info(f"Interferometry params for {Path(f).name}: {params['method']} method, {params['freq_ghz']}GHz")
 
     logging.info(f"Grouped files into {len(files_by_shot)} shot(s).")
 
@@ -190,10 +192,10 @@ def run_analysis(
         if df is None:
             continue
         
-        match = re.search(r'(\d{5,})', os.path.basename(file_path))
+        match = re.search(r'(\d{5,})', Path(file_path).name)
         shot_num = int(match.group(1)) if match else 0 # Group under 0 if no shot number
         
-        analysis_data[shot_num][os.path.basename(file_path)] = df
+        analysis_data[shot_num][Path(file_path).name] = df
         if stft_res:
             stft_results[shot_num].update(stft_res)
         if cwt_res:
@@ -214,7 +216,7 @@ def run_analysis(
         shot_files = files_by_shot.get(shot_num, [])
         shot_interferometry_params = {}
         for file_path in shot_files:
-            basename = os.path.basename(file_path)
+            basename = Path(file_path).name
             if file_path in interferometry_params_by_file:
                 params = interferometry_params_by_file[file_path]
                 shot_interferometry_params[basename] = params
@@ -529,7 +531,7 @@ def run_analysis(
             title_prefix = f"Shot #{shot_num} - " if shot_num else ""
             
             # Use a context manager to handle plot creation and showing/saving
-            with plots.ifi_plotting(interactive=args.plot, save_dir=os.path.join(args.results_dir, str(shot_num)) if args.save_plots else None, save_prefix=title_prefix):
+            with plots.ifi_plotting(interactive=args.plot, save_dir=Path(args.results_dir) / str(shot_num) if args.save_plots else None, save_prefix=title_prefix):
                 if not args.no_plot_ft:
                     if shot_stft_data:
                         plots.plot_spectrograms(shot_stft_data, title_prefix=title_prefix, trigger_time=args.trigger_time, downsample=args.downsample)
@@ -550,7 +552,7 @@ def run_analysis(
         # --- Saving Logic Update ---
         if args.save_data:
             # The logic inside save_results_to_hdf5 now handles shot_num=0 correctly
-            output_dir = os.path.join(args.results_dir, str(shot_num) if shot_num != 0 else 'unknown_shots')
+            output_dir = Path(args.results_dir) / str(shot_num) if shot_num != 0 else 'unknown_shots'
             file_io.save_results_to_hdf5(
                 output_dir, shot_num, combined_signals, shot_stft_data,
                 shot_cwt_data, density_data, vest_ip_data

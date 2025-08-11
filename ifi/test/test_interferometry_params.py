@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Comprehensive test suite for interferometry parameter functions.
 
@@ -5,13 +6,23 @@ Tests both standalone function and class methods, including the new
 improvements for frequency handling and phase_to_density integration.
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# ============================================================================
+# CRITICAL: Set up numba cache BEFORE any imports
+# ============================================================================
+from ifi.utils.cache_setup import setup_project_cache
+cache_config = setup_project_cache()
+
+import numpy as np
+import pandas as pd
+import time
+import logging
+from pathlib import Path
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
 
 from ifi.analysis.phi2ne import get_interferometry_params, PhaseConverter
 from ifi.utils import LogManager
-import numpy as np
 
 LogManager()
 

@@ -1,10 +1,12 @@
 import os
+from pathlib import Path
 
 # Set a project-local cache directory for numba to avoid permission errors.
 # This must be set before importing ssqueezepy to prevent caching issues.
-numba_cache_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'cache', 'numba_cache')
-os.makedirs(numba_cache_dir, exist_ok=True)
-os.environ['NUMBA_CACHE_DIR'] = numba_cache_dir
+numba_cache_dir = Path(__file__).parent.parent.parent / 'cache' / 'numba_cache'
+numba_cache_dir.mkdir(parents=True, exist_ok=True)
+import os
+os.environ['NUMBA_CACHE_DIR'] = str(numba_cache_dir)
 
 import numpy as np
 import pandas as pd

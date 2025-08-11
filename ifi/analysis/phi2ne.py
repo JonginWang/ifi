@@ -4,7 +4,7 @@
 from ifi.utils.cache_setup import setup_project_cache
 cache_config = setup_project_cache()
 
-import os
+from pathlib import Path
 import numpy as np
 import configparser
 from scipy import constants
@@ -128,32 +128,30 @@ def _phase_to_density_core(phase, freq, c, m_e, eps0, qe, n_path):
 
 def get_interferometry_params(shot_num: int, filename: str, config_path: str = None) -> Dict:
     """
-    Returns interferometry analysis parameters based on shot number and filename.
+    Get interferometry parameters for a given shot number and filename.
     
     Args:
-        shot_num: Shot number
-        filename: Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv")
-        config_path: Path to if_config.ini file (optional, will auto-detect if None)
-    
+        shot_num (int): Shot number
+        filename (str): Filename to extract frequency information
+        config_path (str, optional): Path to config file. If None, uses default.
+        
     Returns:
-        Dictionary containing:
-        - method: Analysis method ('CDM', 'FPGA', 'IQ')
-        - freq: Interferometer frequency in Hz (raw frequency for calculations)
-        - freq_ghz: Interferometer frequency in GHz (for display/reference)
-        - ref_col: Reference channel column name
-        - probe_cols: List of probe channel column names
-        - amp_ref_col: Amplitude reference column (for FPGA method)
-        - amp_probe_cols: List of amplitude probe columns (for FPGA method)
-        - n_path: Number of interferometer passes
+        Dict: Dictionary containing method and frequency information
     """
-    basename = os.path.basename(filename)
+    # Extract frequency from filename
+    basename = Path(filename).name
     
-    # Load interferometry configuration
-    config = configparser.ConfigParser()
+    # Default parameters
+    params = {
+        'method': 'CDM',
+        'freq_ghz': 94.0
+    }
     
+    # Load config if available
     if config_path is None:
-        # Auto-detect config path relative to this file
-        config_path = os.path.join(os.path.dirname(__file__), 'if_config.ini')
+        config_path = Path(__file__).parent / 'if_config.ini'
+    
+    config = configparser.ConfigParser()
     
     config.read(config_path)
     
@@ -346,7 +344,7 @@ class PhaseConverter:
         Calculates the phase from I and Q signals using a differential cross-product method.
         This is based on the IQPostprocessing(...).m script.
         
-        🚀 OPTIMIZED: Uses numba JIT compilation for enhanced performance.
+        OPTIMIZED: Uses numba JIT compilation for enhanced performance.
         """
         # 1. Normalize I and Q signals (numba-optimized)
         i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)

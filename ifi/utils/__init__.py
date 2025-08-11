@@ -10,7 +10,7 @@ from .common import assign_kwargs, LogManager, FlatShotList, ensure_dir_exists
 
 __all__ = [
     'setup_numba_cache',
-    'setup_project_cache', 
+    'setup_project_cache',
     'assign_kwargs',
     'LogManager',
     'FlatShotList',

@@ -1,10 +1,10 @@
-import os
-import sys
+from pathlib import Path
 import logging
 import shutil
 
-# Add the parent directory to the path to allow direct script execution
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
 
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
@@ -22,14 +22,14 @@ DATA_FOLDER_TO_SEARCH = [
     r'6. user\Byun JunHyeok\IF'
 ]
 CONFIG_PATH = 'ifi/config.ini'
-CACHE_FOLDER = './cache' # Should match [LOCAL_CACHE] dumping_folder in config
+CACHE_FOLDER = Path('./cache') # Should match [LOCAL_CACHE] dumping_folder in config
 
 VEST_SHOT_TO_TEST = 40656
 VEST_FIELD_TO_TEST = 109
 
 def cleanup():
     """Removes the cache folder created during the test."""
-    if os.path.exists(CACHE_FOLDER):
+    if CACHE_FOLDER.exists():
         logging.info(f"Cleaning up cache folder: {CACHE_FOLDER}")
         shutil.rmtree(CACHE_FOLDER)
 
@@ -39,7 +39,7 @@ def run_nas_db_test():
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
     
-    if not os.path.exists(CONFIG_PATH):
+    if not Path(CONFIG_PATH).exists():
         logging.error(f"Configuration file not found at '{CONFIG_PATH}'. Please create it from the template.")
         return
 
@@ -71,9 +71,9 @@ def run_nas_db_test():
             return
 
         # Verify cache file creation after the 'with' block is closed.
-        cache_dir = os.path.join(CACHE_FOLDER, str(SHOT_TO_TEST))
-        expected_cache_file = os.path.join(cache_dir, f'{SHOT_TO_TEST}.h5')
-        if os.path.exists(expected_cache_file):
+        cache_dir = CACHE_FOLDER / str(SHOT_TO_TEST)
+        expected_cache_file = cache_dir / f'{SHOT_TO_TEST}.h5'
+        if expected_cache_file.exists():
             logging.info(f"   -> SUCCESS: Cache file created at '{expected_cache_file}'")
         else:
             logging.warning(f"   -> WARNING: Cache file was not created at '{expected_cache_file}'.")
@@ -120,7 +120,7 @@ def run_vest_db_test():
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
     
-    if not os.path.exists(CONFIG_PATH):
+    if not Path(CONFIG_PATH).exists():
         logging.error(f"Configuration file not found at '{CONFIG_PATH}'. Please create it from the template.")
         return
 

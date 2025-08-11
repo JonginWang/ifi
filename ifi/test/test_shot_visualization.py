@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Comprehensive test suite for plotting functions.
+Integrated Shot Visualization and Plotting Test Suite
+====================================================
+
+This test suite combines comprehensive plotting tests with real shot data visualization.
+It tests both synthetic data plotting functions and real shot data processing.
 """
 
 # ============================================================================
@@ -10,22 +14,36 @@ from ifi.utils.cache_setup import setup_project_cache
 cache_config = setup_project_cache()
 
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
 import logging
-from ifi.analysis.plots import plot_response, plot_waveforms, plot_spectrogram, plot_density_results
+from pathlib import Path
+
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
+
+from ifi.analysis.plots import (
+    plot_response, plot_waveforms, plot_spectrogram, plot_density_results,
+    create_shot_results_directory, plot_raw_waveforms, plot_spectrograms,
+    plot_density_evolution, create_overview_plot, load_cached_shot_data
+)
 from ifi.analysis.spectrum import SpectrumAnalysis
 from ifi.analysis.phi2ne import PhaseConverter, get_interferometry_params
 from ifi.utils.common import LogManager, ensure_dir_exists
-from pathlib import Path
-import sys
+from ifi.db_controller.nas_db import NAS_DB
+from ifi.db_controller.vest_db import VEST_DB
+from ifi.analysis.phi2ne import get_interferometry_params
+
 
 def setup_logging():
     """Setup logging for test execution."""
     LogManager(level="INFO")
     return logging.getLogger(__name__)
+
 
 def create_synthetic_interferometer_data():
     """Create synthetic interferometer data for plotting tests."""
@@ -63,6 +81,7 @@ def create_synthetic_interferometer_data():
     
     return data, fs
 
+
 def create_synthetic_density_data():
     """Create synthetic density data for plotting."""
     t = np.linspace(-0.005, 0.035, 1000)  # -5ms to +35ms
@@ -92,6 +111,7 @@ def create_synthetic_density_data():
     vest_data.set_index('TIME', inplace=True)
     
     return density_profiles, vest_data
+
 
 def test_waveform_plots(logger):
     """Test waveform plotting functions."""
@@ -148,6 +168,7 @@ def test_waveform_plots(logger):
             
         except Exception as e:
             logger.error(f" Failed: {e}")
+
 
 def test_spectrum_plots(logger):
     """Test spectrum and spectrogram plotting."""
@@ -210,6 +231,7 @@ def test_spectrum_plots(logger):
     except Exception as e:
         logger.error(f" CWT failed: {e}")
 
+
 def test_filter_response_plots(logger):
     """Test filter response plotting."""
     logger.info("Testing Filter Response Plots")
@@ -269,6 +291,7 @@ def test_filter_response_plots(logger):
             
         except Exception as e:
             logger.error(f" Failed: {e}")
+
 
 def test_density_plots(logger):
     """Test density plotting functions."""
@@ -340,6 +363,7 @@ def test_density_plots(logger):
             
         except Exception as e:
             logger.error(f" Failed for {channel}: {e}")
+
 
 def test_comparison_plots(logger):
     """Test comparative plotting functions."""
@@ -413,6 +437,7 @@ def test_comparison_plots(logger):
     except Exception as e:
         logger.error(f" Failed: {e}")
 
+
 def performance_test(logger):
     """Test plotting performance with different data sizes."""
     logger.info("Performance Test")
@@ -443,18 +468,83 @@ def performance_test(logger):
         except Exception as e:
             logger.error(f" Failed: {e}")
 
+
+def load_vest_data(shot_num):
+    """Load VEST data for the shot."""
+    logger = logging.getLogger(__name__)
+    
+    try:
+        with VEST_DB() as vest_db:
+            logger.info(f"Loading VEST data for shot {shot_num}")
+            # Load common diagnostic fields
+            fields = [109, 101]  # Ip, H-alpha
+            
+            vest_data = {}
+            for field_id in fields:
+                try:
+                    time_data, signal_data = vest_db.load_shot(shot_num, field_id)
+                    if time_data is not None and signal_data is not None:
+                        vest_data[f'field_{field_id}'] = pd.Series(signal_data, index=time_data)
+                except Exception as e:
+                    logger.warning(f"Failed to load VEST field {field_id}: {e}")
+            
+            if vest_data:
+                return pd.DataFrame(vest_data)
+            else:
+                return None
+                
+    except Exception as e:
+        logger.error(f"Failed to connect to VEST DB: {e}")
+        return None
+
+
+def test_real_shot_visualization(logger, shot_num=45821):
+    """Test visualization with real shot data."""
+    logger.info("Testing Real Shot Visualization")
+    logger.info("=" * 50)
+    
+    logger.info(f"Processing shot {shot_num}")
+    
+    # Load cached data
+    shot_data = load_cached_shot_data(shot_num)
+    if not shot_data:
+        logger.warning(f"No cached data found for shot {shot_num}, skipping real shot test")
+        return
+    
+    # Load VEST data
+    vest_data = load_vest_data(shot_num)
+    
+    # Create results directory
+    results_dir = create_shot_results_directory(shot_num, "ifi/results/test_shot_vis")
+    logger.info(f"Results will be saved to: {results_dir}")
+    
+    try:
+        # Generate all visualizations
+        plot_raw_waveforms(shot_data, results_dir, shot_num)
+        plot_spectrograms(shot_data, results_dir, shot_num)
+        plot_density_evolution(shot_data, vest_data, results_dir, shot_num)
+        create_overview_plot(shot_data, vest_data, results_dir, shot_num)
+        
+        logger.info(f"Real shot visualization complete! Results saved in: {results_dir}")
+        
+    except Exception as e:
+        logger.error(f"Real shot visualization failed: {e}")
+
+
 def main():
     """Main test execution."""
     logger = setup_logging()
     
-    logger.info("IFI Plotting - Comprehensive Test Suite")
+    logger.info("IFI Shot Visualization - Integrated Test Suite")
     logger.info("=" * 80)
     logger.info("")
     
     # Ensure output directory exists
     ensure_dir_exists("ifi/results/test_plots")
+    ensure_dir_exists("ifi/results/test_shot_vis")
     
     try:
+        # Test 1: Synthetic data plotting
         test_waveform_plots(logger)
         logger.info("")
         
@@ -473,12 +563,18 @@ def main():
         performance_test(logger)
         logger.info("")
         
-        logger.info("All plotting tests completed successfully!")
-        logger.info(f"Results saved in: ifi/results/test_plots/")
+        # Test 2: Real shot data visualization
+        test_real_shot_visualization(logger)
+        logger.info("")
+        
+        logger.info("All tests completed successfully!")
+        logger.info(f"Synthetic test results saved in: ifi/results/test_plots/")
+        logger.info(f"Real shot results saved in: ifi/results/test_shot_vis/")
         
     except Exception as e:
         logger.error(f"Test suite failed: {e}")
         raise
+
 
 if __name__ == '__main__':
     main()

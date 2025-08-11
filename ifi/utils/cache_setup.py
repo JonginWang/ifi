@@ -6,9 +6,10 @@ Utilities for configuring numba cache directories to avoid permission issues
 with system-wide Anaconda installations.
 """
 
-import os
+from pathlib import Path
 import tempfile
 import logging
+import os
 
 def setup_numba_cache(project_root=None, verbose=True):
     """
@@ -23,28 +24,28 @@ def setup_numba_cache(project_root=None, verbose=True):
     """
     if project_root is None:
         # Auto-detect project root (go up from utils directory)
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        project_root = Path(__file__).parent.parent.parent.absolute()
     
     # Option 1: Use project-local cache directory
-    cache_dir = os.path.join(project_root, 'cache', 'numba_cache')
+    cache_dir = project_root / 'cache' / 'numba_cache'
     
     # Option 2: Use user's temp directory if project cache fails
-    if not os.path.exists(os.path.dirname(cache_dir)):
+    if not cache_dir.parent.exists():
         try:
-            os.makedirs(os.path.dirname(cache_dir), exist_ok=True)
+            cache_dir.parent.mkdir(parents=True, exist_ok=True)
         except PermissionError:
             # Fallback to user temp directory
-            cache_dir = os.path.join(tempfile.gettempdir(), 'ifi_numba_cache')
+            cache_dir = Path(tempfile.gettempdir()) / 'ifi_numba_cache'
     
     # Option 3: Use user's home directory as last resort
-    if not os.access(os.path.dirname(cache_dir), os.W_OK):
-        cache_dir = os.path.join(os.path.expanduser('~'), '.ifi', 'numba_cache')
+    if not os.access(cache_dir.parent, os.W_OK):
+        cache_dir = Path.home() / '.ifi' / 'numba_cache'
     
     # Create the directory
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     
     # Set environment variables
-    os.environ['NUMBA_CACHE_DIR'] = cache_dir
+    os.environ['NUMBA_CACHE_DIR'] = str(cache_dir)
     os.environ['NUMBA_ENABLE_CUDASIM'] = '0'  # Disable CUDA simulation
     os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'  # Disable Intel SVML for compatibility
     os.environ['NUMBA_THREADING_LAYER'] = 'safe'  # Use thread-safe layer
@@ -52,7 +53,7 @@ def setup_numba_cache(project_root=None, verbose=True):
     if verbose:
         print(f"Numba cache directory set to: {cache_dir}")
     
-    return cache_dir
+    return str(cache_dir)
 
 def setup_project_cache():
     """

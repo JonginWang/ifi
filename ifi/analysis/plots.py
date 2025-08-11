@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import os
+from pathlib import Path
 from typing import List, Dict, Any
 import logging
 from contextlib import contextmanager
@@ -47,7 +47,7 @@ def ifi_plotting(interactive: bool, save_dir: str = None, save_prefix: str = "fi
                 title = fig._suptitle.get_text() if fig._suptitle else f"figure_{i}"
                 filename = "".join(c for c in title if c.isalnum() or c in (" ", "_", "-")).rstrip()
                 filename = filename.replace(" ", "_").replace("#", "")
-                filepath = os.path.join(save_dir, f"{save_prefix}{filename}.{save_ext}")
+                filepath = Path(save_dir) / f"{save_prefix}{filename}.{save_ext}"
                 logging.info(f"Saving figure to {filepath}")
                 fig.savefig(filepath, dpi=dpi)
 
@@ -203,7 +203,7 @@ def plot_signals(
         fig, axes = plt.subplots(num_channels, 1, figsize=(12, 2 * num_channels), sharex=True, squeeze=False)
         axes = axes.flatten() # Ensure axes is always a flat array
 
-        fig.suptitle(f"{os.path.basename(name)} {title_prefix}".strip(), **FontStyle.title)
+        fig.suptitle(f"{Path(name).name} {title_prefix}".strip(), **FontStyle.title)
 
         for i, col_name in enumerate(data_cols):
             axes[i].plot(time_data, plot_df[col_name])
@@ -257,7 +257,7 @@ def plot_spectrograms(
             
             plt.plot(t_plot + trigger_time, ridge_plot / 1e6, color='r', linewidth=2, label='Frequency Ridge')
             
-            plt.title(f"{title_prefix}Spectrogram: {os.path.basename(filename)} - {col_name}", **FontStyle.title)
+            plt.title(f"{title_prefix}Spectrogram: {Path(filename).name} - {col_name}", **FontStyle.title)
             plt.ylabel("Frequency [MHz]", **FontStyle.label)
             plt.xlabel(f"Time (s) [Trigger at {trigger_time}s]", **FontStyle.label)
             plt.legend()
@@ -297,7 +297,7 @@ def plot_cwt(cwt_results, trigger_time=0.0, title_prefix=""):
             fig.colorbar(im, ax=ax, label="Magnitude")
 
             ax.set_ylabel("Frequency (Hz)", **FontStyle.label)
-            ax.set_title(f'CWT of {col_name} from {os.path.basename(filename)}', **FontStyle.title)
+            ax.set_title(f'CWT of {col_name} from {Path(filename).name}', **FontStyle.title)
             plot_idx += 1
 
     axes[-1].set_xlabel("Time (s)", **FontStyle.label)
@@ -535,3 +535,288 @@ def plot_density_results(density_data, time_data=None, title="Density Results", 
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
     
     return fig, ax
+
+
+# ============================================================================
+# Shot Results Visualization Functions
+# ============================================================================
+
+def create_shot_results_directory(shot_num: int, base_dir: str = "ifi/results") -> Path:
+    """
+    Create results directory structure for shot.
+    
+    Args:
+        shot_num: Shot number for the results directory
+        base_dir: Base directory for results
+        
+    Returns:
+        Path to the created results directory
+    """
+    results_dir = Path(base_dir) / str(shot_num)
+    subdirs = ['waveforms', 'spectra', 'density', 'overview']
+    
+    ensure_dir_exists(str(results_dir))
+    for subdir in subdirs:
+        ensure_dir_exists(str(results_dir / subdir))
+    
+    return results_dir
+
+
+def plot_raw_waveforms(shot_data: dict, results_dir: Path, shot_num: int, downsample: int = 100):
+    """
+    Generate waveform plots for all available signals.
+    
+    Args:
+        shot_data: Dictionary of DataFrames with shot data
+        results_dir: Directory to save plots
+        shot_num: Shot number for plot titles
+        downsample: Downsampling factor for plotting performance
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Generating raw waveform plots...")
+    
+    waveform_dir = results_dir / 'waveforms'
+    
+    for filename, df in shot_data.items():
+        if isinstance(df, pd.DataFrame) and 'TIME' in df.columns:
+            logger.info(f"Plotting waveforms for {filename}")
+            
+            try:
+                fig, axes = plot_waveforms(
+                    df, 
+                    title=f"Shot {shot_num} - {filename}",
+                    downsample=downsample
+                )
+                
+                # Save plot
+                output_path = waveform_dir / f"{filename}_waveforms.png"
+                fig.savefig(output_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                
+                logger.info(f"Saved waveform plot: {output_path}")
+                
+            except Exception as e:
+                logger.error(f"Failed to plot waveforms for {filename}: {e}")
+
+
+def plot_spectrograms(shot_data: dict, results_dir: Path, shot_num: int, max_channels: int = 2):
+    """
+    Generate spectrogram plots using STFT analysis.
+    
+    Args:
+        shot_data: Dictionary of DataFrames with shot data
+        results_dir: Directory to save plots
+        shot_num: Shot number for plot titles
+        max_channels: Maximum number of channels to process
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Generating spectrogram plots...")
+    
+    spectra_dir = results_dir / 'spectra'
+    analyzer = SpectrumAnalysis()
+    
+    for filename, df in shot_data.items():
+        if isinstance(df, pd.DataFrame) and 'TIME' in df.columns:
+            
+            # Get sampling frequency from time column
+            time_diff = np.diff(df.index.values[:1000]).mean() if hasattr(df.index, 'values') else np.diff(df['TIME'].values[:1000]).mean()
+            fs = 1.0 / time_diff
+            
+            logger.info(f"Processing spectrogram for {filename} (fs = {fs/1e6:.1f} MHz)")
+            
+            # Plot spectrograms for each channel (excluding TIME)
+            signal_cols = [col for col in df.columns if col != 'TIME']
+            
+            for col in signal_cols[:max_channels]:  # Limit channels for performance
+                try:
+                    signal = df[col].values[::100]  # Downsample for performance
+                    fs_down = fs / 100
+                    
+                    # Compute STFT
+                    freqs, times, Sxx = analyzer.compute_stft(signal, fs_down, nperseg=1024, noverlap=512)
+                    
+                    # Plot spectrogram
+                    fig, ax = plot_spectrogram(
+                        freqs, times, Sxx,
+                        title=f"Shot {shot_num} - {filename} - {col}"
+                    )
+                    
+                    # Save plot
+                    output_path = spectra_dir / f"{filename}_{col}_spectrogram.png"
+                    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
+                    
+                    logger.info(f"Saved spectrogram: {output_path}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate spectrogram for {filename}_{col}: {e}")
+
+
+def plot_density_evolution(shot_data: dict, vest_data: pd.DataFrame, results_dir: Path, shot_num: int):
+    """
+    Plot density evolution with VEST data overlay.
+    
+    Args:
+        shot_data: Dictionary of DataFrames with shot data
+        vest_data: VEST database data
+        results_dir: Directory to save plots
+        shot_num: Shot number for plot titles
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Generating density evolution plots...")
+    
+    density_dir = results_dir / 'density'
+    
+    # Find density data (datasets starting with 'ne_')
+    density_data = {}
+    for key, df in shot_data.items():
+        if key.startswith('ne_') and isinstance(df, pd.Series):
+            density_data[key] = df
+    
+    if not density_data:
+        logger.warning("No density data found for plotting")
+        return
+    
+    try:
+        # Create density DataFrame for plotting
+        density_df = pd.DataFrame(density_data)
+        
+        # Plot density results
+        fig, ax = plot_density_results(
+            density_df,
+            title=f"Shot {shot_num} - Density Evolution"
+        )
+        
+        # Save plot
+        output_path = density_dir / f"density_evolution.png"
+        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        logger.info(f"Saved density evolution plot: {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to generate density evolution plot: {e}")
+
+
+def create_overview_plot(shot_data: dict, vest_data: pd.DataFrame, results_dir: Path, shot_num: int):
+    """
+    Create an overview plot combining multiple data sources.
+    
+    Args:
+        shot_data: Dictionary of DataFrames with shot data
+        vest_data: VEST database data
+        results_dir: Directory to save plots
+        shot_num: Shot number for plot titles
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Generating overview plot...")
+    
+    overview_dir = results_dir / 'overview'
+    
+    try:
+        # Create overview plot with multiple subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle(f"Shot {shot_num} - Overview", fontsize=16)
+        
+        # Plot 1: Raw waveforms (first available signal)
+        if shot_data:
+            first_df = list(shot_data.values())[0]
+            if isinstance(first_df, pd.DataFrame) and 'TIME' in first_df.columns:
+                signal_cols = [col for col in first_df.columns if col != 'TIME']
+                if signal_cols:
+                    axes[0, 0].plot(first_df.index.values * 1000, first_df[signal_cols[0]].values)
+                    axes[0, 0].set_title('Raw Signal')
+                    axes[0, 0].set_xlabel('Time (ms)')
+                    axes[0, 0].set_ylabel('Amplitude')
+                    axes[0, 0].grid(True, alpha=0.3)
+        
+        # Plot 2: VEST data if available
+        if vest_data is not None and not vest_data.empty:
+            if 'Ip_raw ([V])' in vest_data.columns:
+                axes[0, 1].plot(vest_data.index.values * 1000, vest_data['Ip_raw ([V])'].values, 'r-')
+                axes[0, 1].set_title('Plasma Current')
+                axes[0, 1].set_xlabel('Time (ms)')
+                axes[0, 1].set_ylabel('Ip (V)')
+                axes[0, 1].grid(True, alpha=0.3)
+        
+        # Plot 3: Density data if available
+        density_data = {}
+        for key, df in shot_data.items():
+            if key.startswith('ne_') and isinstance(df, pd.Series):
+                density_data[key] = df
+        
+        if density_data:
+            for key, data in density_data.items():
+                axes[1, 0].plot(data.index.values * 1000, data.values / 1e18, label=key)
+            axes[1, 0].set_title('Density Evolution')
+            axes[1, 0].set_xlabel('Time (ms)')
+            axes[1, 0].set_ylabel('Density (×10¹⁸ m⁻³)')
+            axes[1, 0].legend()
+            axes[1, 0].grid(True, alpha=0.3)
+        
+        # Plot 4: Summary statistics
+        axes[1, 1].text(0.1, 0.8, f"Shot Number: {shot_num}", fontsize=12)
+        axes[1, 1].text(0.1, 0.6, f"Data Files: {len(shot_data)}", fontsize=12)
+        if vest_data is not None:
+            axes[1, 1].text(0.1, 0.4, f"VEST Data: Available", fontsize=12)
+        axes[1, 1].text(0.1, 0.2, f"Density Channels: {len(density_data)}", fontsize=12)
+        axes[1, 1].set_title('Summary')
+        axes[1, 1].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save plot
+        output_path = overview_dir / f"overview.png"
+        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        logger.info(f"Saved overview plot: {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to generate overview plot: {e}")
+
+
+def load_cached_shot_data(shot_num: int, cache_base_dir: str = "cache") -> dict:
+    """
+    Load cached shot data from HDF5 files.
+    
+    Args:
+        shot_num: Shot number to load
+        cache_base_dir: Base directory for cache files
+        
+    Returns:
+        Dictionary of loaded DataFrames
+    """
+    logger = logging.getLogger(__name__)
+    
+    cache_dir = Path(cache_base_dir) / str(shot_num)
+    if not cache_dir.exists():
+        logger.error(f"No cached data found for shot {shot_num}")
+        return None
+    
+    # Find HDF5 files in cache directory
+    h5_files = list(cache_dir.glob('*.h5'))
+    
+    if not h5_files:
+        logger.error(f"No HDF5 files found in {cache_dir}")
+        return None
+    
+    cached_data = {}
+    
+    for h5_file in h5_files:
+        logger.info(f"Loading cached data from {h5_file}")
+        
+        try:
+            # Read all keys from HDF5 file
+            with pd.HDFStore(h5_file, 'r') as store:
+                for key in store.keys():
+                    df = pd.read_hdf(h5_file, key)
+                    # Remove leading slash from key
+                    clean_key = key.lstrip('/')
+                    cached_data[clean_key] = df
+                    logger.info(f"Loaded dataset '{clean_key}' with shape {df.shape}")
+        
+        except Exception as e:
+            logger.error(f"Failed to load {h5_file}: {e}")
+    
+    return cached_data

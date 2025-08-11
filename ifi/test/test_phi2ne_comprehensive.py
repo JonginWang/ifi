@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """
 Comprehensive test suite for phi2ne.py module.
-
-Tests all functions, classes, and integrations including:
-- Numba cache setup and optimization
-- PhaseConverter class functionality
-- Integration between parameter functions and density calculations
-- Performance validation
+Tests all major functions including numba-optimized ones.
 """
 
-import sys
-import os
-import time
-import numpy as np
-
-# Setup path for local testing
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-# Setup numba cache before any imports
+# ============================================================================
+# CRITICAL: Set up numba cache BEFORE any imports
+# ============================================================================
 from ifi.utils.cache_setup import setup_project_cache
 cache_config = setup_project_cache()
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+import time
+import logging
+import tempfile
+import shutil
+from scipy import constants
+
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
 
 from ifi.analysis.phi2ne import (
     get_interferometry_params, 
@@ -51,11 +55,11 @@ class Phi2neTestSuite:
             print(f"Numba cache directory: {cache_dir}")
             
             # Test if cache is writable
-            test_file = os.path.join(cache_dir, 'test_write.tmp')
+            test_file = Path(cache_dir) / 'test_write.tmp'
             try:
                 with open(test_file, 'w') as f:
                     f.write('test')
-                os.remove(test_file)
+                test_file.unlink()
                 print("Cache directory is writable")
                 self.test_results['cache_setup'] = True
             except Exception as e:

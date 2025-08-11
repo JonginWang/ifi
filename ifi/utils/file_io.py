@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import argparse
@@ -26,7 +27,7 @@ def save_waveform_to_csv(filepath: str, time_data: np.ndarray, voltage_data: np.
     """
     try:
         # Create a directory for the file if it doesn't exist
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         
         df = pd.DataFrame({
             'Time (s)': time_data,
@@ -42,12 +43,11 @@ def read_waveform_file(filepath: str) -> tuple[np.ndarray, np.ndarray] | None:
     Reads a waveform file and returns time and voltage data.
     Supports .csv format.
     """
-    if not os.path.exists(filepath):
+    if not Path(filepath).exists():
         print(f"File not found: {filepath}")
         return None
 
-    _, extension = os.path.splitext(filepath)
-    extension = extension.lower()
+    extension = Path(filepath).suffix.lower()
 
     try:
         if extension == '.csv':
@@ -75,7 +75,7 @@ def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
     :param chunksize: Number of rows per chunk.
     :return: A generator that yields pandas DataFrames.
     """
-    if not os.path.exists(filepath):
+    if not Path(filepath).exists():
         print(f"File not found: {filepath}")
         return
 
@@ -101,11 +101,11 @@ def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_result
     if shot_num == 0 and signals is not None and not signals.empty:
         # For 'unknown' shots, create a filename from the first source file
         first_source_file = list(signals.keys())[0]
-        filename = f"{os.path.splitext(first_source_file)[0]}.h5"
+        filename = f"{Path(first_source_file).stem}.h5"
     else:
         filename = f"{shot_num}.h5"
     
-    filepath = os.path.join(output_dir, filename)
+    filepath = Path(output_dir) / filename
     ensure_dir_exists(output_dir)
 
     # ... (rest of the HDF5 saving logic) 

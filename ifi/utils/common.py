@@ -1,5 +1,5 @@
 import sys
-import os
+from pathlib import Path
 import functools
 import numpy as np
 from typing import Callable, List, Union
@@ -50,15 +50,15 @@ class LogManager:
         try:
             if hasattr(sys.modules['__main__'], '__file__'):
                 main_script_path = sys.modules['__main__'].__file__
-                script_name = os.path.splitext(os.path.basename(main_script_path))[0]
+                script_name = Path(main_script_path).stem
             else:
                 script_name = 'interactive'
             
-            log_dir = 'logs'
-            os.makedirs(log_dir, exist_ok=True)
+            log_dir = Path('logs')
+            log_dir.mkdir(exist_ok=True)
             
             date_str = datetime.now().strftime('%y%m%d_%H%M%S')
-            log_file = os.path.join(log_dir, f"{date_str}_{script_name}.log")
+            log_file = log_dir / f"{date_str}_{script_name}.log"
             
             root_logger = logging.getLogger()
             root_logger.setLevel(logging.DEBUG)
@@ -134,17 +134,16 @@ class CustomFormatter(logging.Formatter):
 def resource_path(relative_path: str) -> str:
     """
     Get absolute path to resource, works for dev and for PyInstaller.
-    When running as a bundled exe, the path is relative to the temp
-    directory created by PyInstaller (_MEIPASS).
+    
+    Args:
+        relative_path (str): Relative path from the project root
+        
+    Returns:
+        str: Absolute path to the resource
     """
-    try:
-        # PyInstaller creates a temp folder and stores its path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        # Not running in a bundle, so the base path is the project root
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path) 
+    base_path = Path.cwd()
+    
+    return str(base_path / relative_path)
 
 
 def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:
@@ -190,12 +189,12 @@ def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:
 
 def ensure_dir_exists(path: str):
     """
-    Ensures that a directory exists at the given path.
-    If the directory does not exist, it is created.
+    Ensures that the directory exists, creating it if necessary.
+    
+    Args:
+        path (str): Path to the directory to ensure exists
     """
-    if not os.path.exists(path):
-        os.makedirs(path)
-        logging.info(f"Created directory: {path}")
+    Path(path).mkdir(parents=True, exist_ok=True)
         
 class FlatShotList:
     """

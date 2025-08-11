@@ -7,25 +7,26 @@ Test script for main_analysis.py with proper numba cache setup.
 # CRITICAL: Set up numba cache BEFORE any imports
 # ============================================================================
 import os
+from pathlib import Path
 import tempfile
-import sys
-
-# Add project to path
-sys.path.insert(0, os.path.abspath('.'))
+# Use path_utils for IDE compatibility
+from ifi.utils.path_utils import add_repo_root_to_sys_path
+add_repo_root_to_sys_path()
 
 # Configure numba cache
-project_cache = os.path.join(os.path.abspath('.'), 'cache', 'numba_cache')
+project_cache = Path.cwd() / 'cache' / 'numba_cache'
 try:
-    os.makedirs(project_cache, exist_ok=True)
+    project_cache.mkdir(parents=True, exist_ok=True)
     cache_dir = project_cache
     print(f"Using project cache: {cache_dir}")
 except (PermissionError, OSError):
     # Fallback to user temp directory
-    cache_dir = os.path.join(tempfile.gettempdir(), 'ifi_numba_cache')
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir = Path(tempfile.gettempdir()) / 'ifi_numba_cache'
+    cache_dir.mkdir(parents=True, exist_ok=True)
     print(f"Using temp cache: {cache_dir}")
 
-os.environ['NUMBA_CACHE_DIR'] = cache_dir
+import os
+os.environ['NUMBA_CACHE_DIR'] = str(cache_dir)
 os.environ['NUMBA_THREADING_LAYER'] = 'safe'
 os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'
 

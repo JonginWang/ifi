@@ -2,15 +2,15 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog
 from enum import Enum, auto
 import queue
-import os
+from pathlib import Path
 import threading
 import time
 
-# Relative imports by its path
-from ..tek_controller.scope import TekScopeController
-from ..db_controller.vest_db import VEST_DB
-from ..utils import resource_path
-from ..file_io import read_waveform_file, save_waveform_to_csv
+# Path-based imports for IDE compatibility
+from ifi.tek_controller.scope import TekScopeController
+from ifi.db_controller.vest_db import VEST_DB
+from ifi.utils.common import resource_path
+from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -192,20 +192,20 @@ class Application(tk.Frame):
         pass
 
     def save_log(self):
-        log_content = self.log_area.get("1.0", tk.END)
-        if not log_content.strip():
-            self.log_message("Log is empty, nothing to save.", "WARN")
-            return
-        
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            title="Save Log File"
-        )
-        if file_path:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(log_content)
-            self.log_message(f"Log saved to {file_path}")
+        """Save the current log to a file."""
+        try:
+            save_dir = filedialog.askdirectory(title="Select directory to save log")
+            if save_dir:
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"tek_automator_log_{timestamp}.txt"
+                filepath = Path(save_dir) / filename
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(self.log_area.get("1.0", tk.END))
+                
+                self.log_message(f"Log saved to {filepath}")
+        except Exception as e:
+            self.log_message(f"Failed to save log: {e}", "ERROR")
 
     def on_key_press(self, key):
         """ Pynput keyboard listener callback. """
@@ -259,7 +259,7 @@ class Application(tk.Frame):
                         # Define a save directory
                         save_dir = "data" # Or get this from a config file/GUI
                         filename = f"{save_name}_{channel_to_save}.csv"
-                        filepath = os.path.join(save_dir, filename)
+                        filepath = Path(save_dir) / filename
                         
                         # Use the new file_io function
                         save_waveform_to_csv(filepath, time_data, voltage_data, channel_name=channel_to_save)
@@ -278,7 +278,7 @@ class Application(tk.Frame):
                         # Send data to GUI thread for plotting
                         self.gui_queue.put(('plot_update', {'time': time_data, 'voltage': voltage_data}))
                     else:
-                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to read waveform from {os.path.basename(filepath)}"}))
+                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to read waveform from {Path(filepath).name}"}))
 
                 # 여기에 다른 task들 (e.g., 'start_monitoring', 'stop_monitoring')을 추가
                 
@@ -359,16 +359,22 @@ class Application(tk.Frame):
             self.log_message("Failed to plot data.", "WARN")
 
     def load_waveform_action(self):
-        """Action for the 'Load from File' button."""
-        filepath = filedialog.askopenfilename(
-            title="Select a Waveform File",
-            filetypes=[
-                ("CSV Files", "*.csv"),
-                ("All files", "*.*")
-            ]
-        )
-        if filepath:
-            self.task_queue.put(('read_and_plot_file', {'filepath': filepath})) 
+        """Load a waveform file and display it."""
+        try:
+            filepath = filedialog.askopenfilename(
+                title="Select waveform file",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+            if filepath:
+                result = read_waveform_file(filepath)
+                if result:
+                    time_data, voltage_data = result
+                    self.plot_data(time_data, voltage_data)
+                    self.log_message(f"Loaded waveform from {Path(filepath).name}")
+                else:
+                    self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to read waveform from {Path(filepath).name}"}))
+        except Exception as e:
+            self.log_message(f"Error loading waveform: {e}", "ERROR")
 
     def connect_scope1_action(self, event):
         """Action when a scope is selected from the first dropdown."""
