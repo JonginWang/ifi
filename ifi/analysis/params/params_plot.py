@@ -1,4 +1,17 @@
+"""
+    Params Plot
+    ===========
+
+    This module contains functions and classes for setting up the plot style for the IFI package.
+
+    Functions:
+        set_plot_style: Set the plot style for the IFI package.
+        FontStyle: A collection of predefined font style dictionaries for plot elements.
+"""
+
+
 import matplotlib as mpl
+
 
 def set_plot_style(font="Arial", size=8.5):
     """
@@ -39,7 +52,9 @@ def set_plot_style(font="Arial", size=8.5):
 class FontStyle:
     """A collection of predefined font style dictionaries for plot elements."""
     default  = {"fontname": "Arial", "fontsize": 8.5}
-    title    = {"fontname": "Arial", "fontsize": 10,  "fontweight": "bold"}
+    title    = {"fontname": "Arial", "fontsize": 15,  "fontweight": "bold"}
+    suptitle = {"fontname": "Arial", "fontsize": 15,  "fontweight": "bold"}
+    subtitle = {"fontname": "Arial", "fontsize": 12,  "fontweight": "bold"}
     label    = {"fontname": "Arial", "fontsize": 8.5, "fontweight": "bold"}
     custom10 = {"fontname": "Arial", "fontsize": 10}
     custom12 = {"fontname": "Arial", "fontsize": 12}

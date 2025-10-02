@@ -1,13 +1,36 @@
-import logging
-from typing import Optional, Union
+"""
+    TekScopeController
+    ==================
 
+    This module contains the TekScopeController class for controlling Tektronix scopes.
+"""
+
+import sys
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    print(f"!! Could not find ifi package root: {e}")
+    pass
+
+import logging
 import numpy as np
+from typing import Optional, Union
 from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
+from ifi.utils.common import LogManager
 
+# Get logger instance
+LogManager()
 LOGGER = logging.getLogger(__name__)
-
 
 # By creating a type alias for the supported scope models,
 # it is easy to refer to the collection of Tektronix scope device classes.

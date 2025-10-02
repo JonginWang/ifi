@@ -1,44 +1,86 @@
 """
-IFI Analysis Main Script
-========================
+    IFI Analysis Main Script
+    ========================
 
-This script orchestrates the data analysis workflow for the IFI project.
-It handles data loading, processing, analysis, and visualization.
+    This script orchestrates the data analysis workflow for the IFI project.
+    It handles data loading, processing, analysis, and visualization.
+
+    Functions:
+        run_analysis: Runs the analysis pipeline.
+            - Inputs:
+                - query: Shot number or pattern
+                - args: argparse.Namespace object containing the analysis parameters
+                - nas_db: NAS_DB instance
+                - vest_db: VEST_DB instance
+            - Outputs:
+                - analysis_data: Dictionary containing the analysis data
+                - stft_results: Dictionary containing the STFT results
+                - cwt_results: Dictionary containing the CWT results
+        load_and_process_file: Loads a single file using the NAS_DB instance, then processes it through refining, offset removal, and STFT analysis.
+            - Inputs:
+                - nas_instance: NAS_DB instance
+                - file_path: Path to the file to process
+                - args: argparse.Namespace object containing the analysis parameters
+            - Outputs:
+                - file_path: Path to the file that was processed
+                - df_processed: DataFrame containing the processed data
+                - stft_result: Dictionary containing the STFT results
+                - cwt_result: Dictionary containing the CWT results
+        main: Main function that parses command line arguments and runs the analysis pipeline.
+            - Inputs:
+                - query: Shot number or pattern
+                - args: argparse.Namespace object containing the analysis parameters
+                - nas_db: NAS_DB instance
+                - vest_db: VEST_DB instance
+            - Outputs:
+                - analysis_data: Dictionary containing the analysis data
+                - stft_results: Dictionary containing the STFT results
+                - cwt_results: Dictionary containing the CWT results
 """
-
 # ============================================================================
 # CRITICAL: Set up numba cache BEFORE any imports that use numba/ssqueezepy
 # ============================================================================
-from ifi.utils.cache_setup import setup_project_cache
 
-# Configure cache for the entire project
+
+import sys
+import logging
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    logging.error(f"Could not find ifi package root: {e}")
+    pass
+
+from ifi.utils.cache_setup import setup_project_cache
 cache_config = setup_project_cache()
 
 # Now safe to import other modules
 import argparse
-import logging
 import re
-from pathlib import Path
+import time
 from typing import List, Union
 from collections import defaultdict
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import dask
-from dask import delayed
-
 
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis import processing, plots, spectrum, phi2ne
-from ifi.analysis.plots import plot_cwt
 from ifi.utils.common import LogManager, FlatShotList
 from ifi.utils import file_io
 from ifi.analysis.phi2ne import get_interferometry_params
 
-# The LogManager class ensures this setup runs only once per session.
-# It's better to initialize it inside the main() function or at the start of the script logic.
+# The LogManager is better to be initialized inside the main() function 
+# or at the start of the script logic.
 # LogManager(level="INFO") # This call is redundant if called in main()
+
 
 @dask.delayed
 def load_and_process_file(nas_instance, file_path, args):
@@ -47,24 +89,25 @@ def load_and_process_file(nas_instance, file_path, args):
     through refining, offset removal, and STFT analysis.
     This function is designed to be run in parallel by Dask.
     """
-    logging.info(f"Starting processing for: {Path(file_path).name}")
+    logging.info("\n" + "="*80 + "\n" + f" Starting processing for: {Path(file_path).name} ".center(80, "=") + "\n" + "="*80 + "\n")
     
     # 1. Read single file data
     # Use get_shot_data for better path handling and caching
     data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
     if not data_dict or file_path not in data_dict:
-        logging.warning(f"Failed to read {file_path}. Skipping.")
+        logging.warning("\n" + "="*80 + "\n" + f"  Failed to read {file_path}. Skipping.  ".center(80, "!") + "\n" + "="*80 + "\n")
         return None, None, None, None # Return None for all results
     
     df_raw = data_dict[file_path]
 
-    # 2. Refine data
+    # 2. Refine data (Removing nan values)
     df_refined = processing.refine_data(df_raw)
+    logging.info("\n" + f"  Data refined for {file_path}  ".center(80, "=") + "\n")
 
     # 3. Remove offset
     if not args.no_offset_removal:
         df_processed = processing.remove_offset(df_refined, window_size=args.offset_window)
-        logging.info(f"Offset removed from {file_path}")
+        logging.info("\n" + f"  Offset removed from {file_path}  ".center(80, "=") + "\n")
     else:
         df_processed = df_refined
     
@@ -74,23 +117,23 @@ def load_and_process_file(nas_instance, file_path, args):
         analyzer = spectrum.SpectrumAnalysis()
         all_data_cols = [col for col in df_processed.columns if col != 'TIME']
         
-        cols_to_analyze_indices = range(len(all_data_cols))
+        cols_to_analyze_idxs = range(len(all_data_cols))
         if args.ft_cols is not None:
-            cols_to_analyze_indices = args.ft_cols
+            cols_to_analyze_idxs = args.ft_cols
 
         fs = 1 / df_processed['TIME'].diff().mean()
         
         stft_result_for_file = {}
-        for col_idx in cols_to_analyze_indices:
+        for col_idx in cols_to_analyze_idxs:
             if col_idx < 0 or col_idx >= len(all_data_cols):
                 continue
             col_name = all_data_cols[col_idx]
             signal = df_processed[col_name].to_numpy()
-            f, t, Zxx = analyzer.compute_stft(signal, fs)
-            stft_result_for_file[col_name] = {'f': f, 't': t, 'Zxx': Zxx}
+            freq_STFT, time_STFT, STFT_matrix = analyzer.compute_stft(signal, fs)
+            stft_result_for_file[col_name] = {'time_STFT': time_STFT, 'freq_STFT': freq_STFT, 'STFT_matrix': STFT_matrix}
          
         stft_result = {file_path: stft_result_for_file}
-        logging.info(f"STFT analysis complete for {file_path}")
+        logging.info("\n" + f"  STFT analysis complete for {file_path}  ".center(80, "=") + "\n")
 
     # 5. Perform CWT analysis if requested
     cwt_result = None
@@ -98,23 +141,23 @@ def load_and_process_file(nas_instance, file_path, args):
         analyzer = spectrum.SpectrumAnalysis()
         all_data_cols = [col for col in df_processed.columns if col != 'TIME']
         
-        cols_to_analyze_indices = range(len(all_data_cols))
+        cols_to_analyze_idxs = range(len(all_data_cols))
         if args.ft_cols is not None:
-            cols_to_analyze_indices = args.ft_cols
+            cols_to_analyze_idxs = args.ft_cols
 
         fs = 1 / df_processed['TIME'].diff().mean()
         
         cwt_result_for_file = {}
-        for col_idx in cols_to_analyze_indices:
+        for col_idx in cols_to_analyze_idxs:
             if col_idx < 0 or col_idx >= len(all_data_cols):
                 continue
             col_name = all_data_cols[col_idx]
             signal = df_processed[col_name].to_numpy()
-            freqs, cwt_matrix= analyzer.compute_cwt(signal, fs)
-            cwt_result_for_file[col_name] = {"t": df_processed.index.to_numpy(), "freqs": freqs, "cwt_matrix": cwt_matrix}
+            freq_CWT, CWT_matrix = analyzer.compute_cwt(signal, fs)
+            cwt_result_for_file[col_name] = {"time_CWT": time_CWT, "freq_CWT": freq_CWT, "CWT_matrix": CWT_matrix}
          
         cwt_result = {file_path: cwt_result_for_file}
-        logging.info(f"CWT analysis complete for {file_path}")
+        logging.info(f"  CWT analysis complete for {file_path}  ".center(80, "="))
 
     # Return a tuple of the processed data and any analysis results
     return file_path, df_processed, stft_result, cwt_result
@@ -129,13 +172,13 @@ def run_analysis(
     """
     Performs a complete analysis workflow for a given query.
     """
-    logging.info("\n========== Parsing Analysis Query ==========")
+    logging.info( "\n" + " Parsing Analysis Query ".center(80, "=") + "\n")
     flat_list = FlatShotList(query)
-    logging.info(f"Found {len(flat_list.nums)} unique shot numbers: {flat_list.nums}")
-    logging.info(f"Found {len(flat_list.paths)} unique file paths: {flat_list.paths}")
+    logging.info(f"\n- Found {len(flat_list.nums)} unique shot numbers: \n{flat_list.nums}\n")
+    logging.info(f"\n- Found {len(flat_list.paths)} unique file paths: \n{flat_list.paths}\n")
 
     if not flat_list.all:
-        logging.warning("Query resulted in an empty list of targets. Nothing to do.")
+        logging.warning("\n" + "  Query resulted in an empty list of targets. Nothing to do.  ".center(80, "!") + "\n")
         return
 
     # --- 1. Find and Load Data ---
@@ -146,7 +189,7 @@ def run_analysis(
         force_remote=args.force_remote
     )
     if not target_files:
-        logging.warning(f"No files found for the given query. Skipping.")
+        logging.warning("\n" + "  No files found for the given query. Skipping.  ".center(80, "!") + "\n")
         return
 
     # Group files by shot number and determine interferometry parameters
@@ -160,35 +203,54 @@ def run_analysis(
             # Get parameters for each individual file (not just shot number)
             params = get_interferometry_params(shot_num, Path(f).name)
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {Path(f).name}: {params['method']} method, {params['freq_ghz']}GHz")
+            logging.info(f"\n- Interferometry (Shot #{shot_num}) params for {Path(f).name}: ")
+            logging.info(f"{params['method']} method, {params['freq_ghz']} GHz" + "\n")
         else:
             files_by_shot['unknown'].append(f)
             # For unknown files, use shot number 0 as default
             params = get_interferometry_params(0, Path(f).name)
             interferometry_params_by_file[f] = params
-            logging.info(f"Interferometry params for {Path(f).name}: {params['method']} method, {params['freq_ghz']}GHz")
+            logging.info(f"\n- Interferometry (Shot #00000) params for {Path(f).name}: ")
+            logging.info(f"{params['method']} method, {params['freq_ghz']} GHz" + "\n")
 
-    logging.info(f"Grouped files into {len(files_by_shot)} shot(s).")
+    logging.info("\n" + f"  Grouped files into {len(files_by_shot)} shot(s).  ".center(80, "=") + "\n")
 
     # Load VEST data for all relevant shots
     vest_data_by_shot = defaultdict(dict)
     if flat_list.nums:
-        logging.info(f"Loading VEST data for shots: {flat_list.nums}")
+        logging.info(f"\n- Loading VEST data for shots: \n{flat_list.nums}\n")
         for shot_num in flat_list.nums:
             vest_data_by_shot[shot_num] = vest_db.load_shot(shot=shot_num, fields=args.vest_fields) if shot_num > 0 else {}
 
-    # --- Dask Task Creation ---
+    # --- Dask Task Creation with Progress Tracking ---
     tasks = [dask.delayed(load_and_process_file)(nas_db, f, args) for f in target_files]
     
-    logging.info(f"Starting Dask computation for {len(tasks)} tasks...")
-    results = dask.compute(*tasks, scheduler=args.scheduler)
-    logging.info("Dask computation finished.")
+    logging.info("\n" + f"Starting Dask computation for {len(tasks)} tasks...".center(80, "=") + "\n")
+    logging.info(f"Using scheduler: {args.scheduler}")
+    logging.info(f"Target files: {len(target_files)}")
+    
+    # Execute with progress tracking and optimized scheduler
+    start_time = time.time()
+    
+    # Use optimal scheduler based on task count and system resources
+    if len(tasks) <= 4:
+        scheduler = 'threads'  # Better for I/O bound tasks
+    else:
+        scheduler = args.scheduler if args.scheduler else 'threads'
+    
+    logging.info(f"Using scheduler: {scheduler}")
+    results = dask.compute(*tasks, scheduler=scheduler)
+    end_time = time.time()
+    
+    logging.info("\n" + "Dask computation finished.".center(80, "=") + "\n")
+    logging.info(f"Processing time: {end_time - start_time:.2f} seconds")
+    logging.info(f"Average time per file: {(end_time - start_time) / len(target_files):.2f} seconds")
 
     # --- Process Dask Results ---
     analysis_data = defaultdict(dict)
     stft_results = defaultdict(dict)
     cwt_results = defaultdict(dict)
-    for file_path, df, stft_res, cwt_res in results:
+    for file_path, df, stft_result, cwt_result in results:
         if df is None:
             continue
         
@@ -196,10 +258,10 @@ def run_analysis(
         shot_num = int(match.group(1)) if match else 0 # Group under 0 if no shot number
         
         analysis_data[shot_num][Path(file_path).name] = df
-        if stft_res:
-            stft_results[shot_num].update(stft_res)
-        if cwt_res:
-            cwt_results[shot_num].update(cwt_res)
+        if stft_result:
+            stft_results[shot_num].update(stft_result)
+        if cwt_result:
+            cwt_results[shot_num].update(cwt_result)
         
     # --- 2. Process Each Shot ---
     all_analysis_bundles = {}
@@ -210,7 +272,7 @@ def run_analysis(
         shot_stft_data = stft_results.get(shot_num, {})
         shot_cwt_data = cwt_results.get(shot_num, {})
         
-        logging.info(f"\n========== Post-processing for Shot #{shot_num} with {len(shot_nas_data)} files ==========")
+        logging.info("\n" + f"  Post-processing for Shot #{shot_num} with {len(shot_nas_data)} files  ".center(80, "=") + "\n")
         
         # --- Collect interferometry parameters for this shot ---
         shot_files = files_by_shot.get(shot_num, [])
@@ -220,7 +282,8 @@ def run_analysis(
             if file_path in interferometry_params_by_file:
                 params = interferometry_params_by_file[file_path]
                 shot_interferometry_params[basename] = params
-                logging.info(f"File {basename}: {params['method']} method, {params['freq_ghz']}GHz, ref={params['ref_col']}, probes={params['probe_cols']}")
+                logging.info(f"File {basename}: ")
+                logging.info(f"{params['method']} method, {params['freq_ghz']}GHz, ref={params['ref_col']}, probes={params['probe_cols']}" + "\n")
         
         # --- Group Data by Frequency ---
         # Group files by frequency based on interferometry parameters
@@ -232,13 +295,13 @@ def run_analysis(
             freq_groups[freq_ghz]['files'].append(basename)
             freq_groups[freq_ghz]['params'].append(params)
         
-        logging.info(f"Frequency groups found: {list(freq_groups.keys())} GHz")
+        logging.info(f"\n- Frequency groups found: {list(freq_groups.keys())} GHz" + "\n")
         
         # Create frequency-specific combined signals
         freq_combined_signals = {}
         for freq_ghz, group_info in freq_groups.items():
             files_in_group = group_info['files']
-            logging.info(f"Processing {freq_ghz}GHz group with files: {files_in_group}")
+            logging.info(f"\n- Processing {freq_ghz}GHz group with files: \n{files_in_group}\n")
             
             if freq_ghz == 280.0:
                 # 280GHz: Use _ALL file independently
@@ -255,9 +318,9 @@ def run_analysis(
                         df = df.drop('TIME', axis=1)
                         df.index.name = 'TIME'
                     freq_combined_signals[freq_ghz] = df
-                    logging.info(f"280GHz: Using {all_file} with shape {df.shape}")
+                    logging.info(f"- 280GHz: Using {all_file} with shape {df.shape}")
                 else:
-                    logging.warning(f"No _ALL file found for 280GHz group")
+                    logging.warning("! No _ALL file found for 280GHz group")
                     
             elif freq_ghz == 94.0:
                 # 94GHz: Use _0XX file as reference time axis, combine with other files
@@ -287,7 +350,7 @@ def run_analysis(
                     ref_df.columns = [f"{col}_{ref_suffix}" for col in ref_df.columns]
                     
                     combined_dfs = [ref_df]
-                    logging.info(f"94GHz reference: {ref_file} with shape {ref_df.shape}")
+                    logging.info(f"\n- 94GHz reference: {ref_file} with shape {ref_df.shape}\n")
                     
                     # Add other files, reindexed to reference time axis
                     for other_file in other_files:
@@ -304,22 +367,22 @@ def run_analysis(
                         other_df_reindexed.columns = [f"{col}_{other_suffix}" for col in other_df_reindexed.columns]
                         
                         combined_dfs.append(other_df_reindexed)
-                        logging.info(f"94GHz additional: {other_file} reindexed to reference")
+                        logging.info(f"\n- 94GHz additional: \n{other_file} reindexed to reference\n")
                     
                     # Combine all 94GHz files
                     freq_combined_signals[freq_ghz] = pd.concat(combined_dfs, axis=1)
                     freq_combined_signals[freq_ghz].index.name = 'TIME'
-                    logging.info(f"94GHz: Combined shape {freq_combined_signals[freq_ghz].shape}")
+                    logging.info(f"- 94GHz: Combined shape {freq_combined_signals[freq_ghz].shape}")
                 else:
-                    logging.warning(f"No reference _0XX file found for 94GHz group")
+                    logging.warning("! No reference _0XX file found for 94GHz group")
             else:
-                logging.warning(f"Unknown frequency group: {freq_ghz}GHz")
+                logging.warning(f"! Unknown frequency group: {freq_ghz} GHz")
         
         # For backward compatibility, use the largest frequency group as main combined_signals
         if freq_combined_signals:
             main_freq = max(freq_combined_signals.keys())
             combined_signals = freq_combined_signals[main_freq]
-            logging.info(f"Using {main_freq}GHz as main combined_signals")
+            logging.info(f"\n- Using {main_freq} GHz as main combined_signals\n")
         current_vest_data = vest_data_by_shot.get(shot_num, {})
         vest_ip_data = current_vest_data.get('25k')
         if vest_ip_data is None:
@@ -329,35 +392,35 @@ def run_analysis(
         phase_converter = phi2ne.PhaseConverter()
         density_data = pd.DataFrame(index=combined_signals.index)
         
-        # 🔍 DEBUG: Check combined_signals structure
-        logging.info(f"=== DEBUGGING combined_signals ===")
-        logging.info(f"Combined signals shape: {combined_signals.shape}")
-        logging.info(f"Available columns: {list(combined_signals.columns)}")
-        logging.info(f"Index info: {combined_signals.index.name}, range: {combined_signals.index.min():.6f} to {combined_signals.index.max():.6f}")
-        logging.info(f"Index length: {len(combined_signals.index)}")
+        # DEBUG: Check combined_signals structure
+        logging.debug("\n" + "  DEBUGGING combined_signals  ".center(80, "^") + "\n")
+        logging.debug(f"- Combined signals shape: {combined_signals.shape}")
+        logging.debug(f"- Available columns: {list(combined_signals.columns)}")
+        logging.debug(f"- Index info: {combined_signals.index.name}\n- range: {combined_signals.index.min():.6f} to {combined_signals.index.max():.6f}")
+        logging.debug(f"- Index length: {len(combined_signals.index)}")
         
         if len(combined_signals) > 0:
-            logging.info(f"First 5 rows of combined_signals:")
-            logging.info(f"{combined_signals.head()}")
+            logging.debug("First 5 rows of combined_signals:")
+            logging.debug(f"{combined_signals.head()}")
             
             # Check time resolution
             time_diff = combined_signals.index.to_series().diff().mean()
-            logging.info(f"     Time resolution analysis:")
-            logging.info(f"     - Mean time diff: {time_diff}")
-            logging.info(f"     - Time diff type: {type(time_diff)}")
-            logging.info(f"     - Is NaN?: {pd.isna(time_diff)}")
-            logging.info(f"     - Is zero?: {time_diff == 0}")
+            logging.debug("     Time resolution analysis:")
+            logging.debug(f"     - Mean time diff: {time_diff}")
+            logging.debug(f"     - Time diff type: {type(time_diff)}")
+            logging.debug(f"     - Is NaN?: {pd.isna(time_diff)}")
+            logging.debug(f"     - Is zero?: {time_diff == 0}")
             
             # Check first few time differences
             time_diffs = combined_signals.index.to_series().diff().head(10)
-            logging.info(f"   - First 10 time diffs: {time_diffs.tolist()}")
+            logging.debug(f"   - First 10 time diffs: {time_diffs.tolist()}")
         
-        logging.info(f"=== END DEBUG ===")
+        logging.debug("\n" + "  END DEBUG  ".center(80, "^") + "\n")
         
         if args.density:
             # Process each frequency group separately for density calculation
             for freq_ghz, freq_data in freq_combined_signals.items():
-                logging.info(f"Processing density calculation for {freq_ghz}GHz")
+                logging.info(f"- Processing density calculation for {freq_ghz} GHz")
                 
                 # Get files for this frequency
                 freq_files = freq_groups[freq_ghz]['files']
@@ -368,18 +431,18 @@ def run_analysis(
                 if time_diff == 0 or pd.isna(time_diff):
                     # Fallback: use 4ns resolution from file metadata
                     fs = 250e6  # 250 MHz sampling rate
-                    logging.warning(f"Invalid time resolution detected for {freq_ghz}GHz, using default fs={fs/1e6:.1f}MHz")
+                    logging.warning(f"! Invalid time resolution detected for {freq_ghz} GHz, using default fs={fs/1e6:.1f} MHz")
                 else:
                     fs = 1 / time_diff
                 
-                logging.info(f" {freq_ghz}GHz - Sampling frequency: {fs/1e6:.2f} MHz (time_diff: {time_diff})")
+                logging.info(f"- {freq_ghz} GHz - Sampling frequency: {fs/1e6:.2f} MHz (time_diff: {time_diff})")
                 
                 # Process each file in this frequency group
                 for i, basename in enumerate(freq_files):
                     params = freq_params_list[i]
                     if params and params['method'] != 'unknown':
                         file_suffix = basename.replace('.csv', '').replace('.dat', '')
-                        logging.info(f"🔬 Processing {basename}: {params['method']} method, {freq_ghz}GHz")
+                        logging.info(f"- Processing {basename}: \n{params['method']} method, {freq_ghz} GHz")
                         
                         if params['method'] == 'CDM':
                             # Find reference signal for this frequency group
@@ -398,9 +461,9 @@ def run_analysis(
                                 
                                 if ref_col_name in freq_data.columns:
                                     ref_signal = freq_data[ref_col_name].dropna().to_numpy()
-                                    logging.info(f"Using own reference {ref_col_name} for {basename}")
+                                    logging.info(f"- Using own reference {ref_col_name} for {basename}")
                                 else:
-                                    logging.warning(f"Reference column {ref_col_name} not found for {basename}")
+                                    logging.warning(f"! Reference column {ref_col_name} not found for {basename}")
                                     continue
                             else:
                                 # This file has no reference - try to use group reference
@@ -415,14 +478,14 @@ def run_analysis(
                                         if potential_ref_col in freq_data.columns:
                                             group_ref_signal = freq_data[potential_ref_col].dropna().to_numpy()
                                             group_ref_col = potential_ref_col
-                                            logging.info(f"Using shared reference {potential_ref_col} from {other_basename} for {basename}")
+                                            logging.info(f"- Using shared reference {potential_ref_col} from {other_basename} for {basename}")
                                             break
                                 
                                 if group_ref_signal is not None:
                                     ref_signal = group_ref_signal
                                     ref_col_name = group_ref_col
                                 else:
-                                    logging.warning(f"No reference signal available for {basename} - skipping CDM analysis")
+                                    logging.warning(f"! No reference signal available for {basename} \n    - skipping CDM analysis")
                                     continue
                             
                             # Calculate center frequency for this reference
@@ -432,9 +495,9 @@ def run_analysis(
                             # If center frequency detection fails, use a reasonable default
                             if f_center == 0.0:
                                 f_center = min(fs / 8, 20e6)
-                                logging.warning(f"Center frequency detection failed for {basename}, using default: {f_center/1e6:.2f} MHz")
+                                logging.warning(f"! Center frequency detection failed for {basename}\n    - using default: {f_center/1e6:.2f} MHz")
                             else:
-                                logging.info(f"{basename}: f_center = {f_center/1e6:.2f} MHz")
+                                logging.info(f"- {basename}: f_center = {f_center/1e6:.2f} MHz")
                             
                             # Process each probe channel
                             for probe_col in params['probe_cols']:
@@ -449,9 +512,9 @@ def run_analysis(
                                     probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                                     phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
                                     density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                    logging.info(f"CDM: Calculated density for {probe_col} in {basename}")
+                                    logging.info(f"- CDM: Calculated density for {probe_col} in {basename}")
                                 else:
-                                    logging.warning(f"Probe column {probe_col_name} not found for {basename}")
+                                    logging.warning(f"! Probe column {probe_col_name} not found for {basename}")
                         
                         elif params['method'] == 'FPGA':
                             if params['ref_col']:
@@ -467,13 +530,13 @@ def run_analysis(
                                             probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                                             phase = phase_converter.calc_phase_fpga(ref_signal, probe_signal, time_axis, probe_signal, isflip=True)
                                             density_data[f"ne_{probe_col}_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                            logging.info(f"FPGA: Calculated density for {probe_col} in {basename}")
+                                            logging.info(f"- FPGA: Calculated density for {probe_col} in {basename}")
                                         else:
-                                            logging.warning(f"Probe column {probe_col_name} not found for {basename}")
+                                            logging.warning(f"! Probe column {probe_col_name} not found for {basename}")
                                 else:
-                                    logging.warning(f"Reference column {ref_col_name} not found for {basename}")
+                                    logging.warning(f"! Reference column {ref_col_name} not found for {basename}")
                             else:
-                                logging.warning(f"No reference signal for {basename} - skipping FPGA analysis")
+                                logging.warning(f"! No reference signal for {basename} \n    - skipping FPGA analysis")
                         
                         elif params['method'] == 'IQ':
                             # IQ method expects probe_cols to contain tuples like [('CH0', 'CH1')]
@@ -489,16 +552,16 @@ def run_analysis(
                                         q_signal = freq_data[q_col_name].dropna().to_numpy()
                                         phase = phase_converter.calc_phase_iq(i_signal, q_signal)
                                         density_data[f"ne_IQ_{basename}"] = phase_converter.phase_to_density(phase, analysis_params=params)
-                                        logging.info(f"IQ: Calculated density for {basename}")
+                                        logging.info(f"- IQ: Calculated density for {basename}")
                                     else:
-                                        logging.warning(f"IQ columns {i_col_name}, {q_col_name} not found for {basename}")
+                                        logging.warning(f"! IQ columns {i_col_name}, {q_col_name} not found for {basename}")
                                 else:
-                                    logging.warning(f"Invalid IQ probe_cols format for {basename}: {probe_cols_tuple}")
+                                    logging.warning(f"! Invalid IQ probe_cols format for {basename}: {probe_cols_tuple}")
                             else:
-                                logging.warning(f"No probe_cols defined for IQ method in {basename}")
+                                logging.warning(f"! No probe_cols defined for IQ method in {basename}")
                         
                         else:
-                            logging.warning(f"Unknown interferometry method: {params['method']} for file {basename}")
+                            logging.warning(f"! Unknown interferometry method: {params['method']} for file {basename}")
 
             # Apply baseline correction to all density columns
             if args.baseline and vest_ip_data is not None and not density_data.empty:
@@ -527,11 +590,11 @@ def run_analysis(
 
         # --- 7. Plotting and Saving ---
         if args.plot or args.save_plots:
-            logging.info("Generating plots...")
+            logging.info("\n" + "  Generating plots...  ".center(80, "=") + "\n")
             title_prefix = f"Shot #{shot_num} - " if shot_num else ""
             
             # Use a context manager to handle plot creation and showing/saving
-            with plots.ifi_plotting(interactive=args.plot, save_dir=Path(args.results_dir) / str(shot_num) if args.save_plots else None, save_prefix=title_prefix):
+            with plots.ifion_plotting(interactive=args.plot, save_dir=Path(args.results_dir) / str(shot_num) if args.save_plots else None, save_prefix=title_prefix):
                 if not args.no_plot_ft:
                     if shot_stft_data:
                         plots.plot_spectrograms(shot_stft_data, title_prefix=title_prefix, trigger_time=args.trigger_time, downsample=args.downsample)
@@ -558,7 +621,7 @@ def run_analysis(
                 shot_cwt_data, density_data, vest_ip_data
             )
 
-    logging.info("\n========== Full Analysis Finished ==========")
+    logging.info("\n" + "  Full Analysis Finished  ".center(80, "=") + "\n")
     return all_analysis_bundles
 
 

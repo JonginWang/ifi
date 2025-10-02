@@ -1,25 +1,48 @@
-import os
+"""
+    Spectrum Analysis
+    =================
+
+    This module contains functions for analyzing the spectrum of a signal. It
+    includes functions for computing the Short-Time Fourier Transform (STFT),
+    Continuous Wavelet Transform (CWT), and finding the frequency ridge.
+
+    Functions:
+        SpectrumAnalysis: A class for analyzing the spectrum of a signal.
+            - compute_stft: Compute the Short-Time Fourier Transform (STFT).
+            - compute_stft_sqpy: Compute the Short-Time Fourier Transform (STFT) using ssqueezepy.
+                - _get_stft_kwargs: Get the Short-Time Fourier Transform (STFT) parameters.
+                - _translate_kwargs: Translate the Short-Time Fourier Transform (STFT) parameters for different libraries.
+                - _get_cwt_kwargs: Get the Continuous Wavelet Transform (CWT) parameters.
+            - compute_cwt: Compute the Continuous Wavelet Transform (CWT).
+            - find_freq_ridge: Find the frequency ridge in a spectrogram/scaleogram (ssqueezepy.extract_ridge).
+            - find_center_frequency_fft: Find the center frequency of a signal using FFT.
+"""
+
+import sys
+import logging
 from pathlib import Path
 
-# Set a project-local cache directory for numba to avoid permission errors.
-# This must be set before importing ssqueezepy to prevent caching issues.
-numba_cache_dir = Path(__file__).parent.parent.parent / 'cache' / 'numba_cache'
-numba_cache_dir.mkdir(parents=True, exist_ok=True)
-import os
-os.environ['NUMBA_CACHE_DIR'] = str(numba_cache_dir)
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    print(f"!! Could not find ifi package root: {e}")
+    pass
+
+from ifi.utils.cache_setup import setup_project_cache
+cache_config = setup_project_cache()
 
 import numpy as np
-import pandas as pd
 from scipy import signal as spsig
-from scipy.fft import fft, fftfreq, rfft, rfftfreq
 import ssqueezepy as ssqpy
 from ssqueezepy.experimental import scale_to_freq
-import pywt
-from typing import Tuple, Union
-from collections import defaultdict
-import logging
+from typing import Tuple
 
-from ifi.utils.common import assign_kwargs
 from ifi.utils.common import LogManager
 
 LogManager()
@@ -76,6 +99,8 @@ class SpectrumAnalysis:
         return translated
 
     def compute_stft(self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        logging.debug("    - [SCIPY STFT] Computing STFT with scipy.")
+
         all_kwargs = self._get_stft_kwargs(**kwargs)
         scipy_kwargs = self._translate_kwargs(all_kwargs, 'scipy')
         
@@ -86,6 +111,8 @@ class SpectrumAnalysis:
         return SFT.f, SFT.t(signal.shape[-1]) + t_start, Zxx
 
     def compute_stft_sqpy(self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        logging.debug("    - [SSQPY STFT] Computing STFT with ssqueezepy.")
+
         all_kwargs = self._get_stft_kwargs(**kwargs)
         sqpy_kwargs = self._translate_kwargs(all_kwargs, 'ssqueezepy')
 
@@ -119,7 +146,7 @@ class SpectrumAnalysis:
             scales: Scale distribution ('log', 'log-piecewise', 'linear' or array)
             **kwargs: Additional arguments for ssqpy.cwt
         """
-        logging.debug(f"Computing CWT with ssqueezepy using '{wavelet}' wavelet.")
+        logging.debug(f"    - [SSQPY CWT] Computing CWT with ssqueezepy using '{wavelet}' wavelet.")
         wav = ssqpy.Wavelet(wavelet)
         
         # Convert frequency range to scales if provided
@@ -142,33 +169,36 @@ class SpectrumAnalysis:
 
         return freqs_cwt, Wx
 
-    def find_freq_ridge(self, Zxx: np.ndarray, f: np.ndarray, prominence: float = None, distance: float = None) -> np.ndarray:
+    def find_freq_ridge(self, Zxx: np.ndarray, f: np.ndarray, penalty: float = 2, n_ridges: int = 1, n_bin: int = 25, method: str = 'stft') -> np.ndarray:
         """
         Finds the frequency "ridge" in a spectrogram by locating the frequency
         with the maximum power for each time slice.
 
         Args:
             Zxx (np.ndarray): The complex matrix from the STFT (frequencies x times).
-            f (np.ndarray): The array of sample frequencies.
-            prominence (float, optional): Ignored. Kept for signature compatibility.
-            distance (float, optional): Ignored. Kept for signature compatibility.
+            f (np.ndarray): The array of sample frequencies or scales.
+            penalty (float, optional): Penalty for ridge extraction, 0.5, 2, 5, 20, 40.
+                Default is 2. (Higher penalty -> reduce odd of a ridge)
+            n_ridges (int, optional): Number of ridges to extract. 
+                Default is 1.
+            n_bin (int, optional): Number of bins (> 15 for single, ~4 for multiple).
+                Default is 10.
+            method (str, optional): Method to use for ridge extraction.
+                Default is 'stft'. ('stft' or 'cwt')
 
         Returns:
             np.ndarray: A 1D array containing the frequency with the highest power for each time segment.
         """
+        logging.debug("    - [RIDGE] Finding frequency ridge.")
         if Zxx.ndim != 2:
             raise ValueError(f"`Zxx` must be a 2-D array, but got shape {Zxx.shape}")
 
-        # Get the magnitude squared (power)
-        power_spectrum = np.abs(Zxx)**2
-        
-        # Find the index of the maximum power for each time slice (along the frequency axis=0)
-        peak_indices = np.argmax(power_spectrum, axis=0)
+        ridge_idxs = ssqpy.extract_ridge(Zxx, f, penalty, n_ridges=n_ridges, n_bin=n_bin, method=method.lower())
         
         # Map the indices to frequencies
-        frequency_ridge = f[peak_indices]
+        freq_ridge = f[ridge_idxs]
         
-        return frequency_ridge
+        return freq_ridge
 
     def find_center_frequency_fft(self, signal: np.ndarray, fs: float) -> float:
         """
@@ -185,6 +215,8 @@ class SpectrumAnalysis:
         Returns:
             float: The estimated center frequency in Hz.
         """
+        logging.debug("    - [FFT] Finding center frequency of signal.")
+
         n = len(signal)
         if n == 0:
             return 0.0
@@ -213,13 +245,13 @@ class SpectrumAnalysis:
         # Find the peak frequency above the threshold
         if search_start_idx >= len(yf_positive):
              # If search start index is out of bounds, there's no valid range to search
-            logging.warning("No valid range to search for center frequency. Returning 0.0 Hz.")
+            logging.warning("    ! [Center Frequency] No valid range to search for center frequency. Returning 0.0 Hz.")
             return 0.0
             
         peak_idx = np.argmax(yf_positive[search_start_idx:]) + search_start_idx
         f_center = xf_positive[peak_idx]
 
-        logging.info(f"Center frequency: {f_center/1e6:.2f} MHz")
+        logging.info(f"    - [Center Frequency] fc: {f_center/1e6:.2f} MHz")
 
         return f_center
 
@@ -234,20 +266,21 @@ if __name__ == '__main__':
     signal2 = np.sin(2 * np.pi * fs2 * t)
     signal = signal1 + 0.5 *signal2 + 0.1 * np.random.randn(len(t))
 
+    logging.info("    - [Spectrum Analysis] Starting analysis.")
     f_center = analyzer.find_center_frequency_fft(signal, fs)
-    logging.info(f"Center frequency: {f_center/1e6:.2f} MHz")
+    logging.info(f"    - [Spectrum Analysis] Center Frequency: {f_center/1e6:.2f} MHz")
 
     # Call with default parameters using SciPy
     f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
-    ridge = analyzer.find_freq_ridge(Zxx, f)
-    logging.info("--- SciPy STFT ---")
-    logging.info(f"STFT shape: {Zxx.shape}")
-    logging.info(f"Ridge frequency: {np.mean(ridge)}")
+    ridge = analyzer.find_freq_ridge(Zxx, f, method='stft')
+    logging.info("    - [Spectrum Analysis] SciPy STFT:")
+    logging.info(f"    - [Spectrum Analysis] STFT shape: {Zxx.shape}")
+    logging.info(f"    - [Spectrum Analysis] Ridge frequency: {np.mean(ridge)}")
     
     # Call using ssqueezepy
     f_ssq, t_ssq, Sxx = analyzer.compute_stft_sqpy(signal, fs, n_fft=1024, hop_len=512)
-    ridge_ssq = analyzer.find_freq_ridge(Sxx, f_ssq)
-    logging.info("--- ssqueezepy STFT ---")
-    logging.info(f"STFT shape: {Sxx.shape}")
-    logging.info(f"Ridge frequency: {np.mean(ridge_ssq)}")
+    ridge_ssqpy = analyzer.find_freq_ridge(Sxx, f_ssq)
+    logging.info("    - [Spectrum Analysis] ssqueezepy STFT:")
+    logging.info(f"    - [Spectrum Analysis] STFT shape: {Sxx.shape}")
+    logging.info(f"    - [Spectrum Analysis] Ridge frequency: {np.mean(ridge_ssqpy)}")
     pass

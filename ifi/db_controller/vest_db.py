@@ -1,12 +1,35 @@
+"""
+    VEST_DB
+    ======
+
+    This module contains the VEST_DB class for accessing the VEST database.
+"""
+
+
+import sys
+import logging
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    logging.error(f"Could not find ifi package root: {e}")
+    pass
+
 import pymysql
 import numpy as np
 import configparser
-from pathlib import Path
 import time
-import logging
 from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 import pandas as pd
 from collections import defaultdict
+
 
 class VEST_DB:
     """
@@ -376,6 +399,40 @@ class VEST_DB:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
 
+    def query(self, sql_query: str, params=None):
+        """
+        Execute a SQL query and return the results.
+        
+        Args:
+            sql_query: SQL query string
+            params: Optional parameters for the query
+            
+        Returns:
+            Query results as a list of tuples, or None if failed
+        """
+        if not (self.connection and self.connection.open):
+            self.logger.error("Not connected to the database.")
+            return None
+        
+        try:
+            with self.connection.cursor() as cursor:
+                if params:
+                    cursor.execute(sql_query, params)
+                else:
+                    cursor.execute(sql_query)
+                
+                # Fetch all results
+                results = cursor.fetchall()
+                self.logger.info(f"Query executed successfully. Returned {len(results)} rows.")
+                return results
+                
+        except pymysql.Error as e:
+            self.logger.error(f"Database query error: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error during query execution: {e}")
+            return None
+
 if __name__ == '__main__':
     # Example usage and test for the VEST_DB class.
     # Note: This requires a valid 'ifi/config.ini' file with database credentials.
@@ -389,6 +446,14 @@ if __name__ == '__main__':
     try:
         # Explicitly provide the config path for robust execution
         with VEST_DB(config_path='ifi/config.ini') as db:
+            # 0. Check if the database is connected and returns the last shot number
+            logging.info("Checking for last shot number...")
+            last_shot_num = db.get_next_shot_code()
+            if last_shot_num:
+                logging.info(f"Last shot number: {last_shot_num}")
+            else:
+                logging.error("Failed to get last shot number.")
+            
             # 1. Check if the shot data exists for the first field
             logging.info(f"Checking for existence of first field ({test_fields[0]})...")
             existence = db.exist_shot(test_shot, test_fields[0])
@@ -405,7 +470,7 @@ if __name__ == '__main__':
                         logging.info(f"     DataFrame shape: {df.shape}")
                         logging.info(f"     Columns: {df.columns.tolist()}")
                         logging.info("--- Head of DataFrame ---")
-                        print(df.head())
+                        logging.info(f"\n{df.head()}")
                         logging.info("-------------------------")
                 else:
                     logging.info("  -> Data loading failed or returned no data.")

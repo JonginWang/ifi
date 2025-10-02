@@ -1,7 +1,52 @@
-import argparse
+"""
+    Interactive Analysis
+    ===================
+
+    This Script is a Interactive analysis pipeline for IFI package.
+    It is used to test the analysis pipeline and the results.
+
+    Functions:
+        create_mock_args: Creates a mock argparse.Namespace object for interactive analysis.
+        main: Runs the analysis pipeline.
+            - Creates a mock argparse.Namespace object for interactive analysis.
+            - Runs the analysis pipeline.
+            - Options:
+                - query: Shot number or pattern
+                - stft: Whether to run the STFT analysis.
+                - density: Whether to run the density analysis.
+                - plot: Whether to plot the results.
+                - overview_plot: Whether to plot the overview.
+                - data_folders: Data folders to use.
+                - add_path: Whether to add the path to the data folders.
+                - force_remote: Whether to force the remote data.
+
+"""
+
+
+import sys
+import logging
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    logging.error(f"Could not find ifi package root: {e}")
+    pass
+
 from argparse import Namespace
 import matplotlib.pyplot as plt
+
 from ifi.analysis.main_analysis import run_analysis
+from ifi.utils.common import LogManager
+
+LogManager(level="DEBUG")
+
 
 def create_mock_args():
     """
@@ -47,6 +92,7 @@ def create_mock_args():
     )
     return args
 
+
 if __name__ == '__main__':
     # 1. Set up analysis parameters
     # You can modify these arguments directly for your specific test case.
@@ -61,9 +107,9 @@ if __name__ == '__main__':
     
     # 2. Run the analysis pipeline
     # The results are returned in a dictionary.
-    print("Starting interactive analysis...")
+    logging.info("Starting interactive analysis...")
     results = run_analysis(analysis_args)
-    print("Analysis finished.")
+    logging.info("Analysis finished.")
 
     # 3. Access and explore the results
     # The 'results' dictionary contains all the major data artifacts.
@@ -75,19 +121,19 @@ if __name__ == '__main__':
         density_data = results.get("density_data")
         vest_data = results.get("vest_data")
 
-        print("\n--- Available Data ---")
+        logging.info("--- Available Data ---")
         if processed_data is not None:
-            print(f"Processed Data Shape: {processed_data.shape}")
+            logging.info(f"Processed Data Shape: {processed_data.shape}")
         if stft_results:
-            print(f"STFT Results available for: {list(stft_results.keys())}")
+            logging.info(f"STFT Results available for: {list(stft_results.keys())}")
         if density_data is not None and not density_data.empty:
-            print(f"Density Data Shape: {density_data.shape}")
+            logging.info(f"Density Data Shape: {density_data.shape}")
         if vest_data is not None and not vest_data.empty:
-            print(f"VEST Data Shape: {vest_data.shape}")
+            logging.info(f"VEST Data Shape: {vest_data.shape}")
 
         # Keep plots open for inspection
         if analysis_args.plot or analysis_args.overview_plot:
-            print("\nDisplaying plots. Close plot windows to end script.")
+            logging.info("Displaying plots. Close plot windows to end script.")
             plt.show()
 
-    print("\nScript finished. You can now explore the variables in your IDE.") 
+    logging.info("Script finished. You can now explore the variables in your IDE.") 

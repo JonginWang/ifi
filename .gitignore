@@ -248,20 +248,68 @@ $RECYCLE.BIN/
 *.lnk
 
 # Custom configuration files and custom data files
+# AGENTS.md and GEMINI.md are custom configuration files for using *backlog*
+# backlog is a folder containing a backlog of tasks
+AGENTS.md
+GEMINI.md
+backlog/
+.taskmaster/
+.gemini/
+
+# cache is a folder containing cached data
+# docs/*.md are custom documentation files for the package
+cache/
+docs/*.md
+examples/
+logs/
+results/
+tmp/
 
 # config.ini is a custom configuration file for the ifi package
-# examples is a folder containing examples of how to use the ifi package
 # under_dev is a folder containing code that is under development
-# results is a folder containing results of the ifi package
-# logs is a folder containing logs of the ifi package
-# cache is a folder containing cached data of the ifi package
-ifi/config.ini  
+ifi/config.ini
+ifi/cache/
 ifi/examples/
-ifi/under_dev/
+ifi/logs/
+ifi/olds/
+ifi/tmp/
 ifi/results/
-logs/
-cache/
+ifi/references/
+ifi/under_dev/
+
+# .cursor is a folder containing rules and other configuration files for the cursor IDE
+# .*mdc are custom configuration files for the cursor IDE
+# .cursorrules is a file containing rules for the cursor IDE in old version
+.cursor/
+.*mdc
+.cursorignore
+.cursorrules
+
+# Followings are custom data files, *Shot Data to Field*, for the ifi package
 ifi/db_controller/shotdata_field_origin.csv
 ifi/db_controller/shotdata_field_221230.txt
 
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,linux
+
+# Logs
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+
+# Task files
+# tasks.json
+# tasks/ 

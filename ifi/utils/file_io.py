@@ -1,12 +1,31 @@
-import os
+"""
+    File I/O
+    ========
+
+    This module contains the functions for reading and writing data to files.
+    It includes functions for reading and writing waveform data to CSV files,
+    and reading and writing analysis results to HDF5 files.
+"""
+
+import sys
 from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    print(f"!! Could not find ifi package root: {e}")
+    pass
+
 import numpy as np
 import pandas as pd
-import argparse
-import logging
-from typing import Tuple, Dict
 
-from .common import ensure_dir_exists
+from ifi.utils.common import ensure_dir_exists
 
 
 """
@@ -94,11 +113,23 @@ def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
 """
 
 
-
-
 def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_results, density_data, vest_data):
-    """Saves all analysis results to an HDF5 file."""
-    if shot_num == 0 and signals is not None and not signals.empty:
+    """
+    Saves all analysis results to an HDF5 file.
+    
+    Args:
+        output_dir: Directory to save the HDF5 file
+        shot_num: Shot number (0 for unknown shots)
+        signals: Dictionary of signal data (DataFrames)
+        stft_results: Dictionary of STFT analysis results
+        cwt_results: Dictionary of CWT analysis results  
+        density_data: DataFrame containing density analysis results
+        vest_data: DataFrame containing VEST data
+    """
+    import h5py
+    
+    # if shot_num == 0 and signals is not None and not signals.empty:
+    if shot_num == 0 and signals is not None and signals:
         # For 'unknown' shots, create a filename from the first source file
         first_source_file = list(signals.keys())[0]
         filename = f"{Path(first_source_file).stem}.h5"
@@ -106,6 +137,74 @@ def save_results_to_hdf5(output_dir, shot_num, signals, stft_results, cwt_result
         filename = f"{shot_num}.h5"
     
     filepath = Path(output_dir) / filename
-    ensure_dir_exists(output_dir)
+    ensure_dir_exists(str(output_dir))
 
-    # ... (rest of the HDF5 saving logic) 
+    try:
+        with h5py.File(filepath, 'w') as hf:
+            # Save metadata
+            metadata = hf.create_group('metadata')
+            metadata.attrs['shot_number'] = shot_num
+            metadata.attrs['created_at'] = pd.Timestamp.now().isoformat()
+            metadata.attrs['ifi_version'] = '1.0'
+            
+            # Save signals data
+            # if signals is not None and not signals.empty:
+            if signals is not None and signals:
+                signals_group = hf.create_group('signals')
+                for signal_name, signal_data in signals.items():
+                    if isinstance(signal_data, pd.DataFrame):
+                        # # Convert DataFrame to structured array for HDF5
+                        # signal_data.to_hdf(hf, f'signals/{signal_name}', mode='a', format='table')
+                        # Save DataFrame as HDF5 dataset
+                        signal_group = signals_group.create_group(signal_name)
+                        for col in signal_data.columns:
+                            signal_group.create_dataset(col, data=signal_data[col].values)
+            else:
+                # Create empty signals group if no signals provided
+                signals_group = hf.create_group('signals')
+                signals_group.attrs['empty'] = True
+            
+            # Save STFT results
+            if stft_results is not None and stft_results:
+                stft_group = hf.create_group('stft_results')
+                for signal_name, stft_data in stft_results.items():
+                    if isinstance(stft_data, dict):
+                        signal_stft_group = stft_group.create_group(signal_name)
+                        for key, value in stft_data.items():
+                            if isinstance(value, np.ndarray):
+                                signal_stft_group.create_dataset(key, data=value)
+                            elif isinstance(value, (int, float, str)):
+                                signal_stft_group.attrs[key] = value
+            
+            # Save CWT results
+            if cwt_results is not None and cwt_results:
+                cwt_group = hf.create_group('cwt_results')
+                for signal_name, cwt_data in cwt_results.items():
+                    if isinstance(cwt_data, dict):
+                        signal_cwt_group = cwt_group.create_group(signal_name)
+                        for key, value in cwt_data.items():
+                            if isinstance(value, np.ndarray):
+                                signal_cwt_group.create_dataset(key, data=value)
+                            elif isinstance(value, (int, float, str)):
+                                signal_cwt_group.attrs[key] = value
+            
+            # Save density data
+            if density_data is not None and not density_data.empty:
+                density_group = hf.create_group('density_data')
+                # density_data.to_hdf(hf, 'density_data/data', mode='a', format='table')
+                for col in density_data.columns:
+                    density_group.create_dataset(col, data=density_data[col].values)
+
+            # Save VEST data
+            if vest_data is not None and not vest_data.empty:
+                vest_group = hf.create_group('vest_data')
+                # vest_data.to_hdf(hf, 'vest_data/data', mode='a', format='table')
+                for col in vest_data.columns:
+                    vest_group.create_dataset(col, data=vest_data[col].values)
+        
+        print(f"Results saved to: {filepath}")
+        return str(filepath)
+        
+    except Exception as e:
+        print(f"Error saving results to HDF5: {e}")
+        return None 

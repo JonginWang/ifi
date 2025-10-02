@@ -1,12 +1,22 @@
+"""
+    Common Utilities
+    ================
+
+    This module contains the functions for common utilities.
+    It includes the LogManager class for managing logging configuration,
+    the CustomFormatter class for formatting log messages,
+    the assign_kwargs decorator for injecting keyword arguments into a method call,
+    and the FlatShotList class for parsing and flattening a list of shot numbers and file paths.
+"""
+
 import sys
-from pathlib import Path
-import functools
-import numpy as np
-from typing import Callable, List, Union
 import logging
 import atexit
+from pathlib import Path
+from typing import Callable, List, Union
 from datetime import datetime
-
+import functools
+import numpy as np
 
 class LogManager:
     """
@@ -14,8 +24,8 @@ class LogManager:
     It ensures that logging is configured only once per session.
     
     Usage:
-        LogManager(level="INFO")  # Configure logging on first call
-        LogManager()              # Subsequent calls do nothing but return the instance
+        LogManager(level="WARNING")  # Configure logging on first call
+        LogManager()                 # Subsequent calls do nothing but return the instance
     """
     _instance = None
 
@@ -24,18 +34,22 @@ class LogManager:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, level="INFO"):
+    def __init__(self, level="WARNING"):
         # The __init__ will be called every time, but the setup logic
         # is guarded by the '_configured' flag.
         if hasattr(self, '_configured') and self._configured:
+            # If already configured, check if we need to update the level
+            if hasattr(self, '_current_level') and self._current_level != level:
+                self._update_log_level(level)
             return
 
         self._setup_logging(level)
         self._configured = True
+        self._current_level = level
 
     def _log_shutdown(self):
         """Function registered with atexit to log a shutdown message."""
-        logging.info(f"\n{'  Logging ended  '.center(60, '=')}")
+        logging.info(f"\n{'  Logging ended  '.center(80, '=')}")
 
     def _setup_logging(self, level):
         """
@@ -45,14 +59,21 @@ class LogManager:
         if level.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             log_level = getattr(logging, level.upper())
         else:
-            log_level = logging.INFO
+            log_level = logging.WARNING
 
         try:
+            # Get the calling script name for log file naming
             if hasattr(sys.modules['__main__'], '__file__'):
                 main_script_path = sys.modules['__main__'].__file__
                 script_name = Path(main_script_path).stem
             else:
-                script_name = 'interactive'
+                # IDE/iPython 환경 감지
+                if 'ipython' in sys.modules or 'jupyter' in sys.modules:
+                    script_name = 'ipython'
+                elif hasattr(sys, 'ps1'):  # Interactive Python shell
+                    script_name = 'interactive'
+                else:
+                    script_name = 'unknown'
             
             log_dir = Path('logs')
             log_dir.mkdir(exist_ok=True)
@@ -76,18 +97,114 @@ class LogManager:
             # Console Handler
             console_handler = logging.StreamHandler()
             console_handler.setLevel(log_level)
-            console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+            console_formatter = CustomFormatter('%(levelname)s | %(message)s')
             console_handler.setFormatter(console_formatter)
             root_logger.addHandler(console_handler)
             
-            logging.info(f"\n{'  Logging started  '.center(60, '=')}")
-            logging.info(f" All logs for this execution will be saved to: {log_file}")
+            logging.info(f"\n{'  Logging started  '.center(80, '=')}\n")
+            logging.info(f"\nAll logs for this execution will be saved to: {log_file}")
             
             atexit.register(self._log_shutdown)
 
         except Exception:
             logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-            logging.error("Failed to configure advanced logging.", exc_info=True)
+            logging.error("  Failed to configure advanced logging  ".center(80, "="), exc_info=True)
+
+    def _update_log_level(self, new_level):
+        """
+        Update the log level for both console and file handlers.
+        This allows changing the level after initial setup.
+        """
+        if new_level.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+            log_level = getattr(logging, new_level.upper())
+        else:
+            log_level = logging.WARNING
+
+        root_logger = logging.getLogger()
+        
+        # Update console handler level
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                handler.setLevel(log_level)
+                break
+        
+        self._current_level = new_level
+        logging.debug("\n" + f"Log level updated to: {new_level}".center(80, "=") + "\n")
+
+    def get_logger(self, name: str = None, level: str = None) -> logging.Logger:
+        """
+        Get a logger with a specific name and level.
+        This allows different parts of the application to have different log levels.
+        
+        Args:
+            name: Logger name (e.g., 'ifi.analysis', 'ifi.test')
+            level: Log level for this specific logger
+            
+        Returns:
+            Logger instance
+        """
+        if name is None:
+            return logging.getLogger()
+        
+        logger = logging.getLogger(name)
+        
+        if level is not None:
+            if level.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+                logger.setLevel(getattr(logging, level.upper()))
+            else:
+                logger.setLevel(logging.WARNING)
+        
+        return logger
+
+    def create_specialized_logger(self, name: str, level: str = "INFO") -> logging.Logger:
+        """
+        Create a specialized logger for a specific purpose.
+        This logger will inherit the root logger's handlers but can have its own level.
+        
+        Args:
+            name: Logger name (e.g., 'ifi.analysis', 'ifi.test')
+            level: Log level for this logger
+            
+        Returns:
+            Logger instance
+        """
+        logger = logging.getLogger(name)
+        
+        if level.upper() in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+            logger.setLevel(getattr(logging, level.upper()))
+        else:
+            logger.setLevel(logging.INFO)
+        
+        return logger
+
+    def setup_ide_logging(self, level: str = "INFO") -> logging.Logger:
+        """
+        Setup logging specifically for IDE environments (Spyder, Jupyter, etc.).
+        This creates a more user-friendly logging setup for interactive development.
+        
+        Args:
+            level: Log level for IDE logging
+            
+        Returns:
+            Logger instance configured for IDE use
+        """
+        # Create a specialized logger for IDE use
+        ide_logger = self.create_specialized_logger('ifi.ide', level)
+        
+        # Add a custom handler for IDE that shows more context
+        if not any(isinstance(h, logging.StreamHandler) for h in ide_logger.handlers):
+            ide_handler = logging.StreamHandler()
+            ide_handler.setLevel(getattr(logging, level.upper()))
+            
+            # IDE-friendly formatter (simpler, more readable)
+            ide_formatter = logging.Formatter(
+                '%(asctime)s | %(levelname)s | %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            ide_handler.setFormatter(ide_formatter)
+            ide_logger.addHandler(ide_handler)
+        
+        return ide_logger
 
 
 class CustomFormatter(logging.Formatter):
@@ -104,6 +221,7 @@ class CustomFormatter(logging.Formatter):
         self.ellipsis = ellipsis
         self.fill_char = fill_char
         self.none_char = none_char
+        self.level_limit = len("CRITICAL")
         # if len(ellipsis) ==3:
         #     self.ellipsis = ellipsis
         # elif len(ellipsis) > 3:
@@ -114,6 +232,8 @@ class CustomFormatter(logging.Formatter):
     def format(self, record):
         # Store the original name
         name_original = record.name
+        # Store the original level
+        level_original = record.levelname
         if isinstance(record.name, str):
             if len(record.name) > self.limit:  # self.limit = 15
                 # Truncate and add ellipsis
@@ -124,26 +244,16 @@ class CustomFormatter(logging.Formatter):
         else:
             # BUG FIX: Assign a string, not a list
             record.name = self.none_char * self.limit
+
+        if isinstance(record.levelname, str):
+            record.levelname = record.levelname.ljust(self.level_limit, ' ')
         # Format the record
         record_formatted = super().format(record)
         # Restore the original name
         record.name = name_original
+        record.levelname = level_original
+
         return record_formatted
-
-
-def resource_path(relative_path: str) -> str:
-    """
-    Get absolute path to resource, works for dev and for PyInstaller.
-    
-    Args:
-        relative_path (str): Relative path from the project root
-        
-    Returns:
-        str: Absolute path to the resource
-    """
-    base_path = Path.cwd()
-    
-    return str(base_path / relative_path)
 
 
 def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:
@@ -186,15 +296,6 @@ def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:
         return wrapper
     return decorator
 
-
-def ensure_dir_exists(path: str):
-    """
-    Ensures that the directory exists, creating it if necessary.
-    
-    Args:
-        path (str): Path to the directory to ensure exists
-    """
-    Path(path).mkdir(parents=True, exist_ok=True)
         
 class FlatShotList:
     """
@@ -259,3 +360,45 @@ class FlatShotList:
 
             if isinstance(item, range):
                 self.nums.extend(list(item))
+
+def ensure_dir_exists(path: str) -> Path:
+    """
+    Ensure a directory exists, creating it if necessary.
+    
+    Args:
+        path: Directory path
+        
+    Returns:
+        Path object for the directory
+    """
+    path_obj = Path(path)
+    path_obj.mkdir(parents=True, exist_ok=True)
+    return path_obj
+
+def ensure_str_path(path_like: Union[str, Path]) -> str:
+    """Coerce to string and normalize separators to forward slashes."""
+    return normalize_to_forward_slash(path_like)
+
+def normalize_to_forward_slash(path_like: Union[str, Path]) -> str:
+    """Return a string path using forward slashes. Safe for Windows and pandas."""
+    if isinstance(path_like, Path):
+        return path_like.as_posix()
+    return str(path_like).replace("\\", "/")
+
+def resource_path(relative_path: str) -> Path:
+    """
+    Get absolute path to resource, works for dev and for PyInstaller.
+    
+    Args:
+        relative_path: Relative path to resource
+        
+    Returns:
+        Absolute path to resource
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = Path(sys._MEIPASS)
+    except Exception:
+        base_path = Path(__file__).parent.parent
+    
+    return base_path / relative_path

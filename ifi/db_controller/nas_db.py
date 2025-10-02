@@ -1,20 +1,41 @@
-import configparser
-import logging
-import os
+"""
+    NAS_DB
+    ======
+
+    This module contains the NAS_DB class for accessing the NAS storage.
+"""
+
 import sys
+import logging
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    logging.error(f"Could not find ifi package root: {e}")
+    pass
+
+import configparser
+import os
 import time
+import numpy as np
 import pandas as pd
 import paramiko
-from io import StringIO
 import glob
 from typing import Dict, List, Union, Set
 import h5py
 import re
 import tempfile
-from stat import S_ISDIR
 import threading
-from pathlib import Path
-from ifi.utils.path_utils import ensure_str_path
+
+
+from ifi.utils.common import LogManager, ensure_str_path
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -67,6 +88,7 @@ if __name__ == "__main__":
     get_top_lines(file_path, lines_to_read)
 """
 
+LogManager()
 
 class NAS_DB:
     """
@@ -75,11 +97,8 @@ class NAS_DB:
     """
     def __init__(self, config_path='ifi/config.ini'):
         if not Path(config_path).exists():
-            raise FileNotFoundError(f"Config file not found: '{config_path}'")
+            raise FileNotFoundError(f"  Config file not found: '{config_path}'  ".center(80, '='))
 
-        self.logger = logging.getLogger(__name__)
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
-        
         config = configparser.ConfigParser()
         config.read(config_path)
 
@@ -123,6 +142,9 @@ class NAS_DB:
 
         self._is_connected = False
         self.ssh_lock = threading.Lock()
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
 
     def _ensure_remote_dir_exists(self, remote_path: str):
         """
@@ -137,9 +159,9 @@ class NAS_DB:
                 home_dir = self.sftp_client.normalize('.')
                 remote_path = os.path.join(home_dir, '.ifi_temp').replace('\\', '/')
                 self.remote_temp_dir = remote_path # Store for later use
-                self.logger.info(f"Remote temp directory not configured, using dynamic path: {remote_path}")
+                self.logger.info(f"  Remote temp directory not configured, using dynamic path: {remote_path}  ".center(80, '='))
             except Exception as e:
-                self.logger.error(f"Could not determine remote home directory: {e}")
+                self.logger.error(f"  Could not determine remote home directory: {e}  ".center(80, '='))
                 raise
 
         try:
@@ -434,11 +456,11 @@ class NAS_DB:
                 self.logger.info(f"[Cache Check] Checking for cache file at: '{cache_file.absolute()}'")
                 
                 if not cache_file.exists():
-                    self.logger.warning(f"[Cache Check] -> Cache file NOT FOUND.")
+                    self.logger.warning("[Cache Check] -> Cache file NOT FOUND.")
                     files_to_fetch.append(file_path)
                     continue
                 
-                self.logger.info(f"[Cache Check] -> Cache file FOUND.")
+                self.logger.info("[Cache Check] -> Cache file FOUND.")
                 # --- End Diagnostic Logging ---
                 
                 # Sanitize the basename to be a valid HDF5 key, matching the writing logic.
@@ -453,11 +475,11 @@ class NAS_DB:
                 try:
                     with h5py.File(cache_file, 'r') as f:
                         if key in f:
-                            self.logger.info(f"[Cache Check] -> Key FOUND in cache. Loading from HDF5.")
+                            self.logger.info("[Cache Check] -> Key FOUND in cache. Loading from HDF5.")
                             self.logger.info(f"Found '{basename}' in cache: {cache_file}")
                             data_dict[file_path] = pd.read_hdf(cache_file, key)
                         else:
-                            self.logger.warning(f"[Cache Check] -> Key NOT FOUND in cache file. Re-fetching.")
+                            self.logger.warning("[Cache Check] -> Key NOT FOUND in cache file. Re-fetching.")
                             files_to_fetch.append(file_path)
                 except Exception as e:
                     self.logger.error(f"Error reading cache file '{cache_file}': {e}. Will refetch.")
@@ -1012,7 +1034,7 @@ class NAS_DB:
         # 2. Execute the script
         cmd = f'python "{remote_script_path}" "{file_path}" "{lines}"'
         
-        self.logger.info(f"Executing remote command...")
+        self.logger.info("Executing remote command...")
         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
 
         # 3. Get output and check for errors

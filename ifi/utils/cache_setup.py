@@ -1,101 +1,117 @@
 """
-Numba Cache Setup Utilities
-============================
+    Cache Setup Utilities
+    ====================
 
-Utilities for configuring numba cache directories to avoid permission issues
-with system-wide Anaconda installations.
+    This module is used to set up the cache for the IFI package.
+    Functions:
+        setup_project_cache: Set up the cache for the IFI package.
+        get_cache_config: Get the current cache configuration without setting up.
+        is_cache_initialized: Check if cache has been initialized.
 """
 
-from pathlib import Path
-import tempfile
-import logging
 import os
+import tempfile
+from pathlib import Path
+from typing import Dict, Any
 
-def setup_numba_cache(project_root=None, verbose=True):
+# Global flag to track if cache has been initialized
+_cache_initialized = False
+_cache_config = None
+
+# Get the project root
+_project_root = Path(__file__).parent.parent.parent.resolve()
+
+def setup_project_cache() -> Dict[str, Any]:
     """
-    Configure numba cache to use a user-writable directory.
+    Set up project cache for numba and other components.
     
-    Args:
-        project_root (str, optional): Path to project root. If None, auto-detect.
-        verbose (bool): Whether to print status messages.
+    This function uses lazy initialization - it only sets up the cache once
+    per Python process, even if called multiple times.
     
     Returns:
-        str: Path to the configured cache directory.
+        Dict containing cache configuration
     """
-    if project_root is None:
-        # Auto-detect project root (go up from utils directory)
-        project_root = Path(__file__).parent.parent.parent.absolute()
+    global _cache_initialized, _cache_config
     
-    # Option 1: Use project-local cache directory
-    cache_dir = project_root / 'cache' / 'numba_cache'
+    # If already initialized, return existing config
+    if _cache_initialized:
+        return _cache_config
     
-    # Option 2: Use user's temp directory if project cache fails
-    if not cache_dir.parent.exists():
+    # Try multiple cache directory options in order of preference
+    cache_options = [
+        _project_root / 'cache' / 'numba_cache',  # Project cache
+        Path.home() / '.ifi_cache' / 'numba_cache',  # User home cache
+        Path(tempfile.gettempdir()) / 'ifi_numba_cache',  # System temp cache
+    ]
+    
+    cache_dir = None
+    for option in cache_options:
         try:
-            cache_dir.parent.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            # Fallback to user temp directory
-            cache_dir = Path(tempfile.gettempdir()) / 'ifi_numba_cache'
+            option.mkdir(parents=True, exist_ok=True)
+            # Test write access
+            test_file = option / '.test_write'
+            test_file.write_text('test')
+            test_file.unlink()
+            cache_dir = option
+            print(f"Using cache directory: {cache_dir}")
+            break
+        except (PermissionError, OSError) as e:
+            print(f"Failed to use cache directory {option}: {e}")
+            continue
     
-    # Option 3: Use user's home directory as last resort
-    if not os.access(cache_dir.parent, os.W_OK):
-        cache_dir = Path.home() / '.ifi' / 'numba_cache'
-    
-    # Create the directory
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Set environment variables
-    os.environ['NUMBA_CACHE_DIR'] = str(cache_dir)
-    os.environ['NUMBA_ENABLE_CUDASIM'] = '0'  # Disable CUDA simulation
-    os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'  # Disable Intel SVML for compatibility
-    os.environ['NUMBA_THREADING_LAYER'] = 'safe'  # Use thread-safe layer
-    
-    if verbose:
-        print(f"Numba cache directory set to: {cache_dir}")
-    
-    return str(cache_dir)
+    if cache_dir is None:
+        # Last resort: disable JIT compilation
+        print("Warning: Could not create any cache directory. Disabling JIT compilation.")
+        os.environ['NUMBA_DISABLE_JIT'] = '1'
+        cache_dir = Path(tempfile.gettempdir()) / 'ifi_disabled_cache'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Set up Numba environment variables
+        os.environ['NUMBA_CACHE_DIR'] = str(cache_dir)
+        os.environ['NUMBA_THREADING_LAYER'] = 'safe'
+        os.environ['NUMBA_DISABLE_INTEL_SVML'] = '1'
+        
+        # Additional safety settings for Windows
+        if os.name == 'nt':  # Windows
+            os.environ['NUMBA_DISABLE_JIT'] = '0'  # Keep JIT enabled but with safe settings
+            os.environ['NUMBA_DEBUG'] = '0'  # Disable debug mode to reduce file operations
 
-def setup_project_cache():
-    """
-    Set up comprehensive cache configuration for the entire IFI project.
-    This should be called at the very beginning of main scripts.
-    
-    Returns:
-        dict: Configuration information including cache paths.
-    """
-    # Configure numba cache
-    numba_cache = setup_numba_cache(verbose=False)
-    
-    # Additional project-specific cache settings
-    config = {
-        'numba_cache_dir': numba_cache,
-        'cache_configured': True
+    # Store configuration
+    _cache_config = {
+        'cache_dir': cache_dir,
+        'numba_cache_dir': str(cache_dir),
+        'threading_layer': 'safe',
+        'disable_intel_svml': '1',
+        'jit_disabled': os.environ.get('NUMBA_DISABLE_JIT', '0') == '1'
     }
     
-    # Log the configuration
-    logging.info(f"Project cache configured: {numba_cache}")
+    # Mark as initialized
+    _cache_initialized = True
     
-    return config
+    print("Project cache configured successfully.")
+    return _cache_config
 
-# Legacy function for backward compatibility
-def setup_ssqueezepy_cache():
+def get_cache_config() -> Dict[str, Any]:
     """
-    Legacy function - use setup_project_cache() instead.
+    Get the current cache configuration without setting up.
+    
+    Returns:
+        Dict containing cache configuration, or None if not initialized
     """
-    return setup_numba_cache()
+    return _cache_config if _cache_initialized else None
 
-# Quick setup function for import-time configuration
-def quick_setup():
+def is_cache_initialized() -> bool:
     """
-    Quick setup function that can be imported and called immediately.
-    Suppresses output for cleaner imports.
+    Check if cache has been initialized.
+    
+    Returns:
+        True if cache is initialized, False otherwise
     """
-    try:
-        return setup_numba_cache(verbose=False)
-    except Exception:
-        # Silently fall back if setup fails
-        return None
+    return _cache_initialized
 
-# Auto-setup when this module is imported (optional)
-# Uncomment the line below if you want automatic setup on import
-# quick_setup()
+def force_disable_jit():
+    """
+    Force disable JIT compilation as a last resort for permission issues.
+    """
+    os.environ['NUMBA_DISABLE_JIT'] = '1'
+    print("JIT compilation disabled due to permission issues.")

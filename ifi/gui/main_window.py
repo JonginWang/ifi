@@ -1,19 +1,40 @@
+"""
+    GUI
+    ====
+
+    This module contains the GUI for the IFI application.
+"""
+
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog
 from enum import Enum, auto
 import queue
-from pathlib import Path
 import threading
 import time
+
+import sys
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception:
+    # print(f"!! Could not find ifi package root: {e}")
+    pass
 
 # Path-based imports for IDE compatibility
 from ifi.tek_controller.scope import TekScopeController
 from ifi.db_controller.vest_db import VEST_DB
-from ifi.utils.common import resource_path
 from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from ifi.analysis.params.params_plot import FontStyle
 
 from pynput import keyboard
 
@@ -44,7 +65,7 @@ class Application(tk.Frame):
         self.selected_scope1_id = tk.StringVar()
         self.selected_scope2_id = tk.StringVar()
         
-        config_file = resource_path('ifi/config.ini')
+        config_file = Path(IFI_ROOT) / 'ifi' / 'config.ini'
         self.vest_db = VEST_DB(config_path=config_file)
 
         self.create_widgets()
@@ -172,8 +193,8 @@ class Application(tk.Frame):
         fig = Figure(figsize=(5, 4), dpi=100)
         self.ax = fig.add_subplot(111)
         self.ax.grid()
-        self.ax.set_xlabel("Time (s)")
-        self.ax.set_ylabel("Voltage (V)")
+        self.ax.set_xlabel("Time [s]", **FontStyle.label)
+        self.ax.set_ylabel("Voltage [V]", **FontStyle.label)
         
         canvas = FigureCanvasTkAgg(fig, master=waveform_frame)
         canvas.draw()
@@ -268,7 +289,7 @@ class Application(tk.Frame):
                         # Also plot the newly saved data
                         self.gui_queue.put(('plot_update', {'time': time_data, 'voltage': voltage_data}))
                     else:
-                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': f"Failed to get waveform data for manual save."}))
+                        self.gui_queue.put(('log', {'level': 'ERROR', 'msg': "Failed to get waveform data for manual save."}))
 
                 elif task_name == 'read_and_plot_file':
                     filepath = kwargs.get('filepath')
@@ -351,8 +372,8 @@ class Application(tk.Frame):
             self.ax.clear()
             self.ax.plot(time_data, voltage_data)
             self.ax.grid(True)
-            self.ax.set_xlabel("Time (s)")
-            self.ax.set_ylabel("Voltage (V)")
+            self.ax.set_xlabel("Time [s]", **FontStyle.label)
+            self.ax.set_ylabel("Voltage [V]", **FontStyle.label)
             self.ax.figure.canvas.draw()
             self.log_message(f"Plotted waveform with {len(time_data)} points.")
         else:

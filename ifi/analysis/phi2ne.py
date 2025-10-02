@@ -1,24 +1,74 @@
+"""
+    Phase to Density Conversion
+    ===========================
+
+    This module contains the functions for phase to density conversion.
+    The functions are optimized for performance using numba.
+    The functions are used in the main_analysis.py module.
+
+    Functions:
+        numba-optimized functions:
+            - _normalize_iq_signals: Normalize I and Q signals.
+            - _calculate_differential_phase: Calculate differential phase using cross-product method.
+            - _accumulate_phase_diff: Accumulate phase difference.
+            - _phase_to_density: Convert phase to density.
+
+        get_interferometry_params: Get interferometry parameters for a given shot number and filename.
+        PhaseConverter: A class for converting phase to density.
+            - get_params: Get parameters for a given interferometer frequency.
+            - get_analysis_params: Get analysis parameters for a given shot number and filename.
+            - phase_to_density: Convert phase to density.
+            - calc_phase_iq_atan2: Calculate phase using atan2 method.
+            - calc_phase_iq_asin2: Calculate phase using asin2 method.
+            - calc_phase_iq: Calculate phase using atan2 method.
+            - _create_lpf: Create a low pass filter.
+            - _create_bpf: Create a band pass filter.
+            - _plot_filter_response: Plot the frequency response of a filter.
+            - calc_phase_cdm: Calculate phase using CDM method.
+            - calc_phase_fpga: Calculate phase using FPGA method.
+            - correct_baseline: Correct the baseline of a density dataframe.
+"""
 # ============================================================================
 # CRITICAL: Set up numba cache BEFORE numba imports
 # ============================================================================
+
+
+import sys
+import logging
+from pathlib import Path
+
+# Add ifi package to Python path for IDE compatibility
+current_dir = Path(__file__).resolve()
+ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+                + list(current_dir.parents) if p.name == 'ifi']
+IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+try:
+    sys.path.insert(0, str(IFI_ROOT))
+except Exception as e:
+    print(f"!! Could not find ifi package root: {e}")
+    pass
+
 from ifi.utils.cache_setup import setup_project_cache
 cache_config = setup_project_cache()
 
-from pathlib import Path
-import numpy as np
 import configparser
-from scipy import constants
-from scipy.signal import hilbert, firwin, remez, filtfilt, freqz
-import matplotlib.pyplot as plt
 from typing import Dict, Any
-import pandas as pd
-import logging
+import numpy as np
 import numba
+import pandas as pd
+from scipy import constants
+from scipy.signal import hilbert, remez, filtfilt, freqz
+import matplotlib.pyplot as plt
 
 # "eegpy" is a package that contains the remezord function, translated from MATLAB
-# Though remezord is not in scipy, we could import by piece of script under ifi/analysis/utils/remezord.py
-from ifi.analysis.utils.remezord import remezord
+# Though remezord is not in scipy, we could import by piece of script under ifi/analysis/functions/remezord.py
+from ifi.analysis.functions.remezord import remezord
+from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis.plots import plot_response
+from ifi.utils.common import LogManager
+
+LogManager()
 
 
 @numba.jit(nopython=True, cache=True, fastmath=True)
@@ -65,9 +115,8 @@ def _calculate_differential_phase(i_norm, q_norm):
     
     return phase_diff
 
-
 @numba.jit(nopython=True, cache=True, fastmath=True)
-def _cumulative_sum_phase(phase_diff):
+def _accumulate_phase_diff(phase_diff):
     """
     Numba-optimized cumulative sum with zero padding.
     """
@@ -79,9 +128,8 @@ def _cumulative_sum_phase(phase_diff):
     
     return phase_accum
 
-
 @numba.jit(nopython=True, cache=True, fastmath=True)
-def _phase_to_density_core(phase, freq, c, m_e, eps0, qe, n_path):
+def _phase_to_density(phase, freq, c, m_e, eps0, qe, n_path):
     """
     Numba-optimized core calculation for phase to density conversion.
     """
@@ -156,10 +204,10 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
     config.read(config_path)
     
     # Extract frequency values from config (keep as Hz for calculations, also provide GHz)
-    freq_94_hz = float(config.get('94GHz', 'freq'))  # Keep in Hz
-    freq_280_hz = float(config.get('280GHz', 'freq'))  # Keep in Hz
-    freq_94ghz = freq_94_hz / 1e9  # Convert to GHz for display
-    freq_280ghz = freq_280_hz / 1e9  # Convert to GHz for display
+    freq_94hz = float(config.get('94GHz', 'freq'))  # Keep in Hz
+    freq_280hz = float(config.get('280GHz', 'freq'))  # Keep in Hz
+    freq_94ghz = freq_94hz / 1e9  # Convert to GHz for display
+    freq_280ghz = freq_280hz / 1e9  # Convert to GHz for display
     n_path_94ghz = int(config.get('94GHz', 'n_path'))
     n_path_280ghz = int(config.get('280GHz', 'n_path'))
 
@@ -170,7 +218,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
             # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
             return {
                 'method': 'CDM',
-                'freq': freq_280_hz,  # Hz for calculations
+                'freq': freq_280hz,  # Hz for calculations
                 'freq_ghz': freq_280ghz,  # GHz for display
                 'ref_col': 'CH0',
                 'probe_cols': ['CH1'],
@@ -181,7 +229,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
             # "CH0" in file containing "_0" or "_ALL" is "ref. signal"
             return {
                 'method': 'CDM',
-                'freq': freq_94_hz,  # Hz for calculations
+                'freq': freq_94hz,  # Hz for calculations
                 'freq_ghz': freq_94ghz,  # GHz for display
                 'ref_col': 'CH0',
                 'probe_cols': ['CH1', 'CH2'],  # Mapping for channels 5, 6 (corrected by user)
@@ -192,7 +240,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
             # Other probe channels
             return {
                 'method': 'CDM',
-                'freq': freq_94_hz,  # Hz for calculations
+                'freq': freq_94hz,  # Hz for calculations
                 'freq_ghz': freq_94ghz,  # GHz for display
                 'ref_col': '',
                 'probe_cols': ['CH0', 'CH1', 'CH2'],  # Mapping for channels 7-9
@@ -207,7 +255,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
         # The last 8 channels: amplitude of ref(CH16) and probes(CH17-CH23) [V]
         return {
             'method': 'FPGA',
-            'freq': freq_94_hz,  # Hz for calculations
+            'freq': freq_94hz,  # Hz for calculations
             'freq_ghz': freq_94ghz,  # GHz for display
             'ref_col': 'CH0', 
             'probe_cols': ['CH1', 'CH2', 'CH3', 'CH4', 'CH5'],  # ch. 5-9 of 94G interferometer
@@ -222,7 +270,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
         # Assuming the two columns for I and Q are named 'CH0' and 'CH1' for simplicity.
         return {
             'method': 'IQ',
-            'freq': freq_94_hz,  # Hz for calculations
+            'freq': freq_94hz,  # Hz for calculations
             'freq_ghz': freq_94ghz,  # GHz for display
             'ref_col': None,  # IQ method does not use a separate reference signal from another channel
             'probe_cols': [('CH0', 'CH1')],
@@ -233,7 +281,7 @@ def get_interferometry_params(shot_num: int, filename: str, config_path: str = N
     else:
         return {
             'method': 'unknown',
-            'freq': freq_94_hz,  # Hz for calculations, default to 94GHz if unknown
+            'freq': freq_94hz,  # Hz for calculations, default to 94GHz if unknown
             'freq_ghz': freq_94ghz,  # GHz for display
             'ref_col': None,
             'probe_cols': [],
@@ -253,7 +301,7 @@ class PhaseConverter:
                 else:
                     raise ValueError(f"Constant '{name}' not found in scipy.constants")
 
-    def get_interferometer_params(self, freq_ghz: int) -> Dict[str, Any]:
+    def get_params(self, freq_ghz: int) -> Dict[str, Any]:
         """Gets parameters for a given interferometer frequency."""
         section = f"{freq_ghz}GHz"
         if not self.config.has_section(section):
@@ -282,21 +330,33 @@ class PhaseConverter:
         params = get_interferometry_params(shot_num, filename, config_path=None)
         return params
 
-    def phase_to_density(self, phase: np.ndarray, freq_hz: float = None, n_path: int = None, analysis_params: Dict = None) -> np.ndarray:
+    def phase_to_density(self, phase: np.ndarray, freq_hz: float = None, n_path: int = None, 
+                        analysis_params: Dict = None, wavelength: float = None) -> np.ndarray:
         """
         Converts phase (in radians) to line-integrated density (m^-2).
         
-        🚀 OPTIMIZED: Uses numba JIT compilation for enhanced performance.
+        OPTIMIZED: Uses numba JIT compilation for enhanced performance.
         
         Args:
             phase: Phase array in radians
-            freq_hz: Frequency in Hz (takes precedence over analysis_params)
+            freq_hz: Frequency in Hz (takes precedence over analysis_params and wavelength)
             n_path: Number of interferometer passes (takes precedence over analysis_params)
             analysis_params: Dictionary from get_analysis_params() containing 'freq' and 'n_path'
+            wavelength: Wavelength in meters (will be converted to frequency using c = λf)
         
         Returns:
             Line-integrated density in m^-2
         """
+        # Convert wavelength to frequency if provided
+        if wavelength is not None:
+            if freq_hz is not None:
+                import logging
+                logging.warning("Both freq_hz and wavelength provided. Using freq_hz.")
+            else:
+                # Convert wavelength to frequency: f = c / λ
+                c = self.constants['c']  # Speed of light
+                freq_hz = c / wavelength
+        
         # Determine frequency and n_path from various sources
         if freq_hz is not None and n_path is not None:
             # Direct parameters provided
@@ -308,7 +368,7 @@ class PhaseConverter:
             passes = analysis_params['n_path']
         else:
             # Fallback to default 94GHz parameters
-            freq_params = self.get_interferometer_params(94)
+            freq_params = self.get_params(94)
             freq = freq_params['freq']
             passes = freq_params['n_path']
         
@@ -319,7 +379,7 @@ class PhaseConverter:
         c = self.constants['c']
         
         # Use numba-optimized core calculation
-        return _phase_to_density_core(phase, freq, c, m_e, eps0, qe, passes)
+        return _phase_to_density(phase, freq, c, m_e, eps0, qe, passes)
 
     def calc_phase_iq_atan2(self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False) -> np.ndarray:
         """
@@ -359,7 +419,7 @@ class PhaseConverter:
         del_phase *= 2.0
 
         # 3. Accumulate the phase differences (numba-optimized)
-        accumulated_phase = _cumulative_sum_phase(del_phase)
+        accumulated_phase = _accumulate_phase_diff(del_phase)
 
         # Match the sign from the MATLAB script
         if isflip:
@@ -408,11 +468,11 @@ class PhaseConverter:
         
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx: # Allow some tolerance
-            logging.info(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            logging.info("Difference is significant. Using the value from remezord.")
+            logging.info(f"    - [LPF] numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info("    - [LPF] Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            logging.info(f"Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"    - [LPF] Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
 
         taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
@@ -437,11 +497,11 @@ class PhaseConverter:
         
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx: # Allow some tolerance
-            logging.info(f"numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            logging.info("Difference is significant. Using the value from remezord.")
+            logging.info(f"    - [BPF] numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info("    - [BPF] Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            logging.info(f"Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"    - [BPF] Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
 
         taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
@@ -451,7 +511,7 @@ class PhaseConverter:
         """Plots the frequency response of the FIR filter."""
         if fs is None:
             fs = 2*np.pi
-            logging.warning(f"fs is not provided, using 2*pi, resulting in frequency in rad/sample")
+            logging.warning("    ! [Filter Plot] fs is not provided, using 2*pi, resulting in frequency in rad/sample")
         freqs_at_response, responses = freqz(taps, worN=2048, fs=fs)
         plot_response(freqs_at_response, responses, title)
         plt.show()
@@ -516,7 +576,7 @@ class PhaseConverter:
         d_phase = np.arcsin(ratio)
         
         # The first sample is lost in differentiation, so prepend a 0.
-        phase_accum = np.concatenate(([0], np.cumsum(d_phase)))
+        phase_accum = np.concatenate(([0], _accumulate_phase_diff(d_phase)))
 
         # Calibrate to start at 0, assuming first 1000 samples are pre-plasma
         if len(phase_accum) > 1000:
@@ -579,58 +639,67 @@ class PhaseConverter:
 
         if mode == 'ip':
             if vest_data is None or vest_data.empty:
-                logging.warning("Warning: 'ip' baseline mode selected but VEST data is not available. Skipping correction.")
+                logging.warning("    ! [Baseline Correction] 'ip' baseline mode selected but VEST DB not available. Skipping.")
                 return corrected_df
             
             if ip_column_name is None or ip_column_name not in vest_data.columns:
-                logging.warning(f"Warning: Plasma current column '{ip_column_name}' not in VEST data. Skipping 'ip' baseline correction.")
+                logging.warning(f"    ! [Baseline Correction] Plasma current column '{ip_column_name}' not in VEST DB. Skipping.")
                 return corrected_df
             
+            try:
+                with VEST_DB() as vest_db:
+                    vest_data = vest_db.get_vest_data(shot_num)
+            except Exception as e:
+                logging.warning(f"    ! [Baseline Correction] Failed to get VEST data: {e}")
+                return corrected_df
+
             ip_data = vest_data[ip_column_name]
             # Find the ramp-up point (first time Ip > 5kA)
             # Note: Assuming Ip is in Amperes. If in kA, this threshold should be 5.
             ip_threshold = 5e3 if np.nanmax(ip_data) > 1000 else 5
 
             try:
-                ramp_up_indices = np.where(ip_data > ip_threshold)[0]
-                if len(ramp_up_indices) == 0:
+                ramp_up_idxs = np.where(ip_data > ip_threshold)[0]
+                if len(ramp_up_idxs) == 0:
                     raise IndexError("Threshold not exceeded")
                 
-                ramp_up_index = ramp_up_indices[0]
-                t_rampup = ip_data.index[ramp_up_index]
+                ramp_up_idx = ramp_up_idxs[0]
+                t_rampup = ip_data.index[ramp_up_idx]
                 
                 # Define baseline window: 3 to 8 ms before ramp-up
                 t_start = t_rampup - 8e-3
                 t_end = t_rampup - 3e-3
 
             except IndexError:
-                logging.warning(f"Warning: Plasma current never exceeded threshold ({ip_threshold}). Cannot determine ramp-up for 'ip' baseline. Skipping.")
+                logging.warning(f"    ! [Baseline Correction] Plasma current never exceeded threshold ({ip_threshold}).")
+                logging.warning("    ! Cannot determine ramp-up for 'ip' baseline. Skipping.")
                 return corrected_df
 
         elif mode == 'trig':
             t_start, t_end = 0.285, 0.290
         
         else:
-            logging.warning(f"Warning: Invalid baseline mode '{mode}'. Skipping correction.")
+            logging.warning(f"    ! [Baseline Correction] Invalid baseline mode '{mode}'. Skipping.")
             return corrected_df
 
         # Find indices for the baseline window
-        baseline_indices = np.where((time_axis >= t_start) & (time_axis <= t_end))[0]
+        baseline_idxs = np.where((time_axis >= t_start) & (time_axis <= t_end))[0]
 
-        if len(baseline_indices) == 0:
-            logging.warning(f"Warning: No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping correction.")
+        if len(baseline_idxs) == 0:
+            logging.warning(f"    ! [Baseline Correction] No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping.")
             return corrected_df
 
-        logging.info(f"Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_indices)} points).")
+        logging.info(f"    - [Baseline Correction] Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points).")
         for col in corrected_df.columns:
-            baseline_mean = corrected_df[col].iloc[baseline_indices].mean()
+            baseline_mean = corrected_df[col].iloc[baseline_idxs].mean()
             corrected_df[col] -= baseline_mean
-            logging.info(f"  - Column '{col}': Removed baseline of {baseline_mean:.2e}")
+            logging.info(f"    - [Baseline Correction] Column '{col}': Removed baseline of {baseline_mean:.2e}")
             
         return corrected_df
 
 
+
 if __name__ == '__main__':
     # pc = PhaseConverter()
-    # print(pc.get_interferometer_params(94))
+    # print(pc.get_params(94))
     pass
