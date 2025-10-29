@@ -1,0 +1,45 @@
+# Core dependencies for the IFI Automator project 
+
+#Path management
+pathlib==1.1.0
+
+# Official Tektronix Instrument Control Library
+tm-devices==3.2.0
+
+# GUI programming
+PyQt5==5.15.10
+pyqtgraph==0.13.7
+
+# Data Visualization
+matplotlib==3.8.4
+
+# Database
+PyMySQL==1.1.0
+sshtunnel==0.4.0
+paramiko==3.5.0
+tables==3.9.2
+h5py==3.11.0
+
+# Keyboard/Mouse Listener
+pynput==1.8.1  # Requires Python <3.11
+
+# Data Processing
+numpy==1.26.4
+pandas==2.2.3
+dask==2025.7.0
+
+# Scientific Data Processing
+scipy==1.13.0
+PyWavelets==1.4.1
+ssqueezepy==0.6.5
+
+# Performance Libraries
+tbb==2022.2.0
+
+# Building Tools
+pyinstaller==6.14.2
+
+# Documentation
+sphinx==7.2.6
+furo==2024.1.29
+sphinx-autodoc-typehints==1.25.0

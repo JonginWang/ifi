@@ -1,0 +1,60 @@
+[Tektronix]
+visa_address_94G1 = USB0::{your_oscilloscope_id}::0::INSTR
+visa_address_94G2 = USB0::{your_oscilloscope_id}::0::INSTR
+visa_address_280G = USB0::{your_oscilloscope_id}::0::INSTR
+
+[VEST_DB]
+host = your_database_host
+database = your_database_name
+user = your_username
+password = your_password 
+field_label_file = your_shotfiled_file_dir
+
+[SSH_TUNNEL]
+# Enable or disable the SSH tunnel functionality
+enabled = true
+# SSH server details
+ssh_host = your_ssh_host
+ssh_port = your_ssh_port_proxy
+ssh_user = your_sshname
+# Path to your private SSH key (e.g., rsa key folder)
+ssh_pkey_path = your_pkey_path
+# The MySQL server host as seen from the SSH server
+remote_mysql_host = your_mysql_server
+
+[CONNECTION_SETTINGS]
+# Timeout for the initial direct connection attempt
+direct_connect_timeout = 3
+# Number of times to retry the SSH tunnel connection
+ssh_max_retries = 3
+# Timeout for establishing the SSH connection
+ssh_connect_timeout = 10.0 
+
+[NAS]
+# UNC path to the root of the NAS data share
+path = \\your_nas_ip\your_nas_folder
+# Comma-separated list of subfolders within the NAS path to search for data.
+# e.g., 6. user\Jongin Wang\IFO\Data, 6. user\Byun JunHyeok\IF
+data_folders = 
+# Mount point on the local machine (if available, for direct access)
+mount_point = Z:\
+user = your_nas_id
+password = your_nas_password
+
+[SSH_NAS]
+# Configuration for SSH access to the machine that has the NAS mounted (e.g., 'computer2')
+ssh_host = your_ssh_host
+ssh_port = your_ssh_port_proxy
+ssh_user = your_sshname
+# Path to your private key file for SSH authentication
+ssh_pkey_path = your_pkey_path
+# Temporary path on the remote machine to store scripts
+remote_temp_dir = your_temp_folder_path
+
+[LOCAL_CACHE]
+# The local directory where HDF5-cached data is stored.
+dumping_folder = ./cache
+# The maximum total size of files to load in a single get_shot_data call (in Gigabytes).
+# Prevents accidentally loading too much data into memory.
+# Set to 0 for no limit.
+max_load_size_gb = 2.0 
