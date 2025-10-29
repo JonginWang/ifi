@@ -1,32 +1,49 @@
 #!/usr/bin/env python3
 """
-    ifi package initialization.
-    ==============================
-    
-    This file initializes the 'ifi' package.
-    It makes the 'ifi' directory a Python package.
+IFI Package Initialization
+==========================
 
-    Functions:
-        - get_project_root: Get the project root directory.
-        - add_project_root: Add the project root to the Python path.
+This file initializes the IFI package.
+It makes the IFI directory a Python package.
 
-    Variables:
-        - IFI_ROOT: The project root directory.
-        - __all__: List of public functions and variables.
+Functions:
+    get_project_root: Get the project root directory.
+    add_project_root: Add the project root to the Python path.
+
+Variables:
+    IFI_ROOT(Path): The project root directory.
+    _MARKERS_TO_GET_PROJ_ROOT(tuple[str, ...]): The markers to use to find the project root.
+    __all__: List of public functions and variables.
 """
 
 from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
-def get_project_root(package_name: str = 'ifi',
-                   markers: tuple[str, ...] = ('.git', 'pyproject.toml', 'setup.cfg')) -> Path | None:
+_MARKERS_TO_GET_PROJ_ROOT = (".git", "pyproject.toml", "setup.cfg")
+
+
+def get_project_root(
+    package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
+) -> Optional[Path]:
+    """
+    Get the project root directory.
+
+    Args:
+        package_name(str): The name of the package to get the project root for.
+        markers(tuple[str, ...]): The markers to use to find the project root.
+
+    Returns:
+        Optional[Path]: The project root directory.
+    """
+
     # Priority 1: Environment variable
-    envname = os.getenv(f'{package_name.upper()}_ROOT')
+    envname = os.getenv(f"{package_name.upper()}_ROOT")
     if envname:
         p = Path(envname).expanduser().resolve()
-        if p.exists(): 
+        if p.exists():
             return p
 
     # Priority 2: Searching from package directory
@@ -36,13 +53,12 @@ def get_project_root(package_name: str = 'ifi',
     root_dirs = [p for p in dir_chain if p.name.lower() == package_name.lower()]
 
     if root_dirs:
-        return root_dirs[-1]   # The outermost ifi
+        return root_dirs[-1]  # The outermost ifi
 
     # BELOW IS THE OLD CODE FOR FINDING THE IFIPACKAGE ROOT, KEEPING IT FOR REFERENCE
-    # ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else []) 
+    # ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else [])
     #                 + list(current_dir.parents) if p.name == 'ifi']
     # IFI_ROOT = ifi_parents[-1] if ifi_parents else None
-
 
     # Priority 3: Using markers
     for p in dir_chain:
@@ -51,16 +67,29 @@ def get_project_root(package_name: str = 'ifi',
 
     return None
 
-def add_project_root(package_name: str = 'ifi', markers: tuple[str, ...] = ('.git', 'pyproject.toml', 'setup.cfg')):
+
+def add_project_root(
+    package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
+) -> None:
     """
     Add the project root to the Python path.
+
+    Args:
+        package_name(str): The name of the package to add the project root for.
+        markers(tuple[str, ...]): The markers to use to find the project root.
+
+    Returns:
+        None
     """
     sys.path.append(str(get_project_root(package_name, markers)))
 
+
 # Calculate the projectroot once at module import time
-IFI_ROOT: Path = get_project_root('ifi') or Path(__file__).expanduser().resolve().parent
+IFI_ROOT: Optional[Path] = (
+    get_project_root("ifi") or Path(__file__).expanduser().resolve().parent
+)
 
 # Add the project root to the Python path
-add_project_root('ifi')
+add_project_root("ifi")
 
-__all__ = ['IFI_ROOT', 'get_project_root', 'add_project_root']
+__all__ = ["IFI_ROOT", "get_project_root", "add_project_root"]
