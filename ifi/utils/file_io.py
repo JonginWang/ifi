@@ -11,14 +11,16 @@ Functions:
     save_waveform_to_csv: Save waveform data to a CSV file.
     read_waveform_file: Read waveform data from a CSV file.
     read_csv_chunked: Read a large CSV file in chunks and yield each chunk as a DataFrame.
+    create_shot_results_directory: Create the results directory for a shot.
     save_results_to_hdf5: Save analysis results to an HDF5 file.
-
+    load_cached_shot_data: Load the cached shot data.
 """
 
 from pathlib import Path
 import numpy as np
 import pandas as pd
 from typing import Tuple
+import h5py
 
 from ifi.utils.common import ensure_dir_exists
 
@@ -136,6 +138,26 @@ def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
 """
 
 
+def create_shot_results_directory(shot_num: int, base_dir: str = "./results") -> Path:
+    """Create results directory structure for a shot.
+
+    Args:
+        shot_num(int): Shot number
+        base_dir(str): Base directory for the results
+
+    Returns:
+        Path: Path to the results directory
+    """
+    results_dir = Path(base_dir) / str(shot_num)
+    subdirs = ["waveforms", "spectra", "density", "overview", "etc"]
+
+    ensure_dir_exists(str(results_dir))
+    for subdir in subdirs:
+        ensure_dir_exists(str(results_dir / subdir))
+
+    return results_dir
+
+
 def save_results_to_hdf5(
     output_dir: str,
     shot_num: int,
@@ -158,7 +180,7 @@ def save_results_to_hdf5(
         vest_data(pd.DataFrame): DataFrame containing VEST data
 
     Returns:
-        str: The path to the saved HDF5 file.
+        str | None: The path to the saved HDF5 file or None if an error occurs.
 
     Raises:
         Exception: If an error occurs while saving the results to the HDF5 file.
@@ -247,3 +269,155 @@ def save_results_to_hdf5(
     except Exception as e:
         print(f"Error saving results to HDF5: {e}")
         return None
+
+
+def load_results_from_hdf5(shot_num: int, base_dir: str = "results") -> dict:
+    """Load results from HDF5 files.
+
+    Args:
+        shot_num(int): Shot number
+        base_dir(str): Base directory to load the results from
+
+    Returns:
+        dict | None: Dictionary of results or None if no results are found
+
+    Examples:
+    ```python
+    from ifi.utils.file_io import load_results_from_hdf5
+
+    # Load results for shot 46789
+    results = load_results_from_hdf5(46789)
+    if results:
+        print(f"Loaded {len(results)} datasets")
+    ```
+    """
+    results_dir = Path(base_dir) / str(shot_num)
+    if not results_dir.exists():
+        print(f"No results found for shot {shot_num}")
+        return None
+
+    h5_files = list(results_dir.glob("*.h5"))
+
+    if not h5_files:
+        print(f"No HDF5 files found in {results_dir}")
+        return None
+
+    results = {}
+
+    for h5_file in h5_files:
+        print(f"Loading results from {h5_file}")
+
+        try:
+            with h5py.File(h5_file, "r") as hf:
+                # Load metadata
+                if "metadata" in hf:
+                    metadata = {}
+                    for key, value in hf["metadata"].attrs.items():
+                        metadata[key] = value
+                    results["metadata"] = metadata
+                    print(f"Loaded metadata: {metadata}")
+
+                # Load signals data
+                if "signals" in hf:
+                    signals = {}
+                    signals_group = hf["signals"]
+
+                    # Check if signals group is empty
+                    if signals_group.attrs.get("empty", False):
+                        print("Signals group is empty")
+                    else:
+                        for signal_name in signals_group.keys():
+                            signal_group = signals_group[signal_name]
+                            signal_data = {}
+                            for col_name in signal_group.keys():
+                                signal_data[col_name] = signal_group[col_name][:]
+                            signals[signal_name] = pd.DataFrame(signal_data)
+                            print(
+                                f"Loaded signal '{signal_name}' with shape {signals[signal_name].shape}"
+                            )
+
+                    if signals:
+                        results["signals"] = signals
+
+                # Load STFT results
+                if "stft_results" in hf:
+                    stft_results = {}
+                    stft_group = hf["stft_results"]
+                    for signal_name in stft_group.keys():
+                        signal_stft_group = stft_group[signal_name]
+                        stft_data = {}
+                        for key in signal_stft_group.keys():
+                            stft_data[key] = signal_stft_group[key][:]
+                        for key, value in signal_stft_group.attrs.items():
+                            stft_data[key] = value
+                        stft_results[signal_name] = stft_data
+                        print(f"Loaded STFT results for '{signal_name}'")
+
+                    if stft_results:
+                        results["stft_results"] = stft_results
+
+                # Load CWT results
+                if "cwt_results" in hf:
+                    cwt_results = {}
+                    cwt_group = hf["cwt_results"]
+                    for signal_name in cwt_group.keys():
+                        signal_cwt_group = cwt_group[signal_name]
+                        cwt_data = {}
+                        for key in signal_cwt_group.keys():
+                            cwt_data[key] = signal_cwt_group[key][:]
+                        for key, value in signal_cwt_group.attrs.items():
+                            cwt_data[key] = value
+                        cwt_results[signal_name] = cwt_data
+                        print(f"Loaded CWT results for '{signal_name}'")
+
+                    if cwt_results:
+                        results["cwt_results"] = cwt_results
+
+                # Load density data
+                if "density_data" in hf:
+                    density_group = hf["density_data"]
+                    density_data = {}
+                    for col_name in density_group.keys():
+                        density_data[col_name] = density_group[col_name][:]
+                    results["density_data"] = pd.DataFrame(density_data)
+                    print(
+                        f"Loaded density data with shape {results['density_data'].shape}"
+                    )
+
+                # Load VEST data
+                if "vest_data" in hf:
+                    vest_group = hf["vest_data"]
+                    vest_data = {}
+                    for col_name in vest_group.keys():
+                        vest_data[col_name] = vest_group[col_name][:]
+                    results["vest_data"] = pd.DataFrame(vest_data)
+                    print(f"Loaded VEST data with shape {results['vest_data'].shape}")
+
+        except Exception as e:
+            print(f"Failed to load results from {h5_file}: {e}")
+
+    return results
+
+
+def load_cached_shot_data(shot_num: int, cache_base_dir: str = "cache") -> dict:
+    """Legacy function - now uses load_results_from_hdf5 with improved functionality.
+
+    This function is deprecated. Use load_results_from_hdf5 instead.
+
+    Args:
+        shot_num(int): Shot number
+        cache_base_dir(str): Base directory for the cache
+
+    Returns:
+        dict | None: Dictionary of cached shot data or None if no cached data is found
+
+    Examples:
+    ```python
+    from ifi.utils.file_io import load_cached_shot_data
+
+    # Load cached data for shot 46789 (legacy function)
+    cached_data = load_cached_shot_data(46789)
+    ```
+    """
+    print("load_cached_shot_data is deprecated. Use load_results_from_hdf5 instead.")
+    return load_results_from_hdf5(shot_num, base_dir=cache_base_dir)

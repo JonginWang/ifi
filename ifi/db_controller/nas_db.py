@@ -11,6 +11,24 @@ Variables:
     ALLOWED_EXTENSIONS: The set of file extensions that the system is designed to process.
     REMOTE_LIST_SCRIPT: The script to find files on the remote machine.
     REMOTE_HEAD_SCRIPT: The script to read the top N lines of a file on the remote machine.
+
+Usage Example:
+    ```python
+    from ifi.db_controller import NAS_DB
+
+    # Initialize and use NAS_DB
+    with NAS_DB() as nas:
+        # Get shot data (will cache automatically)
+        # Using if local cache is available, it will use the local cache.
+        data_dict = nas.get_shot_data(45821, "ifi/references/data", add_path=True)
+        # Using force_remote=True to bypass the local cache and fetch the data
+        # from the remote machine.
+        data_dict = nas.get_shot_data(45821, "ifi/references/data", add_path=True, force_remote=True)
+        # If data_dict is not empty, it will print the shape of the dataframes.
+        if data_dict:
+            for key, df in data_dict.items():
+                print(f"DataFrame '{key}' shape: {df.shape}")
+    ```
 """
 
 from pathlib import Path
@@ -1516,78 +1534,6 @@ class NAS_DB:
 
     def _setup_logger(self):
         """Sets up the logger."""
-        self.logger = LogManager().get_logger(f"{__name__}.{self.__class__.__name__}")
-
-
-if __name__ == "__main__":
-    # This example demonstrates how to use the NAS_DB class.
-    # It requires a valid 'ifi/config.ini' file with [NAS] and [SSH_NAS] sections.
-    logger = LogManager().get_logger(f"{__name__}")
-    logger.info("--- Testing NAS_DB ---")
-
-    # Example usage:
-    shot_to_find = 45821  # Example shot number
-    folder_to_search = "Data/MSO58_2"  # Example sub-folder
-
-    try:
-        with NAS_DB() as nas:
-            # --- New, more efficient workflow ---
-
-            # 1. First call: Data is not cached. It will be fetched from the remote source
-            #    and then saved to the local cache (e.g., './cache/45821.h5').
-            logger.info(
-                "\n--- 1. First call to get_shot_data (should fetch and cache) ---"
-            )
-            data_dict = nas.get_shot_data(shot_to_find, folder_to_search, add_path=True)
-            if data_dict:
-                logger.info("   -> Data loaded successfully on first call.")
-                logger.info(f"   -> Number of dataframes: {len(data_dict)}")
-                for key, df in data_dict.items():
-                    logger.info(f"   -> DataFrame '{key}' shape: {df.shape}")
-
-            # 2. Second call: The local cache file now exists. This call should be much faster
-            #    as it reads directly from the local HDF5 file.
-            logger.info(
-                "\n--- 2. Second call to get_shot_data (should load from cache) ---"
-            )
-            df_from_cache = nas.get_shot_data(
-                shot_to_find, folder_to_search, add_path=True
-            )
-            if df_from_cache:
-                logger.info("   -> Data loaded successfully from cache.")
-                logger.info(f"   -> Number of dataframes: {len(df_from_cache)}")
-                for key, df in df_from_cache.items():
-                    logger.info(f"   -> DataFrame '{key}' shape: {df.shape}")
-
-            # 3. Force remote fetch: Use 'force_remote=True' to bypass the local cache and
-            #    re-download the data from the source. This is useful if the data has changed.
-            logger.info(
-                "\n--- 3. Third call with force_remote=True and add_path=True (should bypass cache) ---"
-            )
-            df_forced = nas.get_shot_data(
-                shot_to_find, folder_to_search, force_remote=True, add_path=True
-            )
-            if df_forced:
-                logger.info("   -> Data loaded successfully by forcing remote fetch.")
-                logger.info(f"   -> Number of dataframes: {len(df_forced)}")
-                for key, df in df_forced.items():
-                    logger.info(f"   -> DataFrame '{key}' shape: {df.shape}")
-
-            # 4. Force remote fetch: Use 'force_remote=True' to bypass the local cache and
-            #    find the data at the designated folder without appending the sub-folder name.
-            logger.info(
-                "\n--- 4. Fourth call with force_remote=True but add_path=False (should bypass cache) ---"
-            )
-            df_forced = nas.get_shot_data(
-                shot_to_find, folder_to_search, force_remote=True, add_path=False
-            )
-            if df_forced:
-                logger.info("   -> Data loaded successfully by forcing remote fetch.")
-                logger.info(f"   -> Number of dataframes: {len(df_forced)}")
-                for key, df in df_forced.items():
-                    logger.info(f"   -> DataFrame '{key}' shape: {df.shape}")
-
-    except FileNotFoundError as e:
-        logger.error(f"Configuration error: {e}")
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+        self.logger = LogManager().get_logger(
+            f"{__name__}.{self.__class__.__name__}", level="INFO"
+        )

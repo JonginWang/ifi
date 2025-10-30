@@ -11,9 +11,29 @@ Key Features:
     Unified density plotting function with flexible data formats
     Unified response plotting function with flexible data formats
     Unified shot overview plotting function with flexible data formats
+
+Classes:
+    Plotter: Unified plotting class with consolidated functionality.
+
+Functions:
+    Interactive Mode:
+        setup_interactive_mode: Setup matplotlib for optimal interactive use.
+        interactive_plotting: Enhanced context manager for interactive plotting.
+    Plotting Functions:
+        plot_shot_waveforms: Plot the waveforms for a shot.
+        plot_shot_spectrograms: Plot the spectrograms for a shot.
+        plot_shot_density_evolution: Plot the density evolution for a shot.
+    Legacy Plotting Functions:
+        plot_waveforms: Plot the waveforms for a shot.
+        plot_spectrogram: Plot the spectrogram for a shot.
+        plot_density_results: Plot the density results for a shot.
+        plot_signals: Plot the signals for a shot.
+        plot_spectrograms: Plot the spectrograms for a shot.
+        plot_cwt: Plot the CWT for a shot.
+        plot_response: Plot the response for a shot.
+        plot_shot_overview: Plot the shot overview for a shot.
 """
 
-import logging
 from pathlib import Path
 from typing import Dict, Optional, Union, Tuple
 from contextlib import contextmanager
@@ -24,23 +44,44 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
-from ifi.utils.cache_setup import setup_project_cache
+# from ifi.utils.cache_setup import setup_project_cache
 from ifi.db_controller.vest_db import VEST_DB
 from ifi.analysis.spectrum import SpectrumAnalysis
 from ifi.analysis.params.params_plot import set_plot_style, FontStyle
 from ifi.utils.common import LogManager, ensure_dir_exists
+from ifi.analysis.functions.power_conversion import (
+    pow2db,
+    db2pow,  # noqa: F401
+    amp2db,  # noqa: F401
+    db2amp,  # noqa: F401
+    mag2db,  # noqa: F401
+    db2mag,  # noqa: F401
+)
 
-cache_config = setup_project_cache()
+logger = LogManager().get_logger(__name__)
 
-LogManager()
-
-# ============================================================================
-# Interactive Mode Setup and Management
-# ============================================================================
+"""
+    Interactive Mode Setup and Management
+"""
 
 
 def setup_interactive_mode(backend: str = "auto", style: str = "default"):
-    """Setup matplotlib for optimal interactive use."""
+    """
+    Setup matplotlib for optimal interactive use.
+
+    Args:
+        backend(str): The backend to use for the plots.
+        style(str): The style to use for the plots.
+
+    Returns:
+        None
+
+    Examples:
+    ```python
+    from ifi.analysis.plots import setup_interactive_mode
+    setup_interactive_mode(backend="TkAgg", style="default")
+    ```
+    """
     if backend == "auto":
         try:
             import tkinter  # noqa: F401
@@ -74,15 +115,24 @@ def interactive_plotting(
     Enhanced context manager for interactive plotting.
 
     Args:
-        show_plots: Whether to show the plots
-        save_dir: Directory to save the plots
-        save_prefix: Prefix for the saved plots
-        save_ext: Extension for the saved plots
-        dpi: DPI for the saved plots
-        block: Whether to block the plots
+        show_plots(bool): Whether to show the plots
+        save_dir(Optional[str]): Directory to save the plots
+        save_prefix(str): Prefix for the saved plots
+        save_ext(str): Extension for the saved plots
+        dpi(int): DPI for the saved plots
+        block(bool): Whether to block the plots
 
     Returns:
         None
+
+    Examples:
+    ```python
+    from ifi.analysis.plots import interactive_plotting
+
+    with interactive_plotting(show_plots=True, save_dir="plots"):
+        plt.plot([1, 2, 3], [1, 4, 2])
+        plt.title("Interactive")
+        plt.show()
     """
     original_backend = matplotlib.get_backend()
     original_interactive = plt.isinteractive()
@@ -112,9 +162,9 @@ def interactive_plotting(
 
                 try:
                     fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
-                    logging.info(f"Saved figure to {filepath}")
+                    logger.info(f"Saved figure to {filepath}")
                 except Exception as e:
-                    logging.error(f"Failed to save figure {i}: {e}")
+                    logger.error(f"Failed to save figure {i}: {e}")
 
         if show_plots:
             plt.ioff()
@@ -127,40 +177,9 @@ def interactive_plotting(
         plt.interactive(original_interactive)
 
 
-# ============================================================================
-# Utility Functions
-# ============================================================================
-
-
-def pow2db(x: np.ndarray) -> np.ndarray:
-    """Convert power [W] to decibels [dB]."""
-    return 10 * np.log10(x)
-
-
-def db2pow(x: np.ndarray) -> np.ndarray:
-    """Convert decibels [dB] to power [W]."""
-    return 10 ** (x / 10)
-
-
-def amp2db(x: np.ndarray, impedance: float = 50) -> np.ndarray:
-    """Convert amplitude [V] to decibels [dB].
-    The impedance is the characteristic impedance of the system.
-    The factor of 2 is because the amplitude is the peak-to-peak value.
-    """
-    return 20 * np.log10(x / np.sqrt(impedance * 2))
-
-
-def db2amp(x: np.ndarray, impedance: float = 50) -> np.ndarray:
-    """Convert decibels [dB] to amplitude [V].
-    The impedance is the characteristic impedance of the system.
-    The factor of 2 is because the amplitude is the peak-to-peak value.
-    """
-    return 10 ** (x / 20) * np.sqrt(impedance * 2)
-
-
-# ============================================================================
-# Unified Plotter Class
-# ============================================================================
+"""
+    Unified Plotter Class
+"""
 
 
 class Plotter:
@@ -188,12 +207,13 @@ class Plotter:
         Unified data preparation for temporal plotting.
 
         Args:
-            data: Input data in various formats
-            fs: Sampling frequency (optional)
+            data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]):
+                Input data in various formats
+            fs(Optional[float]): Sampling frequency (optional)
 
         Returns:
-            time: Time array
-            signals: Dictionary of signal arrays
+            Tuple[np.ndarray, Dict[str, np.ndarray]]:
+                Tuple containing the time array and the dictionary of signal arrays
         """
         if isinstance(data, pd.DataFrame):
             # DataFrame with TIME column or index as time
@@ -237,12 +257,12 @@ class Plotter:
                     }
                     time = data[:, 0]
             else:
-                logging.error(
+                logger.error(
                     f"Waveform data must be 1D or 2D numpy array. Got {data.shape}"
                 )
                 raise ValueError("Waveform data must be 1D or 2D numpy array")
         else:
-            logging.error(
+            logger.error(
                 f"Waveform data must be DataFrame, dict, or numpy array. Got {type(data)}"
             )
             raise ValueError("Waveform data must be DataFrame, dict, or numpy array")
@@ -260,16 +280,17 @@ class Plotter:
         Apply scaling to time and signals.
 
         Args:
-            time: Time array
-            signals: Signal dictionary
-            time_scale: Time scale ('s', 'ms', 'us', 'ns')
-            signal_scale: Signal scale ('V', 'mV', 'uV', 'a.u.', '10^18 m^-3', etc.)
+            time(np.ndarray): Time array
+            signals(Dict[str, np.ndarray]): Signal dictionary
+            time_scale(str): Time scale ('s', 'ms', 'us', 'ns')
+            signal_scale(str): Signal scale ('V', 'mV', 'uV', 'a.u.', '10^18 m^-3', etc.)
 
         Returns:
-            time_scaled: Scaled time array
-            signals_scaled: Scaled signals
-            time_label: Time axis label
-            signal_label: Signal axis label
+            Tuple[np.ndarray, Dict[str, np.ndarray], str, str]:
+                Tuple containing the scaled time array,
+                the scaled signals,
+                the time axis label,
+                and the signal axis label
         """
         # Time scaling
         time_scale_factor = 1
@@ -357,10 +378,11 @@ class Plotter:
         Extract metadata information for display in plots.
 
         Args:
-            data: Input data that may contain metadata
+            data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]):
+                Input data that may contain metadata
 
         Returns:
-            Formatted metadata string for display
+            str: Formatted metadata string for display
         """
         metadata_parts = []
 
@@ -407,18 +429,20 @@ class Plotter:
         Unified waveform plotting with flexible data formats and scaling.
 
         Args:
-            data: Input data (DataFrame, dict, or numpy array)
-            fs: Sampling frequency (optional)
-            title: Plot title
-            downsample: Downsampling factor
-            save_path: Optional path to save figure
-            show_plot: Whether to display the plot
-            time_scale: Time scale ('s', 'ms', 'us', 'ns')
-            signal_scale: Signal scale ('V', 'mV', 'a.u.', etc.)
-            trigger_time: Trigger time offset
+            data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]):
+                Input data (DataFrame, dict, or numpy array)
+            fs(Optional[float]): Sampling frequency (optional)
+            title(str): Plot title
+            downsample(int): Downsampling factor
+            save_path(Optional[str]): Optional path to save figure
+            show_plot(bool): Whether to display the plot
+            time_scale(str): Time scale ('s', 'ms', 'us', 'ns')
+            signal_scale(str): Signal scale ('V', 'mV', 'a.u.', etc.)
+            trigger_time(float): Trigger time offset
 
         Returns:
-            fig, axes: Matplotlib figure and axes
+            Tuple[Figure, np.ndarray]:
+                Tuple containing the matplotlib figure and the axes
         """
         # Prepare data
         time, signals = self._prepare_time_data(data, fs)
@@ -489,21 +513,23 @@ class Plotter:
         Unified time-frequency plotting (STFT/CWT) with consistent API.
 
         Args:
-            data: Input data or pre-computed arrays (freqs, times, Sxx/Zxx)
-            method: Analysis method ('stft', 'cwt', or 'precomputed')
-            fs: Sampling frequency (not needed for precomputed data)
-            title: Plot title
-            save_path: Optional path to save figure
-            show_plot: Whether to display the plot
-            time_scale: Time scale ('s', 'ms', 'us', 'ns')
-            freq_scale: Frequency scale ('Hz', 'kHz', 'MHz', 'GHz')
-            power_scale: Power scale ('linear', 'dB')
-            trigger_time: Trigger time offset
-            downsample: Downsampling factor
+            data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray]]):
+                Input data or pre-computed arrays (freqs, times, Sxx/Zxx)
+            method(str): Analysis method ('stft', 'cwt', or 'precomputed')
+            fs(Optional[float]): Sampling frequency (not needed for precomputed data)
+            title(str): Plot title
+            save_path(Optional[str]): Optional path to save figure
+            show_plot(bool): Whether to display the plot
+            time_scale(str): Time scale ('s', 'ms', 'us', 'ns')
+            freq_scale(str): Frequency scale ('Hz', 'kHz', 'MHz', 'GHz')
+            power_scale(str): Power scale ('linear', 'dB')
+            trigger_time(float): Trigger time offset
+            downsample(int): Downsampling factor
             **kwargs: Additional arguments for STFT/CWT computation
 
         Returns:
-            fig, axes: Matplotlib figure and axes
+            Tuple[Figure, np.ndarray]:
+                Tuple containing the matplotlib figure and the axes
         """
         # Check if data is pre-computed arrays (freqs, times, Sxx/Zxx)
         if isinstance(data, tuple) and len(data) == 3:
@@ -563,7 +589,7 @@ class Plotter:
                 times_scaled = times * time_scale_factor + trigger_time
 
                 if power_scale == "dB":
-                    Sxx_plot = pow2db(np.abs(Sxx))
+                    Sxx_plot = pow2db(np.abs(Sxx), dbm=False)
                     power_label = "Power [dB]"
                 else:
                     Sxx_plot = np.abs(Sxx)
@@ -585,7 +611,7 @@ class Plotter:
                 # Scale frequency and power
                 freqs_scaled = freqs * freq_scale_factor
                 if power_scale == "dB":
-                    Sxx_plot = pow2db(np.abs(Sxx))
+                    Sxx_plot = pow2db(np.abs(Sxx), dbm=False)
                     power_label = "Power [dB]"
                 else:
                     Sxx_plot = np.abs(Sxx)
@@ -670,16 +696,17 @@ class Plotter:
         Plot density results with flexible data formats and scaling.
 
         Args:
-            density_data: Density data in various formats
-            time_data: Optional time array
-            title: Plot title
-            save_path: Optional path to save figure
-            show_plot: Whether to display the plot
-            density_scale: Density scale ('m^-2', 'm^-3', '10^18 m^-2', etc.)
-            time_scale: Time scale ('s', 'ms', 'us', 'ns')
+            density_data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]): Density data in various formats
+            time_data(Optional[np.ndarray]): Optional time array
+            title(str): Plot title
+            save_path(Optional[str]): Optional path to save figure
+            show_plot(bool): Whether to display the plot
+            density_scale(str): Density scale ('m^-2', 'm^-3', '10^18 m^-2', etc.)
+            time_scale(str): Time scale ('s', 'ms', 'us', 'ns')
 
         Returns:
-            fig, ax: Matplotlib figure and axis
+            Tuple[Figure, np.ndarray]:
+                Tuple containing the matplotlib figure and the axis
         """
         # Prepare data
         if isinstance(density_data, pd.DataFrame):
@@ -747,15 +774,16 @@ class Plotter:
         Plot frequency response functions.
 
         Args:
-            freqs: Frequency array
-            responses: Response array
-            title: Plot title
-            save_path: Optional path to save figure
-            show_plot: Whether to display the plot
-            freq_scale: Frequency scale ('Hz', 'kHz', 'MHz', 'GHz')
+            freqs(np.ndarray): Frequency array
+            responses(np.ndarray): Response array
+            title(str): Plot title
+            save_path(Optional[str]): Optional path to save figure
+            show_plot(bool): Whether to display the plot
+            freq_scale(str): Frequency scale ('Hz', 'kHz', 'MHz', 'GHz')
 
         Returns:
-            fig, ax: Matplotlib figure and axis
+            Tuple[Figure, np.ndarray]:
+                Tuple containing the matplotlib figure and the axis
         """
         # Frequency scaling
         freq_scale_factor = 1
@@ -786,8 +814,8 @@ class Plotter:
         self,
         shot_data: dict,
         vest_data: pd.DataFrame,
-        results_dir: Path,
         shot_num: int,
+        results_dir: Path = None,
         save_path: Optional[str] = None,
         show_plot: bool = True,
     ) -> Tuple[Figure, np.ndarray]:
@@ -795,16 +823,21 @@ class Plotter:
         Create a comprehensive overview plot for a shot.
 
         Args:
-            shot_data: Dictionary of DataFrames with shot data
-            vest_data: VEST database data
-            results_dir: Directory to save plots
-            shot_num: Shot number for plot titles
-            save_path: Optional path to save figure
-            show_plot: Whether to display the plot
+            shot_data(dict): Dictionary of DataFrames with shot data
+            vest_data(pd.DataFrame): VEST database data
+            shot_num(int): Shot number for plot titles
+            results_dir(Path): Directory to save plots (auto-generated if None)
+            save_path(Optional[str]): Optional path to save figure
+            show_plot(bool): Whether to display the plot
 
         Returns:
-            fig, axes: Matplotlib figure and axes
+            Tuple[Figure, np.ndarray]:
+                Tuple containing the matplotlib figure and the axes
         """
+        # Auto-generate results directory if not provided
+        if results_dir is None:
+            results_dir = Path("results") / f"{shot_num}"
+
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
         fig.suptitle(f"Shot {shot_num} - Overview", **FontStyle.title)
 
@@ -870,32 +903,28 @@ class Plotter:
         return fig, axes
 
 
-# ============================================================================
-# Shot-Specific Functions (Simplified)
-# ============================================================================
-
-
-def create_shot_results_directory(shot_num: int, base_dir: str = "ifi/results") -> Path:
-    """Create results directory structure for a shot."""
-    results_dir = Path(base_dir) / str(shot_num)
-    subdirs = ["waveforms", "spectra", "density", "overview"]
-
-    ensure_dir_exists(str(results_dir))
-    for subdir in subdirs:
-        ensure_dir_exists(str(results_dir / subdir))
-
-    return results_dir
-
-
 def plot_shot_waveforms(
-    shot_data: dict, results_dir: Path, shot_num: int, downsample: int = 100
+    shot_data: dict, shot_num: int, downsample: int = 100, results_dir: Path = None
 ):
-    """Generate waveform plots for all available signals in a shot."""
-    logger = logging.getLogger(__name__)
+    """Generate waveform plots for all available signals in a shot.
+
+    Args:
+        shot_data(dict): Dictionary of DataFrames with shot data
+        shot_num(int): Shot number
+        downsample(int): Downsample factor
+        results_dir(Path): Directory to save plots (auto-generated if None)
+
+    Returns:
+        None
+    """
     logger.info("Generating waveform plots...")
 
+    # Auto-generate results directory if not provided
+    if results_dir is None:
+        results_dir = Path("results") / f"{shot_num}"
+
     plotter = Plotter()
-    waveform_dir = results_dir / "waveforms"
+    ensure_dir_exists(str(results_dir))
 
     for filename, df in shot_data.items():
         if isinstance(df, pd.DataFrame) and "TIME" in df.columns:
@@ -909,7 +938,7 @@ def plot_shot_waveforms(
                     show_plot=False,
                 )
 
-                output_path = waveform_dir / f"{filename}_waveforms.png"
+                output_path = results_dir / f"{filename}_waveforms.png"
                 fig.savefig(output_path, dpi=150, bbox_inches="tight")
                 plt.close(fig)
 
@@ -920,14 +949,27 @@ def plot_shot_waveforms(
 
 
 def plot_shot_spectrograms(
-    shot_data: dict, results_dir: Path, shot_num: int, max_channels: int = 2
+    shot_data: dict, shot_num: int, max_channels: int = 2, results_dir: Path = None
 ):
-    """Generate spectrogram plots using STFT analysis for a shot."""
-    logger = logging.getLogger(__name__)
+    """Generate spectrogram plots using STFT analysis for a shot.
+
+    Args:
+        shot_data(dict): Dictionary of DataFrames with shot data
+        shot_num(int): Shot number
+        max_channels(int): Maximum number of channels to plot
+        results_dir(Path): Directory to save plots (auto-generated if None)
+
+    Returns:
+        None
+    """
     logger.info("Generating spectrogram plots...")
 
+    # Auto-generate results directory if not provided
+    if results_dir is None:
+        results_dir = Path("results") / f"{shot_num}"
+
     plotter = Plotter()
-    spectra_dir = results_dir / "spectra"
+    ensure_dir_exists(str(results_dir))
 
     for filename, df in shot_data.items():
         if isinstance(df, pd.DataFrame) and "TIME" in df.columns:
@@ -959,7 +1001,7 @@ def plot_shot_spectrograms(
                         noverlap=512,
                     )
 
-                    output_path = spectra_dir / f"{filename}_{col}_spectrogram.png"
+                    output_path = results_dir / f"{filename}_{col}_spectrogram.png"
                     fig.savefig(output_path, dpi=150, bbox_inches="tight")
                     plt.close(fig)
 
@@ -972,14 +1014,27 @@ def plot_shot_spectrograms(
 
 
 def plot_shot_density_evolution(
-    shot_data: dict, vest_data: pd.DataFrame, results_dir: Path, shot_num: int
+    shot_data: dict, vest_data: pd.DataFrame, shot_num: int, results_dir: Path = None
 ):
-    """Plot density evolution with VEST data overlay for a shot."""
-    logger = logging.getLogger(__name__)
+    """Plot density evolution with VEST data overlay for a shot.
+
+    Args:
+        shot_data(dict): Dictionary of DataFrames with shot data
+        vest_data(pd.DataFrame): VEST database data
+        shot_num(int): Shot number
+        results_dir(Path): Directory to save plots (auto-generated if None)
+
+    Returns:
+        None
+    """
     logger.info("Generating density evolution plots...")
 
+    # Auto-generate results directory if not provided
+    if results_dir is None:
+        results_dir = Path("results") / f"{shot_num}"
+
     plotter = Plotter()
-    density_dir = results_dir / "density"
+    ensure_dir_exists(str(results_dir))
 
     density_data = {}
     for key, df in shot_data.items():
@@ -997,7 +1052,7 @@ def plot_shot_density_evolution(
             density_df, title=f"Shot {shot_num} - Density Evolution", show_plot=False
         )
 
-        output_path = density_dir / "density_evolution.png"
+        output_path = results_dir / "density_evolution.png"
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
@@ -1007,109 +1062,80 @@ def plot_shot_density_evolution(
         logger.error(f"Failed to generate density evolution plot: {e}")
 
 
-# ============================================================================
-# Legacy Functions (for backward compatibility)
-# ============================================================================
+"""
+    Legacy Functions (for backward compatibility):
+"""
 
 # Alias for backward compatibility
 ifion_plotting = interactive_plotting
 
 
-# Legacy functions that now use the Plotter class
+# Legacy functions that now use the Plotter class with interactive plotting
 def plot_waveforms(data, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    return plotter.plot_waveforms(data, **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        return plotter.plot_waveforms(data, **kwargs)
 
 
 def plot_spectrogram(freqs, times, Sxx, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    # Create a dummy signal for the unified interface
-    dummy_data = np.zeros((len(times), 1))
-    return plotter.plot_time_frequency(dummy_data, method="stft", **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        # Create a dummy signal for the unified interface
+        dummy_data = np.zeros((len(times), 1))
+        return plotter.plot_time_frequency(dummy_data, method="stft", **kwargs)
 
 
 def plot_density_results(density_data, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    return plotter.plot_density(density_data, **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        return plotter.plot_density(density_data, **kwargs)
 
 
 def plot_signals(data_dict, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    for name, df in data_dict.items():
-        plotter.plot_waveforms(df, title=name, **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        for name, df in data_dict.items():
+            plotter.plot_waveforms(df, title=name, **kwargs)
 
 
 def plot_spectrograms(stft_results, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    for filename, results_by_col in stft_results.items():
-        for col_name, results in results_by_col.items():
-            plotter.plot_time_frequency(results["Zxx"], method="stft", **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        for filename, results_by_col in stft_results.items():
+            for col_name, results in results_by_col.items():
+                plotter.plot_time_frequency(results["Zxx"], method="stft", **kwargs)
 
 
 def plot_cwt(cwt_results, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    for filename, analysis in cwt_results.items():
-        for col_name, result in analysis.items():
-            plotter.plot_time_frequency(result["cwt_matrix"], method="cwt", **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        for filename, analysis in cwt_results.items():
+            for col_name, result in analysis.items():
+                plotter.plot_time_frequency(
+                    result["cwt_matrix"], method="cwt", **kwargs
+                )
 
 
 def plot_response(freqs, responses, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    return plotter.plot_response(freqs, responses, **kwargs)
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        return plotter.plot_response(freqs, responses, **kwargs)
 
 
 def plot_shot_overview(shot_data, vest_data, results_dir, shot_num, **kwargs):
-    """Legacy function - now uses Plotter class."""
-    plotter = Plotter()
-    return plotter.plot_shot_overview(
-        shot_data, vest_data, results_dir, shot_num, **kwargs
-    )
-
-
-# ============================================================================
-# Utility Functions
-# ============================================================================
-
-
-def load_cached_shot_data(shot_num: int, cache_base_dir: str = "cache") -> dict:
-    """Load cached shot data from HDF5 files."""
-    logger = logging.getLogger(__name__)
-
-    cache_dir = Path(cache_base_dir) / str(shot_num)
-    if not cache_dir.exists():
-        logger.error(f"No cached data found for shot {shot_num}")
-        return None
-
-    h5_files = list(cache_dir.glob("*.h5"))
-
-    if not h5_files:
-        logger.error(f"No HDF5 files found in {cache_dir}")
-        return None
-
-    cached_data = {}
-
-    for h5_file in h5_files:
-        logger.info(f"Loading cached data from {h5_file}")
-
-        try:
-            with pd.HDFStore(h5_file, "r") as store:
-                for key in store.keys():
-                    df = pd.read_hdf(h5_file, key)
-                    clean_key = key.lstrip("/")
-                    cached_data[clean_key] = df
-                    logger.info(f"Loaded dataset '{clean_key}' with shape {df.shape}")
-
-        except Exception as e:
-            logger.error(f"Failed to load {h5_file}: {e}")
-
-    return cached_data
+    """Legacy function - now uses Plotter class with interactive plotting."""
+    with interactive_plotting(show_plots=True, block=False):
+        plotter = Plotter()
+        return plotter.plot_shot_overview(
+            shot_data, vest_data, results_dir, shot_num, **kwargs
+        )
 
 
 if __name__ == "__main__":

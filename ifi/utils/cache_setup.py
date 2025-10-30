@@ -20,15 +20,19 @@ Functions:
 import os
 import tempfile
 from pathlib import Path
-from typing import Dict, Any
-from ifi import get_project_root
+from typing import Dict, Any, Optional
 
 # Global flag to track if cache has been initialized
 _cache_initialized = False
 _cache_config = None
+_project_root: Optional[Path] = None
 
-# Get the project root
-_project_root = get_project_root()
+
+def _get_project_root() -> Optional[Path]:
+    """Lazy import of get_project_root to avoid circular imports."""
+    from ifi import get_project_root
+
+    return get_project_root()
 
 
 def setup_project_cache() -> Dict[str, Any]:
@@ -55,6 +59,11 @@ def setup_project_cache() -> Dict[str, Any]:
     # If already initialized, return existing config
     if _cache_initialized:
         return _cache_config
+
+    # Get project root lazily to avoid circular imports
+    global _project_root
+    if _project_root is None:
+        _project_root = _get_project_root() or Path(__file__).parent.parent.parent
 
     # Try multiple cache directory options in order of preference
     cache_options = [
@@ -91,6 +100,21 @@ def setup_project_cache() -> Dict[str, Any]:
         os.environ["NUMBA_CACHE_DIR"] = str(cache_dir)
         os.environ["NUMBA_THREADING_LAYER"] = "safe"
         os.environ["NUMBA_DISABLE_INTEL_SVML"] = "1"
+
+        # Prevent torch import to avoid DLL initialization errors on Windows
+        # This prevents ssqueezepy from attempting to import torch.fft
+        # by monkey-patching sys.modules before ssqueezepy import
+        import sys
+
+        if "torch" not in sys.modules:
+            # Create a dummy torch module to prevent actual import
+            class DummyTorchModule:
+                """Dummy torch module to prevent DLL initialization errors."""
+
+                pass
+
+            sys.modules["torch"] = DummyTorchModule()
+            sys.modules["torch.fft"] = DummyTorchModule()
 
         # Additional safety settings for Windows
         if os.name == "nt":  # Windows

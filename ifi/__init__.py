@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+
 _MARKERS_TO_GET_PROJ_ROOT = (".git", "pyproject.toml", "setup.cfg")
 
 
@@ -92,4 +93,17 @@ IFI_ROOT: Optional[Path] = (
 # Add the project root to the Python path
 add_project_root("ifi")
 
-__all__ = ["IFI_ROOT", "get_project_root", "add_project_root"]
+
+def main(*args, **kwargs):
+    """Lazy import and call of main function to avoid circular imports."""
+    from .main import main as _main
+
+    return _main(*args, **kwargs)
+
+
+__all__ = ["IFI_ROOT", "get_project_root", "add_project_root", "main"]
+__version__ = "0.1.0"
+__title__ = "ifi"
+__author__ = "J. Wang"
+__license__ = "MIT"
+__project_url__ = "https://github.com/JonginWang/ifi"

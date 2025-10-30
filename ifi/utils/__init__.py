@@ -21,7 +21,6 @@ Variables:
     __all__: List of public functions and variables.
 """
 
-from ifi.utils.cache_setup import setup_project_cache
 from ifi.utils.common import (
     assign_kwargs,
     LogManager,
@@ -32,8 +31,16 @@ from ifi.utils.common import (
 )
 from ifi.utils.file_io import save_results_to_hdf5
 
+
+# def setup_project_cache():
+#     """Lazy import of setup_project_cache to avoid circular imports."""
+#     from ifi.utils.cache_setup import setup_project_cache as _setup_project_cache
+
+#     return _setup_project_cache()
+
+
 __all__ = [
-    "setup_project_cache",
+    # "setup_project_cache",
     "assign_kwargs",
     "LogManager",
     "FlatShotList",

@@ -9,9 +9,29 @@ Classes:
 
 Variables:
     logger: The logger for the VEST_DB class.
+
+Usage Example:
+    ```python
+    from ifi.db_controller import VEST_DB
+
+    # Initialize and use VEST_DB
+    with VEST_DB(config_path="ifi/config.ini") as db:
+        # Get next shot code
+        next_shot = db.get_next_shot_code()
+        print(f"Next shot: {next_shot}")
+
+        # Check if shot exists
+        exists = db.exist_shot(45821, 109)
+
+        # Load shot data
+        if exists:
+            data = db.load_shot(45821, [109, 171])
+            if data:
+                for field_id, df in data.items():
+                    print(f"Field {field_id} shape: {df.shape}")
+    ```
 """
 
-import logging
 from pathlib import Path
 import pymysql
 import numpy as np
@@ -449,20 +469,24 @@ class VEST_DB:
                 sample_rate = 1.0 / dt
 
         # 3. Determine t0 and tE from tFastDAQ logic
-        if round(sample_rate) >= 2e6:  # 2MHz DAQ
+        if round(sample_rate) >= 1.99e6:  # 2MHz DAQ
+            sample_rate = 2e6
             if shot_num >= 41660:  # indentical to 250kHz DAQ
                 t_start = 0.26
                 t_end = 0.36
             else:
                 t_start = 0.24
                 t_end = 0.34
-        elif round(sample_rate) >= 250e3:  # 250kHz DAQ
+        elif round(sample_rate) >= 249e3:  # 250kHz DAQ
+            sample_rate = 250e3
             if shot_num >= 41660:  # Includes shots >= 43685
                 t_start = 0.26
                 t_end = 0.36
             else:
                 t_start = 0.24
                 t_end = 0.34
+        elif round(sample_rate) >= 24.9e3:  # 25kHz DAQ
+            sample_rate = 25e3
 
         # 4. Recalculate time axis
         # The MATLAB condition `diff(time) < 1/25e3` is a bit ambiguous for a whole array.
@@ -527,60 +551,6 @@ class VEST_DB:
 
     def _setup_logger(self):
         """Sets up the logger."""
-        self.logger = LogManager().get_logger(f"{__name__}.{self.__class__.__name__}")
-
-
-if __name__ == "__main__":
-    # Example usage and test for the VEST_DB class.
-    # Note: This requires a valid 'ifi/config.ini' file with database credentials.
-
-    # Define a test shot and a list of fields that exist in the label CSV.
-    test_shot = 45821
-    test_fields = [109, 171]  # Corresponds to I_p_raw and Mirnov coil
-
-    logging.info(
-        f"--- Testing VEST_DB with Shot #{test_shot}, Fields #{test_fields} ---"
-    )
-
-    try:
-        # Explicitly provide the config path for robust execution
-        with VEST_DB(config_path="ifi/config.ini") as db:
-            # 0. Check if the database is connected and returns the last shot number
-            logging.info("Checking for last shot number...")
-            last_shot_num = db.get_next_shot_code()
-            if last_shot_num:
-                logging.info(f"Last shot number: {last_shot_num}")
-            else:
-                logging.error("Failed to get last shot number.")
-
-            # 1. Check if the shot data exists for the first field
-            logging.info(f"Checking for existence of first field ({test_fields[0]})...")
-            existence = db.exist_shot(test_shot, test_fields[0])
-            if existence > 0:
-                logging.info(
-                    "  -> Shot seems to exist. Attempting to load multiple fields..."
-                )
-
-                # 2. Load all fields into a DataFrame
-                result_dfs = db.load_shot(test_shot, test_fields)
-
-                if result_dfs:
-                    logging.info("  -> Data loaded successfully into groups.")
-                    for rate, df in result_dfs.items():
-                        logging.info(f"--- Group: {rate} ---")
-                        logging.info(f"     DataFrame shape: {df.shape}")
-                        logging.info(f"     Columns: {df.columns.tolist()}")
-                        logging.info("--- Head of DataFrame ---")
-                        logging.info(f"\n{df.head()}")
-                        logging.info("-------------------------")
-                else:
-                    logging.info("  -> Data loading failed or returned no data.")
-            else:
-                logging.info(
-                    f"  -> Shot {test_shot} with field {test_fields[0]} not found."
-                )
-
-    except FileNotFoundError as e:
-        logging.error(f"\nError: {e}")
-    except Exception as e:
-        logging.error(f"\nAn unexpected error occurred: {e}", exc_info=True)
+        self.logger = LogManager().get_logger(
+            f"{__name__}.{self.__class__.__name__}", level="INFO"
+        )
