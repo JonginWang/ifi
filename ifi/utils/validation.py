@@ -24,7 +24,7 @@ import pandas as pd
 from typing import Union
 from pathlib import Path
 
-from ifi.utils.common import LogManager
+from .common import LogManager, log_tag
 
 LogManager()
 logger = LogManager().get_logger(__name__)
@@ -132,10 +132,10 @@ def validate_signal(
 
     # Check for NaN or Inf values
     if np.any(np.isnan(signal)):
-        logger.warning(f"{name} contains NaN values")
+        logger.warning(f"{log_tag('VALID','SIGNL')} {name} contains NaN values")
 
     if np.any(np.isinf(signal)):
-        logger.warning(f"{name} contains infinite values")
+        logger.warning(f"{log_tag('VALID','SIGNL')} {name} contains infinite values")
 
     return signal
 

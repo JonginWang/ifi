@@ -19,14 +19,14 @@ import time
 
 from pathlib import Path
 
-from ifi import get_project_root
-from ifi.tek_controller.scope import TekScopeController
-from ifi.db_controller.vest_db import VEST_DB
-from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
+from .. import get_project_root
+from ..tek_controller.scope import TekScopeController
+from ..db_controller.vest_db import VEST_DB
+from ..utils.file_io import read_waveform_file, save_waveform_to_csv
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from ifi.analysis.params.params_plot import FontStyle
+from ..analysis.params.params_plot import FontStyle
 
 from pynput import keyboard
 
@@ -105,7 +105,7 @@ class Application(tk.Frame):
 
     Examples:
         ```python
-        from ifi.gui.main_window import Application
+        from .main_window import Application
 
         app = Application()
         app.mainloop()

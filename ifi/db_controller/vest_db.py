@@ -12,7 +12,7 @@ Variables:
 
 Usage Example:
     ```python
-    from ifi.db_controller import VEST_DB
+    from . import VEST_DB
 
     # Initialize and use VEST_DB
     with VEST_DB(config_path="ifi/config.ini") as db:
@@ -41,7 +41,7 @@ from sshtunnel import SSHTunnelForwarder, BaseSSHTunnelForwarderError
 import pandas as pd
 from collections import defaultdict
 
-from ifi.utils.common import LogManager
+from ..utils.common import LogManager, log_tag
 
 
 class VEST_DB:
@@ -77,7 +77,7 @@ class VEST_DB:
 
     Examples:
         ```python
-        from ifi.db_controller.vest_db import VEST_DB
+        from .vest_db import VEST_DB
         db = VEST_DB("ifi/config.ini")
         db.connect()
         db.get_next_shot_code()
@@ -102,7 +102,7 @@ class VEST_DB:
         self._setup_logger()
 
         if not Path(config_path).exists():
-            self.logger.error(f"Configuration file not found at '{config_path}'.")
+            self.logger.error(f"{log_tag('VESTB','CONFG')} Configuration file not found at '{config_path}'.")
             raise FileNotFoundError(
                 f"""Configuration file not found at '{config_path}'. \n
                     Please create it from 'config.ini.template'."""
@@ -140,15 +140,15 @@ class VEST_DB:
                     for _, row in label_df.iterrows()
                 }
                 self.logger.info(
-                    f"Successfully loaded {len(self.field_labels)} VEST field labels from {self.field_label_file}."
+                    f"{log_tag('VESTB','CONFIG')} Successfully loaded {len(self.field_labels)} VEST field labels from {self.field_label_file}."
                 )
             except Exception as e:
                 self.logger.error(
-                    f"Failed to load or parse VEST field label file '{self.field_label_file}': {e}"
+                    f"{log_tag('VESTB','CONFIG')} Failed to load or parse VEST field label file '{self.field_label_file}': {e}"
                 )
         else:
             self.logger.warning(
-                "VEST field label file not specified or not found. Column names will be field IDs."
+                f"{log_tag('VESTB','CONFIG')} VEST field label file not specified or not found. Column names will be field IDs."
             )
 
         # SSH Tunnel configuration
@@ -158,10 +158,10 @@ class VEST_DB:
             conn_cfg = config["CONNECTION_SETTINGS"]
 
             ssh_key_path = Path(ssh_cfg.get("ssh_pkey_path")).expanduser()
-            self.logger.info(f"SSH key path resolved to: {ssh_key_path}")
+            self.logger.info(f"{log_tag('VESTB','CONFIG')} SSH key path resolved to: {ssh_key_path}")
             if not ssh_key_path.exists():
                 self.logger.warning(
-                    f"SSH private key file does not exist at '{ssh_key_path}'!"
+                    f"{log_tag('VESTB','CONFIG')} SSH private key file does not exist at '{ssh_key_path}'!"
                 )
 
             self.ssh_config = {
@@ -194,35 +194,33 @@ class VEST_DB:
             return True
 
         # 1. Attempt direct connection
-        self.logger.info("Attempting direct connection to VEST DB...")
+        self.logger.info(f"{log_tag('VESTB','CONN ')} Attempting direct connection to VEST DB...")
         try:
             self.connection = pymysql.connect(
                 **self.db_connection_args, connect_timeout=self.direct_connect_timeout
             )
             if self.connection.open:
-                self.logger.info("Direct connection successful.")
+                self.logger.info(f"{log_tag('VESTB','CONN ')} Direct connection successful.")
                 return True
         except pymysql.Error as err:
-            self.logger.warning(f"Direct connection failed: {err}")
+            self.logger.warning(f"{log_tag('VESTB','CONN ')} Direct connection failed: {err}")
             if not self.tunnel_enabled:
-                self.logger.error("SSH tunnel is disabled. Cannot proceed.")
+                self.logger.error(f"{log_tag('VESTB','CONN ')} SSH tunnel is disabled. Cannot proceed.")
                 return False
             # Explicitly log the fallback attempt
             self.logger.info(
-                "Direct connection failed. Now attempting fallback to SSH tunnel."
+                f"{log_tag('VESTB','CONN ')} Direct connection failed. Now attempting fallback to SSH tunnel."
             )
 
         # 2. Fallback to SSH tunnel connection
-        self.logger.info("Falling back to SSH tunnel connection...")
+        self.logger.info(f"{log_tag('VESTB','CONN ')} Falling back to SSH tunnel connection...")
         for attempt in range(self.ssh_max_retries):
             try:
-                self.logger.info(f"Attempt {attempt + 1}/{self.ssh_max_retries}...")
+                self.logger.info(f"{log_tag('VESTB','CONN ')} Attempt {attempt + 1}/{self.ssh_max_retries}...")
                 self.tunnel = SSHTunnelForwarder(**self.ssh_config)
                 self.tunnel.start()
 
-                self.logger.info(
-                    f"SSH tunnel established (localhost:{self.tunnel.local_bind_port})."
-                )
+                self.logger.info(f"{log_tag('VESTB','CONN ')} SSH tunnel established (localhost:{self.tunnel.local_bind_port}).")
 
                 # Connect to MySQL through the tunnel
                 tunneled_config = self.db_connection_args.copy()
@@ -232,44 +230,44 @@ class VEST_DB:
                 self.connection = pymysql.connect(**tunneled_config)
 
                 if self.connection.open:
-                    self.logger.info("MySQL connection through tunnel successful.")
+                    self.logger.info(f"{log_tag('VESTB','CONN ')} MySQL connection through tunnel successful.")
                     return True
 
             except BaseSSHTunnelForwarderError as e:
                 self.logger.error(
-                    f"SSH Tunnel Error on attempt {attempt + 1}: {e}", exc_info=True
+                    f"{log_tag('VESTB','CONN ')} SSH Tunnel Error on attempt {attempt + 1}: {e}", exc_info=True
                 )
                 self.disconnect()  # Cleanup
             except pymysql.Error as e:
                 self.logger.error(
-                    f"MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTB','CONN ')} MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()  # Cleanup
             except Exception as e:
                 self.logger.error(
-                    f"An unexpected error occurred during SSH tunnel connection on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTB','CONN ')} An unexpected error occurred during SSH tunnel connection on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()  # Cleanup
 
             if attempt < self.ssh_max_retries - 1:
-                self.logger.info("Retrying in 3 seconds...")
+                self.logger.info(f"{log_tag('VESTB','CONN ')} Retrying in 3 seconds...")
                 time.sleep(3)
 
-        self.logger.error("Failed to establish a database connection.")
+        self.logger.error(f"{log_tag('VESTB','CONN ')} Failed to establish a database connection.")
         return False
 
     def disconnect(self):
         """Closes the database connection and the SSH tunnel if it's active."""
         if self.connection and self.connection.open:
             self.connection.close()
-            self.logger.info("MySQL connection closed.")
+            self.logger.info(f"{log_tag('VESTB','DISC ')} MySQL connection closed.")
         self.connection = None
 
         if self.tunnel and self.tunnel.is_active:
             self.tunnel.stop()
-            self.logger.info("SSH tunnel closed.")
+            self.logger.info(f"{log_tag('VESTB','DISC ')} SSH tunnel closed.")
         self.tunnel = None
 
     def get_next_shot_code(self) -> int | None:
@@ -280,7 +278,7 @@ class VEST_DB:
             The next shot number as an integer, or None if failed.
         """
         if not (self.connection and self.connection.open):
-            self.logger.error("Not connected to the database.")
+            self.logger.error(f"{log_tag('VESTB','QLAST')} Not connected to the database.")
             return None
         try:
             with self.connection.cursor() as cursor:
@@ -291,17 +289,15 @@ class VEST_DB:
                 if result_temp:
                     last_shotnum = result_temp[0]
                     next_shotnum = last_shotnum + 1
-                    self.logger.info(f"Next shot number: {next_shotnum}")
+                    self.logger.info(f"{log_tag('VESTB','QLAST')} Next shot number: {next_shotnum}")
                     return next_shotnum
                 else:
                     # Handle case where the table is empty
-                    self.logger.warning(
-                        "Table 'shotDataWaveform_3' is empty or shotCode not found."
-                    )
+                    self.logger.warning(f"{log_tag('VESTB','QLAST')} Table 'shotDataWaveform_3' is empty or shotCode not found.")
                     return 1  # Start with 1 if table is empty
 
         except pymysql.Error as err:
-            self.logger.error(f"Query Error: {err}")
+            self.logger.error(f"{log_tag('VESTB','QUERY')} QLAST Error: {err}")
             return None
 
     def exist_shot(self, shot: int, field: int) -> int:
@@ -320,7 +316,7 @@ class VEST_DB:
                 - 0 if data does not exist
         """
         if not self.connect():
-            self.logger.error("Failed to connect to database.")
+            self.logger.error(f"{log_tag('VESTB','QEXST')} Failed to connect to database.")
             return 0
 
         try:
@@ -339,7 +335,7 @@ class VEST_DB:
 
             return 0  # Not found in either table
         except pymysql.Error as err:
-            self.logger.error(f"Query Error: {err}")
+            self.logger.error(f"{log_tag('VESTB','QEXST')} Query Error: {err}")
             return 0
 
     def _classify_sample_rate(self, fs: float) -> str:
@@ -367,12 +363,12 @@ class VEST_DB:
             values are pandas DataFrames containing all signals for that rate.
         """
         if not self.connect():
-            self.logger.error("Failed to connect to database.")
+            self.logger.error(f"{log_tag('VESTB','LOAD ')} Failed to connect to database.")
             return {}
 
         if shot <= 29349:
             self.logger.warning(
-                f"Shot {shot} is too old. Only shots > 29349 in MySQL are supported in this version."
+                f"{log_tag('VESTB','LOAD ')} Shot {shot} is too old. Only shots > 29349 in MySQL are supported in this version."
             )
             return {}
 
@@ -416,15 +412,15 @@ class VEST_DB:
 
                         grouped_series[rate_key].append(series)
                         self.logger.info(
-                            f"Successfully loaded and processed Shot {shot} Field {field} as '{series_name}' (Rate Group: {rate_key})."
+                            f"{log_tag('VESTB','LOAD ')} Successfully loaded and processed Shot {shot} Field {field} as '{series_name}' (Rate Group: {rate_key})."
                         )
                     else:
                         self.logger.warning(
-                            f"Shot {shot} field {field} not found in database."
+                            f"{log_tag('VESTB','LOAD ')} Shot {shot} field {field} not found in database."
                         )
 
             except pymysql.Error as err:
-                self.logger.error(f"Query Error for field {field}: {err}")
+                self.logger.error(f"{log_tag('VESTB','LOAD ')} Query Error for field {field}: {err}")
                 continue  # Move to the next field
 
         if not grouped_series:
@@ -435,7 +431,7 @@ class VEST_DB:
         for rate_key, series_list in grouped_series.items():
             final_dfs[rate_key] = pd.concat(series_list, axis=1)
             self.logger.info(
-                f"Created DataFrame for '{rate_key}' group with {len(series_list)} signal(s)."
+                f"{log_tag('VESTB','LOAD ')} Created DataFrame for '{rate_key}' group with {len(series_list)} signal(s)."
             )
 
         return final_dfs
@@ -459,7 +455,7 @@ class VEST_DB:
         # 1. Apply sign correction based on field_id
         if field_id in [101, 214, 140]:
             data = -data
-            self.logger.info(f"Flipping sign for field_id {field_id}.")
+            self.logger.info(f"{log_tag('VESTB','PROC ')} Flipping sign for field_id {field_id}.")
 
         # 2. Estimate sampling rate from the final time axis
         sample_rate = 0.0
@@ -495,13 +491,13 @@ class VEST_DB:
         if len(time) > 1 and np.mean(np.diff(time)) < (1 / 25e3):
             # High-speed DAQ: create a new time axis
             self.logger.info(
-                f"High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis."
+                f"{log_tag('VESTB','PROC ')} High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis."
             )
             new_time = np.linspace(t_start, t_end, len(time) + 1)
             time = new_time[:-1]
         else:
             # Low-speed DAQ: time values are already in seconds
-            self.logger.info("normal-speed DAQ detected. Using original time values.")
+            self.logger.info(f"{log_tag('VESTB','PROC ')} normal-speed DAQ detected. Using original time values.")
             pass  # Time is already correct
 
         return time, data, sample_rate
@@ -525,7 +521,7 @@ class VEST_DB:
             list[tuple]: Query results as a list of tuples, or None if failed
         """
         if not (self.connection and self.connection.open):
-            self.logger.error("Not connected to the database.")
+            self.logger.error(f"{log_tag('VESTB','QRY ')} Not connected to the database.")
             return None
 
         try:
@@ -538,15 +534,15 @@ class VEST_DB:
                 # Fetch all results
                 results = cursor.fetchall()
                 self.logger.info(
-                    f"Query executed successfully. Returned {len(results)} rows."
+                    f"{log_tag('VESTB','QRY ')} Query executed successfully. Returned {len(results)} rows."
                 )
                 return results
 
         except pymysql.Error as e:
-            self.logger.error(f"Database query error: {e}")
+            self.logger.error(f"{log_tag('VESTB','QRY ')} Database query error: {e}")
             return None
         except Exception as e:
-            self.logger.error(f"Unexpected error during query execution: {e}")
+            self.logger.error(f"{log_tag('VESTB','QRY ')} Unexpected error during query execution: {e}")
             return None
 
     def _setup_logger(self):

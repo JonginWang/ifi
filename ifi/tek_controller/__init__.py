@@ -9,6 +9,6 @@ Classes:
     TekScopeController: A class to control Tektronix scopes using the "tm-devices".
 """
 
-from ifi.tek_controller.scope import TekScopeController
+from .scope import TekScopeController
 
 __all__ = ["TekScopeController"]

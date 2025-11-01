@@ -9,8 +9,8 @@ It is used to run the GUI application.
 
 import tkinter as tk
 
-from ifi.utils.common import LogManager
-from ifi.gui.main_window import Application
+from .utils.common import LogManager
+from .gui.main_window import Application
 
 # Initialize logging
 LogManager(level="INFO")

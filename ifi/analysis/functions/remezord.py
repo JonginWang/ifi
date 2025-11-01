@@ -213,5 +213,5 @@ def remezord(freqs, amps, rips, Hz=1, alg="ichige"):
 #######################################
 # If called directly, do some example #
 #######################################
-if __name__ == "__main__":
-    pass
+# if __name__ == "__main__":
+#     pass

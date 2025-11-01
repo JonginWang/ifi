@@ -16,6 +16,7 @@ Classes:
     FlatShotList: A class for parsing and flattening a list of shot numbers and file paths.
 
 Functions:
+    log_tag: Return a standardized tag like "[SPECR-STFT]" with 5-char codes.
     ensure_dir_exists: Ensure a directory exists, creating it if necessary.
     ensure_str_path: Coerce a path to a string.
     normalize_to_forward_slash: Normalize a path to use forward slashes.
@@ -63,7 +64,7 @@ class LogManager:
 
     Examples:
         ```python
-        from ifi.utils.common import LogManager
+        from .common import LogManager
 
         # 1. Basic usage for call logger
         LogManager(level="WARNING")  # Configure logging on first call
@@ -139,7 +140,7 @@ class LogManager:
 
     def _log_shutdown(self):
         """Function registered with atexit to log a shutdown message."""
-        logging.info(f"\n{'  Logging ended  '.center(80, '=')}")
+        logging.info(f"\n{log_tag('LOGS','SHUTD')} Logging ended")
 
     def _setup_logging(self, level):
         """
@@ -196,15 +197,15 @@ class LogManager:
             console_handler.setFormatter(console_formatter)
             root_logger.addHandler(console_handler)
 
-            logging.info(f"\n{'  Logging started  '.center(80, '=')}\n")
-            logging.info(f"\nAll logs for this execution will be saved to: {log_file}")
+            logging.info(f"\n{log_tag('LOGS','START')} Logging started\n")
+            logging.info(f"\n{log_tag('LOGS','START')} All logs for this execution will be saved to: {log_file}")
 
             atexit.register(self._log_shutdown)
 
         except Exception:
             logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
             logging.error(
-                "  Failed to configure advanced logging  ".center(80, "="),
+                f"{log_tag('LOGS','INIt ')} Failed to configure advanced logging",
                 exc_info=True,
             )
 
@@ -239,7 +240,7 @@ class LogManager:
 
         self._current_level = new_level
         logging.debug(
-            "\n" + f"Log level updated to: {new_level}".center(80, "=") + "\n"
+            f"\n{log_tag('LOGS','UPDAT')} Log level updated to: {new_level}\n"
         )
 
     def get_logger(self, name: str = None, level: str = None) -> logging.Logger:
@@ -407,6 +408,33 @@ class CustomFormatter(logging.Formatter):
         record.levelname = level_original
 
         return record_formatted
+
+
+def log_tag(major: str, minor: str) -> str:
+    """Return a standardized tag like "[SPECR-STFT]" with 5-char codes.
+
+    The function pads/truncates both codes to exactly 5 uppercase characters
+    to keep log prefixes visually consistent and grep-friendly. Use together
+    with parameterized logging, e.g.:
+
+        # Example (preferred modern usage):
+        # logger.info(f"{log_tag('plots','save')} Message with {path}")
+
+    Args:
+        major: Major subsystem (e.g., 'plots', 'nasdb').
+        minor: Subcomponent/action (e.g., 'stft', 'conn').
+
+    Returns:
+        Bracketed tag string: "[MAJOR-MINOR]" with each 5 chars, uppercase.
+    """
+    try:
+        def _fmt(code: str) -> str:
+            s = (str(code) if code is not None else "") .upper()
+            return (s[:5]).ljust(5, " ") if len(s) >= 5 else s.ljust(5, " ")
+
+        return f"[{_fmt(major)}-{_fmt(minor)}]"
+    except Exception:
+        return "[UNKN -UNKN ]"
 
 
 def assign_kwargs(keys: list[str]) -> Callable[[Callable], Callable]:

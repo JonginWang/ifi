@@ -14,7 +14,7 @@ Variables:
 
 Usage Example:
     ```python
-    from ifi.db_controller import NAS_DB
+    from . import NAS_DB
 
     # Initialize and use NAS_DB
     with NAS_DB() as nas:
@@ -46,7 +46,7 @@ import tempfile
 import threading
 
 
-from ifi.utils.common import LogManager, ensure_str_path
+from ..utils.common import LogManager, ensure_str_path, log_tag
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -154,7 +154,7 @@ class NAS_DB:
 
     Examples:
         ```python
-        from ifi.db_controller.nas_db import NAS_DB
+        from .nas_db import NAS_DB
         db = NAS_DB("ifi/config.ini")
         db.connect()
         db.find_files(45821)
@@ -176,9 +176,9 @@ class NAS_DB:
 
         # Check if the config file exists
         if not Path(config_path).exists():
-            self.logger.error(f"Config file not found: '{config_path}'")
+            self.logger.error(f"{log_tag('NASDB','CONFIG')} Config file not found: '{config_path}'")
             raise FileNotFoundError(
-                f"  Config file not found: '{config_path}'  ".center(80, "=")
+                f"{log_tag('NASDB','CONFIG')} Config file not found: '{config_path}'"
             )
 
         # Read the config file
@@ -253,15 +253,11 @@ class NAS_DB:
                 remote_path = os.path.join(home_dir, ".ifi_temp").replace("\\", "/")
                 self.remote_temp_dir = remote_path  # Store for later use
                 self.logger.info(
-                    f"  Remote temp directory not configured, using dynamic path: {remote_path}  ".center(
-                        80, "="
-                    )
+                    f"{log_tag('NASDB','CHKD ')} Remote temp directory not configured, using dynamic path: {remote_path}"
                 )
             except Exception as e:
                 self.logger.error(
-                    f"  Could not determine remote home directory: {e}  ".center(
-                        80, "="
-                    )
+                    f"{log_tag('NASDB','CHKD ')} Could not determine remote home directory: {e}"
                 )
                 raise
 
@@ -271,12 +267,12 @@ class NAS_DB:
         except FileNotFoundError:
             # If it doesn't exist, create it
             self.logger.info(
-                f"Remote directory '{remote_path}' not found. Creating it."
+                f"{log_tag('NASDB','CHKD ')} Remote directory '{remote_path}' not found. Creating it."
             )
             self.sftp_client.mkdir(remote_path)
         except Exception as e:
             self.logger.error(
-                f"Could not check or create remote directory '{remote_path}': {e}"
+                f"{log_tag('NASDB','CHKD ')} Could not check or create remote directory '{remote_path}': {e}"
             )
             # Depending on the desired robustness, you might want to raise this exception
             raise
@@ -295,20 +291,18 @@ class NAS_DB:
 
             if Path(self.nas_mount).is_dir():
                 self.logger.info(
-                    f"Local NAS mount found at '{self.nas_mount}'. Using direct access."
+                    f"{log_tag('NASDB','CONN ')} Local NAS mount found at '{self.nas_mount}'. Using direct access."
                 )
                 self.access_mode = "local"
                 self._is_connected = True
                 return True
 
-            self.logger.info("Local NAS mount not found. Attempting SSH connection.")
+            self.logger.info(f"{log_tag('NASDB','CONN ')} Local NAS mount not found. Attempting SSH connection.")
             self.access_mode = "remote"
 
             for attempt in range(self.ssh_max_retries):
                 try:
-                    self.logger.info(
-                        f"SSH connection attempt {attempt + 1}/{self.ssh_max_retries}..."
-                    )
+                    self.logger.info(f"{log_tag('NASDB','CONN ')} SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
                     self.ssh_client = paramiko.SSHClient()
                     self.ssh_client.set_missing_host_key_policy(
                         paramiko.AutoAddPolicy()
@@ -321,23 +315,21 @@ class NAS_DB:
                         timeout=self.ssh_connect_timeout,
                     )
                     self.sftp_client = self.ssh_client.open_sftp()
-                    self.logger.info(f"SSH connection to {self.ssh_host} successful.")
+                    self.logger.info(f"{log_tag('NASDB','CONN ')} SSH connection to {self.ssh_host} successful.")
 
                     self._authenticate_nas_remote()
                     self._is_connected = True
                     return True
 
                 except Exception as e:
-                    self.logger.error(
-                        f"SSH connection attempt {attempt + 1} failed: {e}"
-                    )
+                    self.logger.error(f"{log_tag('NASDB','CONN ')} SSH connection attempt {attempt + 1} failed: {e}")
                     self.disconnect()  # disconnect sets _is_connected to False
                     if attempt < self.ssh_max_retries - 1:
-                        self.logger.info("Retrying in 3 seconds...")
+                        self.logger.info(f"{log_tag('NASDB','CONN ')} Retrying in 3 seconds...")
                         time.sleep(3)
 
             self._is_connected = False
-            self.logger.error("All SSH connection attempts failed.")
+            self.logger.error(f"{log_tag('NASDB','CONN ')} All SSH connection attempts failed.")
             return False
 
     def _authenticate_nas_remote(self):
@@ -345,7 +337,7 @@ class NAS_DB:
         Runs 'net use' on the remote machine to authenticate with the NAS.
         """
         auth_cmd = f'net use "{str(self.nas_path)}" /user:{self.nas_user} {self.nas_password} /persistent:no'
-        self.logger.info("Authenticating to NAS on remote machine.")
+        self.logger.info(f"{log_tag('NASDB','AUTH ')} Authenticating to NAS on remote machine.")
         stdin, stdout, stderr = self.ssh_client.exec_command(auth_cmd)
 
         exit_status = stdout.channel.recv_exit_status()
@@ -353,13 +345,11 @@ class NAS_DB:
             err = stderr.read().decode("utf-8", errors="ignore").strip()
             # "The command completed successfully." is not an error.
             if "The command completed successfully" not in err:
-                self.logger.warning(
-                    f"NAS authentication may have failed with exit code {exit_status}: {err}"
-                )
+                self.logger.warning(f"{log_tag('NASDB','AUTH ')} NAS authentication may have failed with exit code {exit_status}: {err}")
             else:
-                self.logger.info("NAS authentication successful.")
+                self.logger.info(f"{log_tag('NASDB','AUTH ')} NAS authentication successful.")
         else:
-            self.logger.info("NAS authentication successful.")
+            self.logger.info(f"{log_tag('NASDB','AUTH ')} NAS authentication successful.")
 
     def find_files(
         self,
@@ -401,7 +391,7 @@ class NAS_DB:
         """
         if not self._is_connected:
             if not self.connect():
-                raise ConnectionError("Failed to establish connection to NAS.")
+                raise ConnectionError(f"{log_tag('NASDB','QFILE')} Failed to establish connection to NAS.")
 
         if data_folders is not None:
             if isinstance(data_folders, str):
@@ -410,12 +400,12 @@ class NAS_DB:
                 for i, folder in enumerate(data_folders):
                     if not isinstance(folder, str):
                         self.logger.warning(
-                            f"Invalid data folder type: {type(folder)}. Converting to string. {folder}"
+                            f"{log_tag('NASDB','QFILE')} Invalid data folder type: {type(folder)}. Converting to string. {folder}"
                         )
                         data_folders[i] = str(folder)
             else:
                 self.logger.warning(
-                    f"Invalid data folder type: {type(data_folders)}. {data_folders}"
+                    f"{log_tag('NASDB','QFILE')} Invalid data folder type: {type(data_folders)}. {data_folders}"
                 )
                 data_folders = [data_folders]
         else:
@@ -426,11 +416,11 @@ class NAS_DB:
 
         cache_key = (str(query), tuple(sorted(data_folders)))
         if cache_key in self._file_cache:
-            self.logger.info(f"Found file list for {cache_key} in cache.")
+            self.logger.info(f"{log_tag('NASDB','QFILE')} Found file list for {cache_key} in cache.")
             return self._file_cache[cache_key]
 
         self.logger.info(
-            f"Searching for files for query: {query} in folders: {data_folders}."
+            f"{log_tag('NASDB','QFILE')} Searching for files for query: {query} in folders: {data_folders}."
         )
 
         base_path = (
@@ -478,7 +468,7 @@ class NAS_DB:
         ]
         if len(filtered_files) < len(sorted_files):
             self.logger.info(
-                f"Filtered file list from {len(sorted_files)} to {len(filtered_files)} "
+                f"{log_tag('NASDB','QFILE')} Filtered file list from {len(sorted_files)} to {len(filtered_files)} "
                 f"based on allowed extensions: {ALLOWED_EXTENSIONS}"
             )
 
@@ -486,11 +476,11 @@ class NAS_DB:
         normalized_files = [f.replace("\\", "/") for f in filtered_files]
 
         if normalized_files:
-            self.logger.info(f"Found {len(normalized_files)} files. Caching result.")
+            self.logger.info(f"{log_tag('NASDB','QFILE')} Found {len(normalized_files)} files. Caching result.")
             self._file_cache[cache_key] = normalized_files
         else:
             self.logger.warning(
-                f"No files with allowed extensions found for query '{query}' in {data_folders}. Caching empty list."
+                f"{log_tag('NASDB','QFILE')} No files with allowed extensions found for query '{query}' in {data_folders}. Caching empty list."
             )
             self._file_cache[cache_key] = []
 
@@ -520,7 +510,7 @@ class NAS_DB:
             with self.sftp_client.open(remote_script_path, "w") as f:
                 f.write(REMOTE_LIST_SCRIPT)
         except Exception as e:
-            self.logger.error(f"Failed to write remote list script: {e}")
+            self.logger.error(f"{log_tag('NASDB','QFILE')} Failed to write remote list script: {e}")
             return []
 
         cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
@@ -530,7 +520,7 @@ class NAS_DB:
 
         err_output = stderr.read().decode("utf-8", errors="ignore").strip()
         if err_output:
-            self.logger.error(f"Remote list script error: {err_output}")
+            self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
 
         return files
 
@@ -540,7 +530,7 @@ class NAS_DB:
         if not file_list:
             return 0
 
-        self.logger.info(f"Calculating total size of {len(file_list)} files...")
+        self.logger.info(f"{log_tag('NASDB','QBYTE')} Calculating total size of {len(file_list)} files...")
 
         try:
             if self.access_mode == "local":
@@ -553,13 +543,13 @@ class NAS_DB:
                         total_size += self.sftp_client.stat(file_path).st_size
                     except FileNotFoundError:
                         self.logger.warning(
-                            f"Remote file not found during size calculation: {file_path}"
+                            f"{log_tag('NASDB','QBYTE')} Remote file not found during size calculation: {file_path}"
                         )
                         continue
 
             return total_size
         except Exception as e:
-            self.logger.error(f"Error calculating file sizes: {e}")
+            self.logger.error(f"{log_tag('NASDB','QBYTE')} Error calculating file sizes: {e}")
             return -1  # Return -1 to indicate an error
 
     def get_shot_data(
@@ -589,14 +579,14 @@ class NAS_DB:
         """
         if not self._is_connected:
             if not self.connect():
-                raise ConnectionError("Failed to establish connection to NAS.")
+                raise ConnectionError(f"{log_tag('NASDB','QSHOT')} Failed to establish connection to NAS.")
 
         # --- Find all target files on the NAS ---
         target_files = self.find_files(
             query, data_folders, add_path, force_remote, **kwargs
         )
         if not target_files:
-            self.logger.warning(f"No files found on NAS for query: {query}")
+            self.logger.warning(f"{log_tag('NASDB','QSHOT')} No files found on NAS for query: {query}")
             return {}
 
         data_dict: Dict[str, pd.DataFrame] = {}
@@ -614,7 +604,7 @@ class NAS_DB:
 
                 if shot_num_for_cache is None:
                     self.logger.warning(
-                        f"Could not determine shot number for '{basename}'. Will not use cache."
+                        f"{log_tag('NASDB','QSHOT')} Could not determine shot number for '{basename}'. Will not use cache."
                     )
                     files_to_fetch.append(file_path)
                     continue
@@ -623,17 +613,15 @@ class NAS_DB:
                 cache_file = cache_dir / f"{shot_num_for_cache}.h5"
 
                 # --- Start Diagnostic Logging ---
-                self.logger.info(f"[Cache Check] For file: '{basename}'")
-                self.logger.info(
-                    f"[Cache Check] Checking for cache file at: '{cache_file.absolute()}'"
-                )
+                self.logger.info(f"{log_tag('NASDB','CACHE')} For file: '{basename}'")
+                self.logger.info(f"{log_tag('NASDB','CACHE')} Checking for cache file at: '{cache_file.absolute()}'")
 
                 if not cache_file.exists():
-                    self.logger.warning("[Cache Check] -> Cache file NOT FOUND.")
+                    self.logger.warning(f"{log_tag('NASDB','CACHE')} -> Cache file NOT FOUND.")
                     files_to_fetch.append(file_path)
                     continue
 
-                self.logger.info("[Cache Check] -> Cache file FOUND.")
+                self.logger.info(f"{log_tag('NASDB','CACHE')} -> Cache file FOUND.")
                 # --- End Diagnostic Logging ---
 
                 # Sanitize the basename to be a valid HDF5 key, matching the writing logic.
@@ -642,17 +630,15 @@ class NAS_DB:
                     key = "_" + key
 
                 # --- Start Diagnostic Logging ---
-                self.logger.info(f"[Cache Check] Looking for key: '{key}'")
+                self.logger.info(f"{log_tag('NASDB','CACHE')} Looking for key: '{key}'")
                 # --- End Diagnostic Logging ---
 
                 try:
                     with h5py.File(cache_file, "r") as f:
                         if key in f:
+                            self.logger.info(f"{log_tag('NASDB','CACHE')} -> Key FOUND in cache. Loading from HDF5.")
                             self.logger.info(
-                                "[Cache Check] -> Key FOUND in cache. Loading from HDF5."
-                            )
-                            self.logger.info(
-                                f"Found '{basename}' in cache: {cache_file}"
+                                f"{log_tag('NASDB','CACHE')} Found '{basename}' in cache: {cache_file}"
                             )
                             df = pd.read_hdf(cache_file, key)
 
@@ -660,7 +646,7 @@ class NAS_DB:
                             metadata_key = f"{key}_metadata"
                             if metadata_key in f:
                                 self.logger.info(
-                                    f"Restoring metadata for '{basename}' from key '{metadata_key}'"
+                                    f"{log_tag('NASDB','CACHE')} Restoring metadata for '{basename}' from key '{metadata_key}'"
                                 )
                                 metadata_series = pd.read_hdf(cache_file, metadata_key)
                                 metadata_dict = metadata_series.to_dict()
@@ -677,22 +663,20 @@ class NAS_DB:
                                     else:
                                         df.attrs[k] = v
 
-                                self.logger.info(f"Restored metadata: {df.attrs}")
+                                self.logger.info(f"{log_tag('NASDB','CACHE')} Restored metadata: {df.attrs}")
 
                             data_dict[file_path] = df
                         else:
-                            self.logger.warning(
-                                "[Cache Check] -> Key NOT FOUND in cache file. Re-fetching."
-                            )
+                            self.logger.warning(f"{log_tag('NASDB','CACHE')} -> Key NOT FOUND in cache file. Re-fetching.")
                             files_to_fetch.append(file_path)
                 except Exception as e:
                     self.logger.error(
-                        f"Error reading cache file '{cache_file}': {e}. Will refetch."
+                        f"{log_tag('NASDB','CACHE')} Error reading cache file '{cache_file}': {e}. Will refetch."
                     )
                     files_to_fetch.append(file_path)
 
         if not files_to_fetch:
-            self.logger.info("All required files were found in the cache.")
+            self.logger.info(f"{log_tag('NASDB','CACHE')} All required files were found in the cache.")
             return data_dict
 
         # --- Memory Check ---
@@ -702,21 +686,21 @@ class NAS_DB:
 
             if total_size_bytes < 0:
                 self.logger.warning(
-                    "Could not determine total size of files to fetch. Proceeding with caution."
+                    f"{log_tag('NASDB','QSHOT')} Could not determine total size of files to fetch. Proceeding with caution."
                 )
             elif total_size_gb > self.max_load_size_gb:
                 raise MemoryError(
-                    f"Total size of files to fetch ({total_size_gb:.2f} GB) exceeds the configured limit "
+                    f"{log_tag('NASDB','QSHOT')} Total size of files to fetch ({total_size_gb:.2f} GB) exceeds the configured limit "
                     f"of {self.max_load_size_gb:.2f} GB. To override, increase 'max_load_size_gb' in "
                     f"config.ini or use a more specific query."
                 )
             else:
                 self.logger.info(
-                    f"Total size of files to fetch: {total_size_gb:.2f} GB. (Limit: {self.max_load_size_gb:.2f} GB)"
+                    f"{log_tag('NASDB','QSHOT')} Total size of files to fetch: {total_size_gb:.2f} GB. (Limit: {self.max_load_size_gb:.2f} GB)"
                 )
 
         # --- Fetching and Caching Logic ---
-        self.logger.info(f"Fetching {len(files_to_fetch)} files from NAS...")
+        self.logger.info(f"{log_tag('NASDB','QSHOT')} Fetching {len(files_to_fetch)} files from NAS...")
         for file_path in files_to_fetch:
             df = self._read_shot_file(file_path, **kwargs)
             if df is not None:
@@ -737,7 +721,7 @@ class NAS_DB:
                     if key and not key[0].isalpha() and not key.startswith("_"):
                         key = "_" + key
                     self.logger.info(
-                        f"Caching '{basename}' to '{cache_file}' with key '{key}'"
+                        f"{log_tag('NASDB','CACHE')} Caching '{basename}' to '{cache_file}' with key '{key}'"
                     )
                     # Use keyword arguments for to_hdf for future compatibility with pandas 3.0
                     df.to_hdf(
@@ -773,11 +757,11 @@ class NAS_DB:
                             complib="zlib",
                         )
                         self.logger.info(
-                            f"Cached metadata for '{basename}' with key '{metadata_key}'"
+                            f"{log_tag('NASDB','CACHE')} Cached metadata for '{basename}' with key '{metadata_key}'"
                         )
                 else:
                     self.logger.warning(
-                        f"Could not determine shot number for '{basename}'. Skipping cache."
+                        f"{log_tag('NASDB','CACHE')} Could not determine shot number for '{basename}'. Skipping cache."
                     )
 
         # Sort the final dictionary by key (filename) for consistent order
@@ -824,7 +808,7 @@ class NAS_DB:
             return self._read_matlab_mat(file_path, **kwargs)
         else:
             self.logger.warning(
-                f"Unsupported file extension '{ext}' for file: {file_path}"
+                f"{log_tag('NASDB','QEXTN')} Unsupported file extension '{ext}' for file: {file_path}"
             )
             return None
 
@@ -843,7 +827,7 @@ class NAS_DB:
         Raises:
             read_error: If an error occurs while reading the file.
         """
-        self.logger.info(f"Reading CSV file: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','QCSV ')} Reading CSV file: {file_path}")
 
         # Get header without any locks for full parallel processing
         header_text = None
@@ -853,13 +837,13 @@ class NAS_DB:
             header_text = self._get_data_top_remote(file_path, lines=40)
 
         if not header_text:
-            self.logger.error(f"Could not read header of {file_path}")
+            self.logger.error(f"{log_tag('NASDB','QCSV ')} Could not read header of {file_path}")
             return None
 
         header_content = header_text.splitlines()
         csv_type = self._identify_csv_type(header_content)
         self.logger.info(
-            f"Identified CSV type for {Path(file_path).name} as: {csv_type}"
+            f"{log_tag('NASDB','QCSV ')} Identified CSV type for {Path(file_path).name} as: {csv_type}"
         )
 
         # All files run in parallel - no locks
@@ -871,11 +855,11 @@ class NAS_DB:
             if df is not None:
                 df.attrs["source_file_type"] = "csv"
                 df.attrs["source_file_format"] = csv_type
-                self.logger.info(f"Successfully parsed file: {file_path}")
+                self.logger.info(f"{log_tag('NASDB','QCSV ')} Successfully parsed file: {file_path}")
                 return df  # Success, return immediately
         except Exception as read_error:
             self.logger.error(
-                f"Failed to parse file '{file_path}'. Error: {read_error}"
+                f"{log_tag('NASDB','QCSV ')} Failed to parse file '{file_path}'. Error: {read_error}"
             )
             return None
 
@@ -903,7 +887,7 @@ class NAS_DB:
                 file_path, header_content, csv_type, **kwargs
             )
         else:
-            self.logger.error(f"Unknown CSV type '{csv_type}' for {file_path}")
+            self.logger.error(f"{log_tag('NASDB','PCSV ')} Unknown CSV type '{csv_type}' for {file_path}")
             return None
 
     def _identify_csv_type(self, header_content: list[str]) -> str:
@@ -964,7 +948,7 @@ class NAS_DB:
             IndexError: If the header content cannot be parsed.
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"Parsing as MDO3000pc: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','P3KPC')} Parsing as MDO3000pc: {file_path}")
 
         metadata = {}
         source_line_content = []
@@ -987,12 +971,12 @@ class NAS_DB:
 
         if source_line_index == -1:
             self.logger.error(
-                f"Could not find 'Source' line in header for MDO3000pc file: {file_path}"
+                f"{log_tag('NASDB','P3KPC')} Could not find 'Source' line in header for MDO3000pc file: {file_path}"
             )
             return None
 
         self.logger.info(
-            f"MDO3000pc 'Source' line content: {source_line_content}"
+            f"{log_tag('NASDB','P3KPC')} MDO3000pc 'Source' line content: {source_line_content}"
         )  # Debugging line
 
         # 2. Determine column names and data column indices from 'Source' line
@@ -1017,7 +1001,7 @@ class NAS_DB:
 
         if not final_data_indices:
             self.logger.error(
-                f"Could not extract data column indices for MDO3000pc file: {file_path}"
+                f"{log_tag('NASDB','P3KPC')} Could not extract data column indices for MDO3000pc file: {file_path}"
             )
             return None
 
@@ -1028,7 +1012,7 @@ class NAS_DB:
             # The actual data starts after the header block (assumed to be 17 lines)
             if self.access_mode == "remote":
                 self.logger.info(
-                    f"Downloading remote file to temp location: {file_path}"
+                    f"{log_tag('NASDB','P3KPC')} Downloading remote file to temp location: {file_path}"
                 )
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
                 self.sftp_client.get(file_path, temp_file.name)
@@ -1054,7 +1038,7 @@ class NAS_DB:
                     )
             except Exception as e_c:
                 self.logger.warning(
-                    f"C engine parse failed for MDO3000pc: {e_c}. Retrying with python engine."
+                    f"{log_tag('NASDB','P3KPC')} C engine parse failed for MDO3000pc: {e_c}. Retrying with python engine."
                 )
                 p = ensure_str_path(read_target)
                 with open(p, "rb") as fh:
@@ -1079,7 +1063,7 @@ class NAS_DB:
 
         except Exception as e:
             self.logger.error(
-                f"Pandas failed to parse MDO3000pc file {file_path}. Error: {e}"
+                f"{log_tag('NASDB','P3KPC')} Pandas failed to parse MDO3000pc file {file_path}. Error: {e}"
             )
             return None
         finally:
@@ -1107,7 +1091,7 @@ class NAS_DB:
             IndexError: If the header content cannot be parsed.
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"Parsing as MSO58: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','PMSO5')} Parsing as MSO58: {file_path}")
 
         metadata = {}
         header_row_index = -1
@@ -1131,13 +1115,13 @@ class NAS_DB:
             if "TIME" in line.upper() and "CH" in line.upper():
                 header_row_index = i
                 self.logger.info(
-                    f"Dynamically detected MSO58 header at line: {header_row_index}"
+                    f"{log_tag('NASDB','PMSO5')} Dynamically detected MSO58 header at line: {header_row_index}"
                 )
                 break
 
         if header_row_index == -1:
             self.logger.error(
-                f"Could not dynamically determine the header row for MSO58 file: {file_path}"
+                f"{log_tag('NASDB','PMSO5')} Could not dynamically determine the header row for MSO58 file: {file_path}"
             )
             return None
 
@@ -1146,7 +1130,7 @@ class NAS_DB:
         try:
             if self.access_mode == "remote":
                 self.logger.info(
-                    f"Downloading remote file to temp location: {file_path}"
+                    f"{log_tag('NASDB','PMSO5')} Downloading remote file to temp location: {file_path}"
                 )
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
                 self.sftp_client.get(file_path, temp_file.name)
@@ -1174,18 +1158,18 @@ class NAS_DB:
             actual_len = len(df)
             expected_len = metadata.get("record_length")
             self.logger.info(
-                f"File: {Path(file_path).name}, Record Length from header: {expected_len}, Actual rows read: {actual_len}"
+                f"{log_tag('NASDB','PMSO5')} File: {Path(file_path).name}, Record Length from header: {expected_len}, Actual rows read: {actual_len}"
             )
             if expected_len is not None and expected_len != actual_len:
                 self.logger.warning(
-                    f"RECORD LENGTH MISMATCH for {Path(file_path).name}! Header: {expected_len}, Actual: {actual_len}"
+                    f"{log_tag('NASDB','PMSO5')} RECORD LENGTH MISMATCH for {Path(file_path).name}! Header: {expected_len}, Actual: {actual_len}"
                 )
 
             df.attrs["metadata"] = metadata
             return df
         except Exception as e:
             self.logger.error(
-                f"Pandas failed to parse MSO58 file {file_path}. Error: {e}"
+                f"{log_tag('NASDB','PMSO5')} Pandas failed to parse MSO58 file {file_path}. Error: {e}"
             )
             return None
         finally:
@@ -1210,7 +1194,7 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"Parsing as {csv_type}: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','P3K  ')} Parsing as {csv_type}: {file_path}")
 
         metadata = {}
         header_row_index = -1
@@ -1236,12 +1220,12 @@ class NAS_DB:
 
         if header_row_index == -1:
             self.logger.error(
-                f"Could not find a valid header row ('TIME', 'CH...') in {file_path}"
+                f"{log_tag('NASDB','P3K  ')} Could not find a valid header row ('TIME', 'CH...') in {file_path}"
             )
             return None
 
         self.logger.info(
-            f"Found header at line {header_row_index + 1}. Metadata: {metadata}"
+            f"{log_tag('NASDB','P3K  ')} Found header at line {header_row_index + 1}. Metadata: {metadata}"
         )
 
         # 2. Read the actual data using pandas, skipping to the data section
@@ -1250,7 +1234,7 @@ class NAS_DB:
         try:
             if self.access_mode == "remote":
                 self.logger.info(
-                    f"Downloading remote file to temp location: {file_path}"
+                    f"{log_tag('NASDB','P3K  ')} Downloading remote file to temp location: {file_path}"
                 )
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
                 self.sftp_client.get(file_path, temp_file.name)
@@ -1276,7 +1260,7 @@ class NAS_DB:
                     )
             except Exception as e_c:
                 self.logger.warning(
-                    f"C engine parse failed for standard CSV: {e_c}. Retrying with python engine."
+                    f"{log_tag('NASDB','P3K  ')} C engine parse failed for standard CSV: {e_c}. Retrying with python engine."
                 )
                 p = ensure_str_path(read_target)
                 with open(p, "rb") as fh:
@@ -1302,7 +1286,7 @@ class NAS_DB:
             return df
         except Exception as e:
             self.logger.error(
-                f"Pandas failed to parse {file_path} with detected header. Error: {e}"
+                f"{log_tag('NASDB','P3K  ')} Pandas failed to parse {file_path} with detected header. Error: {e}"
             )
             return None
         finally:
@@ -1311,13 +1295,13 @@ class NAS_DB:
                 os.unlink(temp_file.name)
 
     def _read_fpga_dat(self, file_path: str, **kwargs) -> pd.DataFrame | None:
-        self.logger.info(f"Parsing as FPGA .dat: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','PFPGA')} Parsing as FPGA .dat: {file_path}")
         read_target = file_path
         temp_file = None
         try:
             if self.access_mode == "remote":
                 self.logger.info(
-                    f"Downloading remote .dat file to temp location: {file_path}"
+                    f"{log_tag('NASDB','PFPGA')} Downloading remote .dat file to temp location: {file_path}"
                 )
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".dat")
                 self.sftp_client.get(file_path, temp_file.name)
@@ -1340,7 +1324,7 @@ class NAS_DB:
             df.attrs["source_file_format"] = "FPGA"
             return df
         except Exception as e:
-            self.logger.error(f"Failed to parse FPGA file {file_path}: {e}")
+            self.logger.error(f"{log_tag('NASDB','PFPGA')} Failed to parse FPGA file {file_path}: {e}")
             return None
         finally:
             if temp_file:
@@ -1360,13 +1344,13 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"Parsing as MATLAB .mat: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','PMAT ')} Parsing as MATLAB .mat: {file_path}")
         try:
             local_mat_path = file_path
             if self.access_mode == "remote":
                 # .mat are binary, need to be downloaded whole first.
                 self.logger.warning(
-                    "Remote .mat files will be downloaded to a temporary local file."
+                    f"{log_tag('NASDB','PMAT ')} Remote .mat files will be downloaded to a temporary local file."
                 )
                 local_mat_path = Path(self.dumping_folder) / Path(file_path).name
                 self.sftp_client.get(file_path, local_mat_path)
@@ -1393,7 +1377,7 @@ class NAS_DB:
             df.attrs["source_file_format"] = "MATLAB"
             return df
         except Exception as e:
-            self.logger.error(f"Failed to parse MATLAB file {file_path}: {e}")
+            self.logger.error(f"{log_tag('NASDB','PMAT ')} Failed to parse MATLAB file {file_path}: {e}")
             return None
 
     def get_data_top(
@@ -1426,11 +1410,11 @@ class NAS_DB:
 
         file_paths = self.find_files(query, data_folders)
         if not file_paths:
-            self.logger.warning(f"No files found for query {query} to get header from.")
+            self.logger.warning(f"{log_tag('NASDB','QTOP ')} No files found for query {query} to get header from.")
             return None
 
         first_file = file_paths[0]
-        self.logger.info(f"Getting top {lines} lines from: {first_file}")
+        self.logger.info(f"{log_tag('NASDB','QTOP ')} Getting top {lines} lines from: {first_file}")
 
         if self.access_mode == "local":
             return self._get_data_top_local(first_file, lines)
@@ -1451,13 +1435,13 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while reading the file.
         """
-        self.logger.info(f"Reading top {lines} lines from local file: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','QTOP ')} Reading top {lines} lines from local file: {file_path}")
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 head = [f.readline() for _ in range(lines)]
             return "".join(line for line in head if line)
         except Exception as e:
-            self.logger.error(f"Error reading top lines from {file_path}: {e}")
+            self.logger.error(f"{log_tag('NASDB','QTOP ')} Error reading top lines from {file_path}: {e}")
             return None
 
     def _get_data_top_remote(self, file_path: str, lines: int) -> str | None:
@@ -1474,7 +1458,7 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while reading the file.
         """
-        self.logger.info(f"Reading top {lines} lines from remote file...")
+        self.logger.info(f"{log_tag('NASDB','QTOPR')} Reading top {lines} lines from remote file...")
 
         # 1. Write the head script to a remote temp file
         self._ensure_remote_dir_exists(self.remote_temp_dir)
@@ -1485,33 +1469,33 @@ class NAS_DB:
             with self.sftp_client.open(remote_script_path, "w") as f:
                 f.write(REMOTE_HEAD_SCRIPT)
         except Exception as e:
-            self.logger.error(f"Failed to write remote script: {e}")
+            self.logger.error(f"{log_tag('NASDB','QTOPR')} Failed to write remote script: {e}")
             return None
 
         # 2. Execute the script
         cmd = f'python "{remote_script_path}" "{file_path}" "{lines}"'
 
-        self.logger.info("Executing remote command...")
+        self.logger.info(f"{log_tag('NASDB','QTOPR')} Executing remote command...")
         stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
 
         # 3. Get output and check for errors
         output = stdout.read().decode("utf-8", errors="ignore")
         err_output = stderr.read().decode("utf-8", errors="ignore").strip()
         if err_output:
-            self.logger.error(f"Remote script error: {err_output}")
+            self.logger.error(f"{log_tag('NASDB','QTOPR')} Remote script error: {err_output}")
 
         # 4. Cleanup remote script
         try:
             self.sftp_client.remove(remote_script_path)
         except Exception as e:
             self.logger.warning(
-                f"Failed to remove remote script {remote_script_path}: {e}"
+                f"{log_tag('NASDB','QTOPR')} Failed to remove remote script {remote_script_path}: {e}"
             )
 
         if output:
             return output
         else:
-            self.logger.warning("No data returned from remote script for get_data_top.")
+            self.logger.warning(f"{log_tag('NASDB','QTOPR')} No data returned from remote script for get_data_top.")
             return None
 
     def disconnect(self):
@@ -1522,7 +1506,7 @@ class NAS_DB:
             self.ssh_client.close()
             self.ssh_client = None
         self._is_connected = False
-        self.logger.info("Disconnected.")
+        self.logger.info(f"{log_tag('NASDB','DISC ')} Disconnected.")
 
     def __enter__(self):
         if not self.connect():

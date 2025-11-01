@@ -22,7 +22,7 @@ import pandas as pd
 from typing import Tuple
 import h5py
 
-from ifi.utils.common import ensure_dir_exists
+from .common import ensure_dir_exists
 
 
 """
@@ -283,7 +283,7 @@ def load_results_from_hdf5(shot_num: int, base_dir: str = "results") -> dict:
 
     Examples:
     ```python
-    from ifi.utils.file_io import load_results_from_hdf5
+    from .file_io import load_results_from_hdf5
 
     # Load results for shot 46789
     results = load_results_from_hdf5(46789)
@@ -413,7 +413,7 @@ def load_cached_shot_data(shot_num: int, cache_base_dir: str = "cache") -> dict:
 
     Examples:
     ```python
-    from ifi.utils.file_io import load_cached_shot_data
+    from .file_io import load_cached_shot_data
 
     # Load cached data for shot 46789 (legacy function)
     cached_data = load_cached_shot_data(46789)

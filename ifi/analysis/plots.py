@@ -44,12 +44,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 
-# from ifi.utils.cache_setup import setup_project_cache
-from ifi.db_controller.vest_db import VEST_DB
-from ifi.analysis.spectrum import SpectrumAnalysis
-from ifi.analysis.params.params_plot import set_plot_style, FontStyle
-from ifi.utils.common import LogManager, ensure_dir_exists
-from ifi.analysis.functions.power_conversion import (
+# from ..utils.cache_setup import setup_project_cache
+from ..db_controller.vest_db import VEST_DB
+from .spectrum import SpectrumAnalysis
+from .params.params_plot import set_plot_style, FontStyle
+from ..utils.common import LogManager, ensure_dir_exists, log_tag
+from .functions.power_conversion import (
     pow2db,
     db2pow,  # noqa: F401
     amp2db,  # noqa: F401
@@ -78,7 +78,7 @@ def setup_interactive_mode(backend: str = "auto", style: str = "default"):
 
     Examples:
     ```python
-    from ifi.analysis.plots import setup_interactive_mode
+    from .plots import setup_interactive_mode
     setup_interactive_mode(backend="TkAgg", style="default")
     ```
     """
@@ -127,7 +127,7 @@ def interactive_plotting(
 
     Examples:
     ```python
-    from ifi.analysis.plots import interactive_plotting
+    from .plots import interactive_plotting
 
     with interactive_plotting(show_plots=True, save_dir="plots"):
         plt.plot([1, 2, 3], [1, 4, 2])
@@ -162,9 +162,9 @@ def interactive_plotting(
 
                 try:
                     fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
-                    logger.info(f"Saved figure to {filepath}")
+                    logger.info(f"{log_tag('ION','SAVE')} Saved figure to {filepath}")
                 except Exception as e:
-                    logger.error(f"Failed to save figure {i}: {e}")
+                    logger.error(f"{log_tag('ION','ERROR')} Failed to save figure {i}: {e}")
 
         if show_plots:
             plt.ioff()
@@ -258,12 +258,12 @@ class Plotter:
                     time = data[:, 0]
             else:
                 logger.error(
-                    f"Waveform data must be 1D or 2D numpy array. Got {data.shape}"
+                    f"{log_tag('PLTTR','PREPT')} Waveform data must be 1D or 2D numpy array. Got {data.shape}"
                 )
                 raise ValueError("Waveform data must be 1D or 2D numpy array")
         else:
             logger.error(
-                f"Waveform data must be DataFrame, dict, or numpy array. Got {type(data)}"
+                f"{log_tag('PLTTR','PREPT')} Waveform data must be DataFrame, dict, or numpy array. Got {type(data)}"
             )
             raise ValueError("Waveform data must be DataFrame, dict, or numpy array")
 
@@ -917,7 +917,7 @@ def plot_shot_waveforms(
     Returns:
         None
     """
-    logger.info("Generating waveform plots...")
+    logger.info(f"{log_tag('PLOTS','WFDAT')} Generating waveform plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -928,7 +928,7 @@ def plot_shot_waveforms(
 
     for filename, df in shot_data.items():
         if isinstance(df, pd.DataFrame) and "TIME" in df.columns:
-            logger.info(f"Plotting waveforms for {filename}")
+            logger.info(f"{log_tag('PLOTS','WFDAT')} Plotting waveforms for {filename}")
 
             try:
                 fig, axes = plotter.plot_waveforms(
@@ -941,11 +941,10 @@ def plot_shot_waveforms(
                 output_path = results_dir / f"{filename}_waveforms.png"
                 fig.savefig(output_path, dpi=150, bbox_inches="tight")
                 plt.close(fig)
-
-                logger.info(f"Saved waveform plot: {output_path}")
+                logger.info(f"{log_tag('PLOTS','WFDAT')} Saved waveform plot: {output_path}")
 
             except Exception as e:
-                logger.error(f"Failed to plot waveforms for {filename}: {e}")
+                logger.error(f"{log_tag('PLOTS','WFDAT')} Failed to plot waveforms for {filename}: {e}")
 
 
 def plot_shot_spectrograms(
@@ -962,7 +961,7 @@ def plot_shot_spectrograms(
     Returns:
         None
     """
-    logger.info("Generating spectrogram plots...")
+    logger.info(f"{log_tag('PLOTS','SPCTR')} Generating spectrogram plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -981,7 +980,7 @@ def plot_shot_spectrograms(
             fs = 1.0 / time_diff
 
             logger.info(
-                f"Processing spectrogram for {filename} (fs = {fs / 1e6:.1f} MHz)"
+                f"{log_tag('PLOTS','SPCTR')} Processing spectrogram for {filename} (fs = {fs / 1e6:.1f} MHz)"
             )
 
             signal_cols = [col for col in df.columns if col != "TIME"]
@@ -1005,11 +1004,11 @@ def plot_shot_spectrograms(
                     fig.savefig(output_path, dpi=150, bbox_inches="tight")
                     plt.close(fig)
 
-                    logger.info(f"Saved spectrogram: {output_path}")
+                    logger.info(f"{log_tag('PLOTS','SPCTR')} Saved spectrogram: {output_path}")
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to generate spectrogram for {filename}_{col}: {e}"
+                        f"{log_tag('PLOTS','SPCTR')} Failed to generate spectrogram for {filename}_{col}: {e}"
                     )
 
 
@@ -1027,7 +1026,7 @@ def plot_shot_density_evolution(
     Returns:
         None
     """
-    logger.info("Generating density evolution plots...")
+    logger.info(f"{log_tag('PLOTS','DENS')} Generating density evolution plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -1042,7 +1041,7 @@ def plot_shot_density_evolution(
             density_data[key] = df
 
     if not density_data:
-        logger.warning("No density data found for plotting")
+        logger.warning(f"{log_tag('PLOTS','DENS')} No density data found for plotting")
         return
 
     try:
@@ -1056,10 +1055,10 @@ def plot_shot_density_evolution(
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-        logger.info(f"Saved density evolution plot: {output_path}")
+        logger.info(f"{log_tag('PLOTS','DENS')} Saved density evolution plot: {output_path}")
 
     except Exception as e:
-        logger.error(f"Failed to generate density evolution plot: {e}")
+        logger.error(f"{log_tag('PLOTS','DENS')} Failed to generate density evolution plot: {e}")
 
 
 """
@@ -1138,108 +1137,4 @@ def plot_shot_overview(shot_data, vest_data, results_dir, shot_num, **kwargs):
         )
 
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("ifi.analysis.plots - Plotting Module Demo")
-    print("=" * 60)
-
-    # Create some test data
-    t = np.linspace(0, 1, 1000)
-    data = {
-        "Signal 1": np.sin(2 * np.pi * 10 * t),
-        "Signal 2": np.cos(2 * np.pi * 5 * t),
-    }
-
-    # Use the unified Plotter class
-    plotter = Plotter()
-
-    print("\nCreating demonstration plots...")
-    print("(Plots will be saved to 'demo_plots' directory)")
-
-    # Create demo directory
-    demo_dir = Path("demo_plots")
-    demo_dir.mkdir(exist_ok=True)
-
-    try:
-        # Example 1: Waveform plotting with different scaling
-        print("\n1. Waveform plotting with different scaling...")
-        fig1, axes1 = plotter.plot_waveforms(
-            data,
-            title="Test Signals",
-            time_scale="ms",
-            signal_scale="mV",
-            show_plot=False,
-            save_path=demo_dir / "waveforms_mV.png",
-        )
-
-        # Example 2: Time-frequency analysis
-        print("2. Time-frequency analysis (STFT)...")
-        signal = np.sin(2 * np.pi * 10 * t) + 0.5 * np.sin(2 * np.pi * 20 * t)
-        fig2, axes2 = plotter.plot_time_frequency(
-            signal,
-            method="stft",
-            fs=1000,
-            title="Test STFT",
-            show_plot=False,
-            save_path=demo_dir / "stft_analysis.png",
-            nperseg=256,
-            noverlap=128,
-        )
-
-        # Example 3: Pre-computed arrays
-        print("3. Pre-computed time-frequency arrays...")
-        freqs = np.linspace(0, 50, 100)
-        times = np.linspace(0, 1, 200)
-        Sxx = np.random.rand(100, 200) * np.exp(
-            -((freqs[:, None] - 25) ** 2 + (times[None, :] - 0.5) ** 2) / 0.1
-        )
-        fig3, axes3 = plotter.plot_time_frequency(
-            (freqs, times, Sxx),
-            method="precomputed",
-            title="Pre-computed STFT",
-            show_plot=False,
-            save_path=demo_dir / "precomputed_stft.png",
-        )
-
-        # Example 4: Density plotting with LaTeX formatting
-        print("4. Density plotting with LaTeX formatting...")
-        density_data = {
-            "ne_1": np.random.rand(1000) * 1e18,
-            "ne_2": np.random.rand(1000) * 2e18,
-        }
-        fig4, ax4 = plotter.plot_density(
-            density_data,
-            density_scale="10^18 m^-3",
-            title="Density Evolution",
-            show_plot=False,
-            save_path=demo_dir / "density_evolution.png",
-        )
-
-        # Example 5: LaTeX superscript formatting
-        print("5. LaTeX superscript formatting...")
-        fig5, ax5 = plotter.plot_waveforms(
-            data,
-            signal_scale="m^-2",
-            title="Test with LaTeX superscript",
-            show_plot=False,
-            save_path=demo_dir / "latex_superscript.png",
-        )
-
-        print("\nAll demo plots created successfully!")
-        print(f"Check the '{demo_dir}' directory for saved plots")
-        print("\nKey Features Demonstrated:")
-        print("   • Unified Plotter class with flexible data formats")
-        print("   • Time and signal scaling with different units")
-        print("   • Time-frequency analysis (STFT/CWT)")
-        print("   • Pre-computed array plotting")
-        print("   • Scientific notation support (10^18 m^-3)")
-        print("   • LaTeX formatting for superscripts (m^-2 → m⁻²)")
-        print("   • Automatic figure saving and management")
-
-    except Exception as e:
-        print(f"\nError during demo: {e}")
-        print("This might be due to missing dependencies or display issues.")
-
-    print("\n" + "=" * 60)
-    print("Demo completed! Use 'python -m ifi.analysis.plots' to run this demo again.")
-    print("=" * 60)
+## Main-guard test code removed. See archived copy in `ifi/olds/plots_old_20251030.py`.

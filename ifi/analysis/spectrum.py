@@ -15,10 +15,12 @@ import numpy as np
 from scipy import signal as spsig
 from typing import Tuple
 from functools import lru_cache
-import ssqueezepy as ssqpy
-from ssqueezepy.experimental import scale_to_freq
 
-from ifi.utils.common import LogManager
+from ..utils.common import LogManager, log_tag
+
+# Import external packages for time-frequency transforms
+import ssqueezepy as ssqpy  # noqa: E402
+from ssqueezepy.experimental import scale_to_freq  # noqa: E402
 
 logger = LogManager().get_logger(__name__)
 
@@ -27,7 +29,7 @@ logger = LogManager().get_logger(__name__)
 @lru_cache(maxsize=1)
 def _get_extract_ridges_matlab():
     """Return `extract_fridges`, importing once on first use (cached)."""
-    from ifi.analysis.functions.ridge_tracking import extract_fridges
+    from .functions.ridge_tracking import extract_fridges
 
     return extract_fridges
 
@@ -55,7 +57,7 @@ class SpectrumAnalysis:
     Examples:
         '''python
         import numpy as np
-        from ifi.analysis.spectrum import SpectrumAnalysis
+        from .spectrum import SpectrumAnalysis
 
         analyzer = SpectrumAnalysis()
         fs = 50e6
@@ -78,8 +80,9 @@ class SpectrumAnalysis:
         # Default kwargs for STFT
         self.kwargs_stft_fallback = {
             "window": ("kaiser", 8),
-            "nperseg": 10000,
-            "noverlap": 5000,
+            # nperseg/noverlap/mfft are chosen dynamically when not provided
+            "nperseg": None,
+            "noverlap": None,
             "mfft": None,
             "dual_win": None,
             "scale_to": "magnitude",
@@ -148,7 +151,7 @@ class SpectrumAnalysis:
             TypeError: If the kwargs are not a dictionary
         """
         if not isinstance(kwargs, dict):
-            logger.error(f"kwargs must be a dictionary, but got {type(kwargs)}")
+            logger.error(f"{log_tag('SPECR','KWARG')} kwargs must be a dictionary, but got {type(kwargs)}")
             raise TypeError("kwargs must be a dictionary")
 
         translated = kwargs.copy()
@@ -183,9 +186,36 @@ class SpectrumAnalysis:
         Raises:
             TypeError: If the window type or length is not supported
         """
-        logger.debug("    - [SCIPY STFT] Computing STFT with scipy.")
+        logger.debug(f"{log_tag('SPECR','STFT')} Computing STFT with scipy.")
 
-        all_kwargs = self._get_stft_kwargs(**kwargs)
+        # Dynamically determine STFT sizing if not provided
+        dynamic_kwargs = dict(kwargs)
+        if dynamic_kwargs.get("nperseg") is None:
+            n = signal.shape[-1]
+            # Aim ~1/64 of signal length, clamp between 512 and 8192
+            nperseg_dyn = max(512, min(8192, max(256, n // 64)))
+
+            # Round to nearest power-of-two for FFT efficiency
+            def _round_pow2(x):
+                from math import log2
+
+                p = int(round(log2(x)))
+                return max(256, 1 << p)
+
+            nperseg_dyn = _round_pow2(nperseg_dyn)
+            dynamic_kwargs["nperseg"] = nperseg_dyn
+        if (
+            dynamic_kwargs.get("noverlap") is None
+            and dynamic_kwargs.get("nperseg") is not None
+        ):
+            dynamic_kwargs["noverlap"] = int(dynamic_kwargs["nperseg"] // 2)
+        if (
+            dynamic_kwargs.get("mfft") is None
+            and dynamic_kwargs.get("nperseg") is not None
+        ):
+            dynamic_kwargs["mfft"] = int(dynamic_kwargs["nperseg"])
+
+        all_kwargs = self._get_stft_kwargs(**dynamic_kwargs)
         scipy_kwargs = self._translate_kwargs(all_kwargs, "scipy")
 
         SFT = spsig.ShortTimeFFT(
@@ -221,9 +251,34 @@ class SpectrumAnalysis:
         Raises:
             ValueError: If the kwargs are not a dictionary
         """
-        logger.debug("    - [SSQPY STFT] Computing STFT with ssqueezepy.")
+        logger.debug(f"{log_tag('SPECR','SSTFT')} Computing STFT with ssqueezepy.")
 
-        all_kwargs = self._get_stft_kwargs(**kwargs)
+        # Dynamically determine STFT sizing if not provided
+        dynamic_kwargs = dict(kwargs)
+        if dynamic_kwargs.get("nperseg") is None:
+            n = signal.shape[-1]
+            nperseg_dyn = max(512, min(8192, max(256, n // 64)))
+
+            def _round_pow2(x):
+                from math import log2
+
+                p = int(round(log2(x)))
+                return max(256, 1 << p)
+
+            nperseg_dyn = _round_pow2(nperseg_dyn)
+            dynamic_kwargs["nperseg"] = nperseg_dyn
+        if (
+            dynamic_kwargs.get("noverlap") is None
+            and dynamic_kwargs.get("nperseg") is not None
+        ):
+            dynamic_kwargs["noverlap"] = int(dynamic_kwargs["nperseg"] // 2)
+        if (
+            dynamic_kwargs.get("mfft") is None
+            and dynamic_kwargs.get("nperseg") is not None
+        ):
+            dynamic_kwargs["mfft"] = int(dynamic_kwargs["nperseg"])
+
+        all_kwargs = self._get_stft_kwargs(**dynamic_kwargs)
         sqpy_kwargs = self._translate_kwargs(all_kwargs, "ssqueezepy")
 
         Sxx = ssqpy.stft(
@@ -279,7 +334,7 @@ class SpectrumAnalysis:
             ValueError: If the scales are not valid
         """
         logger.debug(
-            f"    - [SSQPY CWT] Computing CWT with ssqueezepy using '{wavelet}' wavelet."
+            f"{log_tag('SPECR','SCWT')} Computing CWT with ssqueezepy using '{wavelet}' wavelet."
         )
         wav = ssqpy.Wavelet(wavelet)
 
@@ -313,7 +368,8 @@ class SpectrumAnalysis:
         n_ridges: int = 1,
         n_bin: int = 15,
         method: str = "stft",
-        library: str = "MATLAB",
+        library: str = "ssqueezepy",
+        return_idx: bool = False,
     ) -> np.ndarray:
         """
         Finds the frequency "ridge" in a spectrogram by locating the frequency
@@ -332,8 +388,13 @@ class SpectrumAnalysis:
                 Default is 'stft'. ('stft' or 'cwt')
             library (str, optional): Library to use for ridge extraction.
                 Default is 'MATLAB'. ('ssqueezepy' or 'MATLAB')
+            return_idx (bool, optional): To return the index of the ridges.
+                Default is False. (Return the frequency value only if False)
+                
         Returns:
-            np.ndarray: A 1D array containing the frequency with the highest power for each time segment.
+            np.ndarray | Tuple(np.ndarray, np.ndarray): 
+                A 1D array containing the frequency with the highest power for each time segment.
+                Or, A Tuple of frequency value(s) and index(es) in float64 and int64, respectively.
 
         Raises:
             ValueError: If the Zxx matrix is not a 2-D array
@@ -343,7 +404,7 @@ class SpectrumAnalysis:
             ValueError: If the n_ridges is not a valid number
             ValueError: If the n_bin is not a valid number
         """
-        logger.debug("    - [RIDGE] Finding frequency ridge.")
+        logger.debug(f"{log_tag('SPECR','RIDGE')} Finding frequency ridge.")
         if Zxx.ndim != 2:
             raise ValueError(f"`Zxx` must be a 2-D array, but got shape {Zxx.shape}")
 
@@ -358,13 +419,13 @@ class SpectrumAnalysis:
             )
         elif library == "MATLAB":
             extract_ridges_matlab = _get_extract_ridges_matlab()
-            ridge_idxs = extract_ridges_matlab(
+            _, ridge_idxs, _ = extract_ridges_matlab(
                 Zxx, f, penalty=penalty, num_ridges=n_ridges, BW=n_bin
             )
         # Map the indices to frequencies
         freq_ridge = f[ridge_idxs]
 
-        return freq_ridge
+        return (freq_ridge, ridge_idxs) if return_idx else freq_ridge
 
     def find_center_frequency_fft(self, signal: np.ndarray, fs: float) -> float:
         """
@@ -381,7 +442,7 @@ class SpectrumAnalysis:
         Returns:
             float: The estimated center frequency in Hz.
         """
-        logger.debug("    - [FFT] Finding center frequency of signal.")
+        logger.debug(f"{log_tag('SPECR','FCENT')} Finding center frequency of signal.")
 
         n = len(signal)
         if n == 0:
@@ -412,50 +473,16 @@ class SpectrumAnalysis:
         if search_start_idx >= len(yf_positive):
             # If search start index is out of bounds, there's no valid range to search
             logger.warning(
-                "    ! [Center Frequency] No valid range to search for center frequency. Returning 0.0 Hz."
+                f"{log_tag('SPECR','FCENT')} No valid range to search for center frequency. Returning 0.0 Hz."
             )
             return 0.0
 
         peak_idx = np.argmax(yf_positive[search_start_idx:]) + search_start_idx
         f_center = xf_positive[peak_idx]
 
-        logger.info(f"    - [Center Frequency] fc: {f_center / 1e6:.2f} MHz")
+        logger.info(f"{log_tag('SPECR','FCENT')} fc: {f_center / 1e6:.2f} MHz")
 
         return f_center
 
 
-if __name__ == "__main__":
-    # Example usage:
-    analyzer = SpectrumAnalysis()
-    fs1 = 5e6
-    fs2 = 8e6
-    fs = 50e6
-    t = np.arange(0, 1, 1 / fs)
-    signal1 = np.sin(2 * np.pi * fs1 * t)
-    signal2 = np.sin(2 * np.pi * fs2 * t)
-    signal = signal1 + 0.5 * signal2 + 0.1 * np.random.randn(len(t))
-
-    logger.info("    - [Spectrum Analysis] Starting analysis.")
-    f_center = analyzer.find_center_frequency_fft(signal, fs)
-    logger.info(f"    - [Spectrum Analysis] Center Frequency: {f_center / 1e6:.2f} MHz")
-
-    # Call with default parameters using SciPy
-    f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
-    ridge = analyzer.find_freq_ridge(Zxx, f, method="stft")
-    logger.info("    - [Spectrum Analysis] SciPy STFT:")
-    logger.info(f"    - [Spectrum Analysis] STFT shape: {Zxx.shape}")
-    logger.info(f"    - [Spectrum Analysis] Ridge frequency: {np.mean(ridge)}")
-
-    # Call using ssqueezepy
-    f_ssq, t_ssq, Sxx = analyzer.compute_stft_sqpy(signal, fs, n_fft=1024, hop_len=512)
-    ridge_ssqpy1 = analyzer.find_freq_ridge(Sxx, f_ssq)
-    ridge_ssqpy2 = analyzer.find_freq_ridge(Sxx, f_ssq, n_ridges=2)
-    logger.info("    - [Spectrum Analysis] ssqueezepy STFT:")
-    logger.info(f"    - [Spectrum Analysis] STFT shape: {Sxx.shape}")
-    logger.info(
-        f"    - [Spectrum Analysis] Ridge frequency (1 ridge): {np.mean(ridge_ssqpy1)}"
-    )
-    logger.info(
-        f"    - [Spectrum Analysis] Ridge frequency (2 ridges): {np.mean(ridge_ssqpy2)}"
-    )
-    pass
+## Main-guard test code removed. See archived copy in `ifi/olds/spectrum_old_20251030.py`.

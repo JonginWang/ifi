@@ -43,8 +43,8 @@ import logging
 from argparse import Namespace
 import matplotlib.pyplot as plt
 
-from ifi.analysis.main_analysis import run_analysis
-from ifi.utils.common import LogManager
+from .main_analysis import run_analysis
+from ..utils.common import LogManager
 
 LogManager(level="DEBUG")
 

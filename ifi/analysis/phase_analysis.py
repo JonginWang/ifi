@@ -19,10 +19,6 @@ Classes:
     CWTPhaseReconstructor: Implements CWT phase reconstruction
 """
 
-from ifi.utils.cache_setup import setup_project_cache
-
-# cache_config = setup_project_cache()
-
 import numpy as np
 from scipy import signal as spsig
 from scipy.fft import fft, fftfreq
@@ -33,10 +29,12 @@ from numba import njit
 import ssqueezepy as ssqpy
 from ssqueezepy.experimental import scale_to_freq
 
-from ifi.utils.common import LogManager
-from ifi.analysis.spectrum import SpectrumAnalysis
-from ifi.analysis.phi2ne import PhaseConverter
+from ..utils.common import LogManager, log_tag
+from .spectrum import SpectrumAnalysis
+from .phi2ne import PhaseConverter
+from ..utils.cache_setup import setup_project_cache  # noqa: F401
 
+# cache_config = setup_project_cache()
 LogManager()
 
 
@@ -338,7 +336,7 @@ class SignalStacker:
             fs: Sampling frequency in Hz
         """
         # Validate input parameters
-        from ifi.utils.validation import validate_sampling_frequency
+        from ..utils.validation import validate_sampling_frequency
 
         self.fs = validate_sampling_frequency(fs, "sampling_frequency")
 
@@ -360,7 +358,7 @@ class SignalStacker:
             Fundamental frequency in Hz
         """
         # Validate input parameters
-        from ifi.utils.validation import validate_signal, validate_frequency
+        from ..utils.validation import validate_signal, validate_frequency
 
         signal = validate_signal(signal, "signal", min_length=2)
 
@@ -417,7 +415,7 @@ class SignalStacker:
             Tuple of (stacked_signal, time_points)
         """
         # Validate input parameters
-        from ifi.utils.validation import (
+        from ..utils.validation import (
             validate_signal,
             validate_frequency,
             validate_positive_number,
@@ -548,8 +546,8 @@ class SignalStacker:
             import logging
 
             logging.warning(
-                f"Fundamental frequency {f0:.2f} Hz is close to Nyquist frequency {self.fs / 2:.2f} Hz. "
-                f"Consider increasing sampling rate for better accuracy."
+                f"{log_tag('STACK','CDM')} Fundamental frequency {f0:.2f} Hz is close to Nyquist frequency {self.fs / 2:.2f} Hz. "
+                f"{log_tag('STACK','CDM')} Consider increasing sampling rate for better accuracy."
             )
 
         try:
@@ -558,6 +556,9 @@ class SignalStacker:
             )
         except Exception as e:
             # If CDM fails, raise the original error instead of silent fallback
+            logging.error(f"{log_tag('STACK','CDM')} CDM method failed: {e}."
+                f"This may indicate insufficient sampling rate "
+                f"or invalid signal characteristics for CDM analysis.")
             raise RuntimeError(
                 f"CDM method failed: {e}. This may indicate insufficient sampling rate "
                 f"or invalid signal characteristics for CDM analysis."
@@ -979,7 +980,7 @@ class SignalStacker:
             Tuple of (phase_difference, fundamental_frequency)
         """
         # Validate input parameters
-        from ifi.utils.validation import (
+        from ..utils.validation import (
             validate_signal,
             validate_signals_match,
             validate_method,
@@ -993,7 +994,7 @@ class SignalStacker:
         method = validate_method(method, valid_methods, "method")
 
         if f0 is not None:
-            from ifi.utils.validation import validate_frequency
+            from ..utils.validation import validate_frequency
 
             f0 = validate_frequency(f0, "fundamental_frequency")
         else:

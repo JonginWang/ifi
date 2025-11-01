@@ -15,7 +15,7 @@ Functions:
 Examples:
     ```python
     import numpy as np
-    from ifi.analysis.functions.power_conversion import pow2db, db2pow, amp2db, db2amp
+    from .power_conversion import pow2db, db2pow, amp2db, db2amp
     x = np.array([1, 2, 3])
     print(pow2db(x))
     print(db2pow(x))

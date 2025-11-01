@@ -27,7 +27,7 @@ from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
 
-from ifi.utils.common import LogManager
+from ..utils.common import LogManager, log_tag
 
 # Get logger instance
 LogManager()
@@ -112,20 +112,20 @@ class TekScopeController:
             # Setting the scope object to none if it is not a scope.
             if not hasattr(self.scope, "idn_string") or self.scope.idn_string is None:
                 logger.error(
-                    "Device is not found or does not have an identification string."
+                    f"{log_tag('TEKSC','CONN ')} Device is not found or does not have an identification string."
                 )
                 self.scope = None
                 raise TypeError("Device is not a Scope")
             if not isinstance(self.scope, (MDO3, MSO5)):
                 if self.scope.idn_string is not None:
-                    logger.error(f"Device is not a Scope: {self.scope.idn_string}")
+                    logger.error(f"{log_tag('TEKSC','CONN ')} Device is not a Scope: {self.scope.idn_string}")
                 self.scope = None
                 raise TypeError("Device is not a Scope")
 
-            logger.info(f"Successfully connected to: {self.scope.idn_string}")
+            logger.info(f"{log_tag('TEKSC','CONN ')} Successfully connected to: {self.scope.idn_string}")
             return True
         except (IndexError, KeyError, TypeError) as e:
-            logger.error(f"Failed to connect to {device_identifier}: {e}")
+            logger.error(f"{log_tag('TEKSC','CONN ')} Failed to connect to {device_identifier}: {e}")
             self.scope = None
             return False
 
@@ -136,7 +136,7 @@ class TekScopeController:
             None
         """
         if self.scope:
-            logger.info(f"Disconnecting from {self.scope.device_name}")
+            logger.info(f"{log_tag('TEKSC','DISC ')} Disconnecting from {self.scope.device_name}")
             self.scope.close()
             self.scope = None
         # self.dm.close_all_devices() # Use this for a full cleanup
@@ -174,7 +174,7 @@ class TekScopeController:
             A tuple containing two NumPy arrays (time, voltage), or None on failure.
         """
         if not self.scope:
-            logger.error("Cannot get waveform, no scope connected.")
+            logger.error(f"{log_tag('TEKSC','GETWF')} Cannot get waveform, no scope connected.")
             return None
 
         try:
@@ -192,6 +192,6 @@ class TekScopeController:
 
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred while getting waveform for {channel}: {e}"
+                f"{log_tag('TEKSC','GETWF')} An unexpected error occurred while getting waveform for {channel}: {e}"
             )
             return None

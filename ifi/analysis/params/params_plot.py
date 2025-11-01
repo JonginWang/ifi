@@ -26,7 +26,7 @@ def set_plot_style(font="Arial", size=8.5):
 
     Examples:
     ```python
-    from ifi.analysis.params.params_plot import set_plot_style, FontStyle
+    from .params_plot import set_plot_style, FontStyle
     set_plot_style()
     fig, ax = plt.subplots()
     ax.set_title("My Plot Title", **FontStyle.title)

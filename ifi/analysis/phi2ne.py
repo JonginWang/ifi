@@ -32,9 +32,9 @@ import matplotlib.pyplot as plt
 
 # "eegpy" is a package that contains the remezord function, translated from MATLAB
 # Though remezord is not in scipy, we could import by piece of script under ifi/analysis/functions/remezord.py
-from ifi.analysis.functions.remezord import remezord
-from ifi.analysis.plots import plot_response
-from ifi.utils.common import LogManager
+from .functions.remezord import remezord
+from .plots import plot_response
+from ..utils.common import LogManager, log_tag
 
 logger = LogManager().get_logger(__name__)
 
@@ -332,7 +332,7 @@ class PhaseConverter:
 
     Example:
         ```python
-        from ifi.analysis.phi2ne import PhaseConverter
+        from .phi2ne import PhaseConverter
         converter = PhaseConverter()
         converter.get_params(94)
         converter.get_analysis_params(45821, "45821_056.csv")
@@ -412,7 +412,7 @@ class PhaseConverter:
             if freq_hz is not None:
                 import logging
 
-                logging.warning("Both freq_hz and wavelength provided. Using freq_hz.")
+                logging.warning(f"{log_tag('PHI2N','PARAM')} Both freq_hz and wavelength provided. Using freq_hz.")
             else:
                 # Convert wavelength to frequency: f = c / λ
                 c = self.constants["c"]  # Speed of light
@@ -543,15 +543,11 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(
-                f"    - [LPF] numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
-            )
-            logging.info(
-                "    - [LPF] Difference is significant. Using the value from remezord."
-            )
+            logging.info(f"{log_tag('PHI2N','LPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info(f"{log_tag('PHI2N','LPF  ')} Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            logging.info(f"    - [LPF] Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"{log_tag('PHI2N','LPF  ')} Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
         if all(bands) <= 1.0:
             taps = remez(numtaps, bands, amps, weight, fs=1.0, grid_density=20)
@@ -580,15 +576,11 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(
-                f"    - [BPF] numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
-            )
-            logging.info(
-                "    - [BPF] Difference is significant. Using the value from remezord."
-            )
+            logging.info(f"{log_tag('PHI2N','BPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
+            logging.info(f"{log_tag('PHI2N','BPF  ')} Difference is significant. Using the value from remezord.")
             pass
         elif approx:
-            logging.info(f"    - [BPF] Using approximate numtaps: {numtaps_approx}")
+            logging.info(f"{log_tag('PHI2N','BPF  ')} Using approximate numtaps: {numtaps_approx}")
             numtaps = numtaps_approx
 
         if all(bands) <= 1.0:
@@ -602,9 +594,7 @@ class PhaseConverter:
         """Plots the frequency response of the FIR filter."""
         if fs is None:
             fs = 2 * np.pi
-            logging.warning(
-                "    ! [Filter Plot] fs is not provided, using 2*pi, resulting in frequency in rad/sample"
-            )
+            logging.warning(f"{log_tag('PHI2N','VFILT')} fs is not provided, using 2*pi, resulting in frequency in rad/sample")
         freqs_at_response, responses = freqz(taps, worN=2048, fs=fs)
         plot_response(freqs_at_response, responses, title)
         plt.show()
@@ -787,19 +777,19 @@ class PhaseConverter:
         if mode == "ip":
             if shot_num is None:
                 logging.warning(
-                    "    ! [Baseline Correction] 'ip' baseline mode selected but shot_num not provided. Skipping."
+                    f"{log_tag('PHI2N','BLINE')} 'ip' baseline mode selected but shot_num not provided. Skipping."
                 )
                 return corrected_df
 
             if vest_data is None or vest_data.empty:
                 logging.warning(
-                    "    ! [Baseline Correction] 'ip' baseline mode selected but VEST DB not available. Skipping."
+                    f"{log_tag('PHI2N','BLINE')} 'ip' baseline mode selected but VEST DB not available. Skipping."
                 )
                 return corrected_df
 
             if ip_column_name is None or ip_column_name not in vest_data.columns:
                 logging.warning(
-                    f"    ! [Baseline Correction] Plasma current column '{ip_column_name}' not in VEST DB. Skipping."
+                    f"{log_tag('PHI2N','BLINE')} Plasma current column '{ip_column_name}' not in VEST DB. Skipping."
                 )
                 return corrected_df
 
@@ -822,10 +812,10 @@ class PhaseConverter:
 
             except IndexError:
                 logging.warning(
-                    f"    ! [Baseline Correction] Plasma current never exceeded threshold ({ip_threshold})."
+                    f"{log_tag('PHI2N','BLINE')} Plasma current never exceeded threshold ({ip_threshold})."
                 )
                 logging.warning(
-                    "    ! Cannot determine ramp-up for 'ip' baseline. Skipping."
+                    f"{log_tag('PHI2N','BLINE')} Cannot determine ramp-up for 'ip' baseline. Skipping."
                 )
                 return corrected_df
 
@@ -834,7 +824,7 @@ class PhaseConverter:
 
         else:
             logging.warning(
-                f"    ! [Baseline Correction] Invalid baseline mode '{mode}'. Skipping."
+                f"{log_tag('PHI2N','BLINE')} Invalid baseline mode '{mode}'. Skipping."
             )
             return corrected_df
 
@@ -843,24 +833,24 @@ class PhaseConverter:
 
         if len(baseline_idxs) == 0:
             logging.warning(
-                f"    ! [Baseline Correction] No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping."
+                f"{log_tag('PHI2N','BLINE')} No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping."
             )
             return corrected_df
 
         logging.info(
-            f"    - [Baseline Correction] Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points)."
+            f"{log_tag('PHI2N','BLINE')} Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points)."
         )
         for col in corrected_df.columns:
             baseline_mean = corrected_df[col].iloc[baseline_idxs].mean()
             corrected_df[col] -= baseline_mean
             logging.info(
-                f"    - [Baseline Correction] Column '{col}': Removed baseline of {baseline_mean:.2e}"
+                f"{log_tag('PHI2N','BLINE')} Column '{col}': Removed baseline of {baseline_mean:.2e}"
             )
 
         return corrected_df
 
 
-if __name__ == "__main__":
-    # pc = PhaseConverter()
-    # print(pc.get_params(94))
-    pass
+# if __name__ == "__main__":
+#     # pc = PhaseConverter()
+#     # print(pc.get_params(94))
+#     pass

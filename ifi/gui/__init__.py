@@ -9,6 +9,6 @@ Classes:
     Application: The main application class for the IFI application.
 """
 
-from ifi.gui.main_window import Application
+from .main_window import Application
 
 __all__ = ["Application"]
