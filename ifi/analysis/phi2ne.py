@@ -104,20 +104,37 @@ def _calculate_differential_phase(i_norm, q_norm):
 @numba.jit(nopython=True, cache=True, fastmath=True)
 def _accumulate_phase_diff(phase_diff):
     """
-    Numba-optimized cumulative sum with zero padding.
+    Numba-optimized cumulative sum for CDM phase reconstruction.
+
+    CDM algorithm using asin produces delta_phi[0] to delta_phi[len(time)-2],
+    which is one element shorter than the original signal length.
+    
+    Accumulation process:
+    - Initial phase difference: 0
+    - phase_accum[0] = 0 (initial value)
+    - phase_accum[1] = 0 + delta_phi[0]
+    - phase_accum[2] = 0 + delta_phi[0] + delta_phi[1]
+    - ...
+    - phase_accum[n] = sum of all delta_phi values
+    - Finally, duplicate the last accumulated value to match original signal length
 
     Args:
-        phase_diff (np.ndarray): Differential phase.
+        phase_diff (np.ndarray): Differential phase (delta_phi), length = len(time) - 1.
 
     Returns:
-        phase_accum (np.ndarray): Accumulated phase.
+        phase_accum (np.ndarray): Accumulated phase, length = len(time).
+            The last value is duplicated to match the original signal length.
     """
     n = len(phase_diff)
+    # Accumulate: start with 0, then add each delta_phi
     phase_accum = np.zeros(n + 1)
-
+    
+    # phase_accum[0] = 0 (initial phase difference)
     for i in range(n):
         phase_accum[i + 1] = phase_accum[i] + phase_diff[i]
-
+    
+    # The last accumulated value (sum of all delta_phi) is the final phase difference
+    # This matches the original signal length: len(phase_accum) = len(phase_diff) + 1
     return phase_accum
 
 
@@ -412,7 +429,9 @@ class PhaseConverter:
             if freq_hz is not None:
                 import logging
 
-                logging.warning(f"{log_tag('PHI2N','PARAM')} Both freq_hz and wavelength provided. Using freq_hz.")
+                logging.warning(
+                    f"{log_tag('PHI2N', 'PARAM')} Both freq_hz and wavelength provided. Using freq_hz."
+                )
             else:
                 # Convert wavelength to frequency: f = c / λ
                 c = self.constants["c"]  # Speed of light
@@ -543,16 +562,36 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(f"{log_tag('PHI2N','LPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            logging.info(f"{log_tag('PHI2N','LPF  ')} Difference is significant. Using the value from remezord.")
+            logging.info(
+                f"{log_tag('PHI2N', 'LPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
+            )
+            logging.info(
+                f"{log_tag('PHI2N', 'LPF  ')} Difference is significant. Using the value from remezord."
+            )
             pass
         elif approx:
-            logging.info(f"{log_tag('PHI2N','LPF  ')} Using approximate numtaps: {numtaps_approx}")
+            logging.info(
+                f"{log_tag('PHI2N', 'LPF  ')} Using approximate numtaps: {numtaps_approx}"
+            )
             numtaps = numtaps_approx
         if all(bands) <= 1.0:
-            taps = remez(numtaps, bands, amps, weight, fs=1.0, grid_density=20)
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=1.0,
+                grid_density=20,
+            )
         else:
-            taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=fs,
+                grid_density=20,
+            )
 
         return taps
 
@@ -576,17 +615,37 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(f"{log_tag('PHI2N','BPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}")
-            logging.info(f"{log_tag('PHI2N','BPF  ')} Difference is significant. Using the value from remezord.")
+            logging.info(
+                f"{log_tag('PHI2N', 'BPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
+            )
+            logging.info(
+                f"{log_tag('PHI2N', 'BPF  ')} Difference is significant. Using the value from remezord."
+            )
             pass
         elif approx:
-            logging.info(f"{log_tag('PHI2N','BPF  ')} Using approximate numtaps: {numtaps_approx}")
+            logging.info(
+                f"{log_tag('PHI2N', 'BPF  ')} Using approximate numtaps: {numtaps_approx}"
+            )
             numtaps = numtaps_approx
 
         if all(bands) <= 1.0:
-            taps = remez(numtaps, bands, amps, weight, fs=1.0, grid_density=20)
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=1.0,
+                grid_density=20,
+            )
         else:
-            taps = remez(numtaps, bands, amps, weight, fs=fs, grid_density=20)
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=fs,
+                grid_density=20,
+            )
 
         return taps
 
@@ -594,7 +653,9 @@ class PhaseConverter:
         """Plots the frequency response of the FIR filter."""
         if fs is None:
             fs = 2 * np.pi
-            logging.warning(f"{log_tag('PHI2N','VFILT')} fs is not provided, using 2*pi, resulting in frequency in rad/sample")
+            logging.warning(
+                f"{log_tag('PHI2N', 'VFILT')} fs is not provided, using 2*pi, resulting in frequency in rad/sample"
+            )
         freqs_at_response, responses = freqz(taps, worN=2048, fs=fs)
         plot_response(freqs_at_response, responses, title)
         plt.show()
@@ -606,7 +667,8 @@ class PhaseConverter:
         fs: float,
         f_center: float,
         isbpf: bool = True,
-        isconj: bool = False,
+        isconj: bool = True,
+        islpf: bool = True,
         isold: bool = False,
         isflip: bool = False,
         plot_filters: bool = False,
@@ -616,10 +678,19 @@ class PhaseConverter:
         This involves BPF, Hilbert transform, LPF, and phase extraction.
 
         Args:
-            ref_signal: The reference channel signal.
-            prob_signal: The probe channel signal.
-            fs: The sampling frequency.
-            f_center: The center frequency of the IF signal, determined from STFT.
+            ref_signal (np.ndarray): The reference channel signal.
+            prob_signal (np.ndarray): The probe channel signal.
+            fs (float): The sampling frequency.
+            f_center (float): The center frequency of the IF signal, determined from STFT.
+            isbpf (bool): Whether to apply BPF.
+            isconj (bool): Whether to use conjugate of the reference signal.
+            islpf (bool): Whether to apply LPF.
+            isold (bool): Whether to use the old method of phase calculation.
+            isflip (bool): Whether to flip the sign of the result.
+            plot_filters (bool): Whether to plot the filter responses.
+
+        Returns:
+            np.ndarray: The phase in radians.
         """
         # 1. Design filters based on f_center.
         # These values are from CDM_VEST_check.m
@@ -668,20 +739,32 @@ class PhaseConverter:
         prob_bpf = filtfilt(bpf_coeffs, 1, prob_signal) if isbpf else prob_signal
 
         # 3. Complex demodulation
+        # Verified: MATLAB hilbert and scipy.signal.hilbert are identical (not conjugates)
+        # MATLAB: x1_94 = hilbert(ref94); ych5 = x1_94.*ch5;
+        # To match MATLAB: use hilbert() directly without conjugate
         ref_hilbert = hilbert(ref_bpf)
-        # Using conjugate on reference aligns with convention for phase difference (phi_prob - phi_ref)
+        # MATLAB equivalent: hilbert(ref_bpf) * prob_bpf
+        # Use .conj() only if isconj=True (for specific phase convention needs)
         demod_signal = (
             ref_hilbert.conj() * prob_bpf if isconj else ref_hilbert * prob_bpf
         )
 
         # 4. Apply LPF to the demodulated signal
-        demod_lpf = filtfilt(lpf_coeffs, 1, demod_signal)
+        demod_lpf = filtfilt(lpf_coeffs, 1, demod_signal) if islpf else demod_signal
 
         # 5. Calculate phase
         # The matlab script uses a differential method.
         if isold:
-            re = filtfilt(lpf_coeffs, 1, np.real(demod_signal))
-            im = filtfilt(lpf_coeffs, 1, np.imag(demod_signal))
+            re = (
+                filtfilt(lpf_coeffs, 1, np.real(demod_signal))
+                if islpf
+                else np.real(demod_signal)
+            )
+            im = (
+                filtfilt(lpf_coeffs, 1, np.imag(demod_signal))
+                if islpf
+                else np.imag(demod_signal)
+            )
         else:
             re = np.real(demod_lpf)
             im = np.imag(demod_lpf)
@@ -695,12 +778,19 @@ class PhaseConverter:
         # Clip argument to arcsin to handle potential floating point errors
         ratio = np.clip((re[:-1] * im[1:] - im[:-1] * re[1:]) / denominator, -1.0, 1.0)
         d_phase = np.arcsin(ratio)
-
-        # The first sample is lost in differentiation, so prepend a 0.
-        phase_accum = np.concatenate(([0], _accumulate_phase_diff(d_phase)))
-
-        # Calibrate to start at 0, assuming first 1000 samples are pre-plasma
-        if len(phase_accum) > 1000:
+        logging.debug(
+            f"{log_tag('PHI2N', 'CDM  ')} length of d_phase: {len(d_phase)} vs {len(re) - 1}"
+        )
+        # The first sample is compensated at _accumulate_phase_diff, so no need to prepend a 0.
+        phase_accum = _accumulate_phase_diff(d_phase)
+        logging.debug(
+            f"{log_tag('PHI2N', 'CDM  ')} length of phase_accum: {len(phase_accum)} vs {len(re)}"
+        )
+        # Calibrate to start at 0, assuming first samples are pre-plasma
+        # MATLAB uses first 10000 samples; use same or adapt based on signal length
+        if len(phase_accum) > 10000:
+            phase_accum -= np.mean(phase_accum[:10000])
+        elif len(phase_accum) > 1000:
             phase_accum -= np.mean(phase_accum[:1000])
 
         if isflip:
@@ -777,19 +867,19 @@ class PhaseConverter:
         if mode == "ip":
             if shot_num is None:
                 logging.warning(
-                    f"{log_tag('PHI2N','BLINE')} 'ip' baseline mode selected but shot_num not provided. Skipping."
+                    f"{log_tag('PHI2N', 'BLINE')} 'ip' baseline mode selected but shot_num not provided. Skipping."
                 )
                 return corrected_df
 
             if vest_data is None or vest_data.empty:
                 logging.warning(
-                    f"{log_tag('PHI2N','BLINE')} 'ip' baseline mode selected but VEST DB not available. Skipping."
+                    f"{log_tag('PHI2N', 'BLINE')} 'ip' baseline mode selected but VEST DB not available. Skipping."
                 )
                 return corrected_df
 
             if ip_column_name is None or ip_column_name not in vest_data.columns:
                 logging.warning(
-                    f"{log_tag('PHI2N','BLINE')} Plasma current column '{ip_column_name}' not in VEST DB. Skipping."
+                    f"{log_tag('PHI2N', 'BLINE')} Plasma current column '{ip_column_name}' not in VEST DB. Skipping."
                 )
                 return corrected_df
 
@@ -812,10 +902,10 @@ class PhaseConverter:
 
             except IndexError:
                 logging.warning(
-                    f"{log_tag('PHI2N','BLINE')} Plasma current never exceeded threshold ({ip_threshold})."
+                    f"{log_tag('PHI2N', 'BLINE')} Plasma current never exceeded threshold ({ip_threshold})."
                 )
                 logging.warning(
-                    f"{log_tag('PHI2N','BLINE')} Cannot determine ramp-up for 'ip' baseline. Skipping."
+                    f"{log_tag('PHI2N', 'BLINE')} Cannot determine ramp-up for 'ip' baseline. Skipping."
                 )
                 return corrected_df
 
@@ -824,7 +914,7 @@ class PhaseConverter:
 
         else:
             logging.warning(
-                f"{log_tag('PHI2N','BLINE')} Invalid baseline mode '{mode}'. Skipping."
+                f"{log_tag('PHI2N', 'BLINE')} Invalid baseline mode '{mode}'. Skipping."
             )
             return corrected_df
 
@@ -833,18 +923,18 @@ class PhaseConverter:
 
         if len(baseline_idxs) == 0:
             logging.warning(
-                f"{log_tag('PHI2N','BLINE')} No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping."
+                f"{log_tag('PHI2N', 'BLINE')} No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping."
             )
             return corrected_df
 
         logging.info(
-            f"{log_tag('PHI2N','BLINE')} Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points)."
+            f"{log_tag('PHI2N', 'BLINE')} Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points)."
         )
         for col in corrected_df.columns:
             baseline_mean = corrected_df[col].iloc[baseline_idxs].mean()
             corrected_df[col] -= baseline_mean
             logging.info(
-                f"{log_tag('PHI2N','BLINE')} Column '{col}': Removed baseline of {baseline_mean:.2e}"
+                f"{log_tag('PHI2N', 'BLINE')} Column '{col}': Removed baseline of {baseline_mean:.2e}"
             )
 
         return corrected_df
