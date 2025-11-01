@@ -298,6 +298,8 @@ ifi/db_controller/shotdata_field_221230.txt
 # Spyder startup with ./.venv to avoid the WinErr 1114 by dll loading error
 startup_spyder.py
 
+ _avast_/
+
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,linux
 
 # Logs

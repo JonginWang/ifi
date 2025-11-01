@@ -15,11 +15,18 @@ def sine_signal(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate a pure sine wave.
 
+    When used with phi2ne.py phase reconstruction methods:
+    - dphidt=False: Constant phase difference = phase (radians) between t[0] and t[-1]
+    - dphidt=True: Linear phase difference from 0 to phase (radians) over duration
+
     Args:
         fs(float): Sampling frequency (Hz)
         freq(float): Tone frequency (Hz)
         duration(float): Signal duration (seconds)
-        phase(float): Initial phase (radians)
+        phase(float): Phase difference magnitude (radians)
+            - If dphidt=False: constant phase offset throughout signal
+            - If dphidt=True: phase grows linearly from 0 to this value
+        dphidt(bool): If False, constant phase offset. If True, linear phase evolution.
 
     Returns:
         (t(np.ndarray), x(np.ndarray)):
@@ -28,10 +35,15 @@ def sine_signal(
     n = int(fs * duration)
     t = np.arange(n) / fs
     if dphidt:
-        phase = 2 * np.pi * freq * t + phase
+        # Linear phase evolution: phase grows linearly from 0 to 'phase' over duration
+        # Phase at t[0] = 0, Phase at t[-1] = phase
+        phase_offset = phase * t / duration
+        phase_vals = 2 * np.pi * freq * t + phase_offset
     else:
-        phase = 2 * np.pi * freq * t + phase * t / n
-    x = np.sin(phase)
+        # Constant phase offset: phase difference is constant = 'phase' throughout
+        # This means the signal has a constant phase offset from the base frequency
+        phase_vals = 2 * np.pi * freq * t + phase
+    x = np.sin(phase_vals)
     return t, x
 
 
