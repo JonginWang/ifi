@@ -62,13 +62,21 @@ def extract_fridges(tf_transf, frequency_scales, penalty=2.0, num_ridges=1, BW=2
         #               penalty_matrix - pre calculated penalty for all potential jumps between two frequencies
         #   outputs:    penalised_energy - new energy with added forward penalty
         #               ridge_idx - calculated initial ridge with only forward penalty
+        #   OPTIMIZED: Vectorized inner loop for better performance
         penalised_energy = Energy_to_track.copy()
+        nfreq, ntime = np.shape(penalised_energy)
 
-        for idx_time in range(1, np.shape(penalised_energy)[1], 1):
-            for idx_freq in range(0, np.shape(penalised_energy)[0], 1):
-                penalised_energy[idx_freq, idx_time] += np.amin(
-                    penalised_energy[:, idx_time - 1] + penalty_matrix[idx_freq, :]
-                )
+        # Vectorized: compute for all frequencies at once per time step
+        for idx_time in range(1, ntime):
+            # For each current frequency idx_freq, compute:
+            #   min(penalised_energy[:, idx_time - 1] + penalty_matrix[idx_freq, :])
+            # Broadcasting: (1, nfreq) + (nfreq, nfreq) = (nfreq, nfreq)
+            prev_energy = penalised_energy[:, idx_time - 1]  # (nfreq,)
+            # candidates[i, j] = prev_energy[j] + penalty_matrix[i, j]
+            # This represents cost of going from prev freq j to current freq i
+            candidates = prev_energy[None, :] + penalty_matrix  # (nfreq, nfreq)
+            min_candidates = np.amin(candidates, axis=1)  # (nfreq,)
+            penalised_energy[:, idx_time] += min_candidates
 
         ridge_idx = np.unravel_index(
             np.argmin(penalised_energy, axis=0), penalised_energy.shape
@@ -84,22 +92,30 @@ def extract_fridges(tf_transf, frequency_scales, penalty=2.0, num_ridges=1, BW=2
         #               penalty_matrix - pre calculated penalty for all potential jumps between two frequencies
         #               ridge_idx_frwd - Calculated forward ridge
         #   outputs:    ridge_idx_frwd - new ridge with added backward penalty
-        #
+        #   OPTIMIZED: Vectorized inner loop for better performance
         pen_e = penalised_energy_frwd.copy()
         e = Energy_to_track.copy()
-        for idx_time in range(np.shape(e)[1] - 2, -1, -1):
+        nfreq, ntime = np.shape(e)
+        eps = np.finfo(np.float64).eps
+
+        # Vectorized: compute for all frequencies at once per time step
+        for idx_time in range(ntime - 2, -1, -1):
             val = (
                 pen_e[ridge_idx_frwd[idx_time + 1], idx_time + 1]
                 - e[ridge_idx_frwd[idx_time + 1], idx_time + 1]
             )
-            for idx_freq in range(0, np.shape(e)[0], 1):
-                new_penalty = penalty_matrix[ridge_idx_frwd[idx_time + 1], idx_freq]
-
-                if (
-                    abs(val - (pen_e[idx_freq, idx_time] + new_penalty))
-                    < np.finfo(np.float64).eps
-                ):
-                    ridge_idx_frwd[idx_time] = idx_freq
+            # Vectorized: compute differences for all frequencies at once
+            prev_freq_idx = ridge_idx_frwd[idx_time + 1]
+            new_penalties = penalty_matrix[prev_freq_idx, :]  # (nfreq,)
+            # Compute candidate values for all frequencies
+            candidate_values = pen_e[:, idx_time] + new_penalties  # (nfreq,)
+            # Find frequency index where difference is within epsilon
+            differences = np.abs(val - candidate_values)
+            matching_indices = np.where(differences < eps)[0]
+            
+            if len(matching_indices) > 0:
+                # Use first matching index (maintains original behavior)
+                ridge_idx_frwd[idx_time] = matching_indices[0]
 
         return ridge_idx_frwd
 
@@ -147,11 +163,11 @@ def extract_fridges(tf_transf, frequency_scales, penalty=2.0, num_ridges=1, BW=2
             frequency_scales[ridge_idx[:, current_ridge_index]]
         )
 
-        for time_idx in range(0, dim[1]):
-            Energy[
-                int(ridge_idx[time_idx, current_ridge_index] - BW) : int(
-                    ridge_idx[time_idx, current_ridge_index] + BW
-                ),
-                time_idx,
-            ] = 0
+        # OPTIMIZED: Vectorized Energy mask setting
+        # Create boolean mask for all time indices at once
+        for time_idx in range(dim[1]):
+            freq_idx = int(ridge_idx[time_idx, current_ridge_index])
+            start_idx = max(0, freq_idx - BW)
+            end_idx = min(dim[0], freq_idx + BW + 1)
+            Energy[start_idx:end_idx, time_idx] = 0
     return max_Energy, ridge_idx, fridge

@@ -98,12 +98,13 @@ def _accumulate_phase_diff(phase_diff):
     CDM algorithm using asin produces delta_phi[0] to delta_phi[len(time)-2],
     which is one element shorter than the original signal length.
 
-    Accumulation process:
-    - Initial phase difference: phase_diff[0]
+    Accumulation process (vectorized using np.cumsum):
+    - phase_accum = cumsum(phase_diff)
     - phase_accum[0] = phase_diff[0]
     - phase_accum[1] = phase_diff[0] + phase_diff[1]
     - ...
-    - phase_accum[n] = sum of all phase_diff values
+    - phase_accum[n-1] = sum of all phase_diff values
+    - Finally, duplicate the last value to match original signal length
 
     Args:
         phase_diff (np.ndarray): Differential phase (delta_phi), length = len(time) - 1.
