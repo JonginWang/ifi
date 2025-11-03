@@ -673,6 +673,7 @@ class PhaseConverter:
         isbpf: bool = True,
         isconj: bool = False,
         islpf: bool = True,
+        iszif: bool = False,
         isflip: bool = False,
         plot_filters: bool = False,
     ) -> np.ndarray:
@@ -688,6 +689,7 @@ class PhaseConverter:
             isbpf (bool): Whether to apply BPF.
             isconj (bool): Whether to use conjugate of the reference signal for demodulation.
             islpf (bool): Whether to apply LPF to the demodulated signal.
+            iszif (bool): Whether to apply zero-IF demodulation to the demodulated signal.
             isflip (bool): Whether to flip the sign of the accumulated phase.
             plot_filters (bool): Whether to plot the filter responses.
 
@@ -755,15 +757,20 @@ class PhaseConverter:
         demod_lpf = filtfilt(lpf_coeffs, 1, demod_signal) if islpf else demod_signal
 
         # 5. Calculate phase
-        # The matlab script uses a differential method.
-        re = np.real(demod_lpf)
-        im = np.imag(demod_lpf)
+        if not iszif:      
+        
+            # The matlab script uses a differential method.
+            re = np.real(demod_lpf)
+            im = np.imag(demod_lpf)
 
-        # Vectorized differential phase calculation (cross-product method)
-        phase_diff = _calculate_differential_phase(re, im)
+            # Vectorized differential phase calculation (cross-product method)
+            phase_diff = _calculate_differential_phase(re, im)
 
-        # The first sample is phase_diff[0] at _accumulate_phase_diff, so no need to prepend a 0.
-        phase_accum = _accumulate_phase_diff(phase_diff)
+            # The first sample is phase_diff[0] at _accumulate_phase_diff, so no need to prepend a 0.
+            phase_accum = _accumulate_phase_diff(phase_diff)
+        else:
+            demod_zif = ref_hilbert.conj() * hilbert(prob_bpf)
+            phase_accum = np.angle(demod_zif)
 
         # MATLAB uses first 10000 samples; use same or adapt based on signal length
         if len(phase_accum) > 10000:
@@ -789,7 +796,7 @@ class PhaseConverter:
 
         This is a simplified version of the logic in FPGAreadData_ver2.m.
         It calculates the phase difference achcived by FPGA chips with COORDIC algorithm 
-        
+
         The full MATLAB script includes more advanced features like:
         - Moving average filtering of the phase difference.
         - Dynamic detection of the plasma discharge window.
