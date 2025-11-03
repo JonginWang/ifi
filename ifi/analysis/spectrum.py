@@ -82,8 +82,8 @@ class SpectrumAnalysis:
             "window": ("kaiser", 8),
             # nperseg/noverlap/mfft are chosen dynamically when not provided
             "nperseg": None,
-            "noverlap": None,
-            "mfft": None,
+            "noverlap": None,  # 10000
+            "mfft": None,      # 5000
             "dual_win": None,
             "scale_to": "magnitude",
             "phase_shift": 0,
