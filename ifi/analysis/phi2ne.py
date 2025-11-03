@@ -75,28 +75,17 @@ def _calculate_differential_phase(i_norm, q_norm):
     Returns:
         phase_diff (np.ndarray): Differential phase.
     """
-    n = len(i_norm)
-    phase_diff = np.zeros(n - 1)
+    # Vectorized differential phase calculation (cross-product method)
+    denominator = np.sqrt(i_norm[:-1] ** 2 + q_norm[:-1] ** 2) * np.sqrt(
+        i_norm[1:] ** 2 + q_norm[1:] ** 2
+    )
+    denominator[denominator == 0] = 1e-12  # Avoid division by zero
 
-    for i in range(n - 1):
-        # Numerator: I_n(i) * Q_n(i+1) - Q_n(i) * I_n(i+1)
-        numerator = i_norm[i] * q_norm[i + 1] - q_norm[i] * i_norm[i + 1]
-
-        # Denominator: sqrt((I_n(i)+I_n(i+1))^2 + (Q_n(i)+Q_n(i+1))^2)
-        denominator = np.sqrt(
-            (i_norm[i] + i_norm[i + 1]) ** 2 + (q_norm[i] + q_norm[i + 1]) ** 2
-        )
-        if denominator == 0:
-            denominator = 1.0
-
-        # Clip ratio to [-1, 1] for arcsin
-        ratio = numerator / denominator
-        if ratio > 1.0:
-            ratio = 1.0
-        elif ratio < -1.0:
-            ratio = -1.0
-
-        phase_diff[i] = np.arcsin(ratio)
+    # Clip argument to arcsin to handle potential floating point errors
+    ratio = np.clip(
+        (i_norm[:-1] * q_norm[1:] - q_norm[:-1] * i_norm[1:]) / denominator, -1.0, 1.0
+    )
+    phase_diff = 2.0 * np.arcsin(ratio)
 
     return phase_diff
 
@@ -108,15 +97,13 @@ def _accumulate_phase_diff(phase_diff):
 
     CDM algorithm using asin produces delta_phi[0] to delta_phi[len(time)-2],
     which is one element shorter than the original signal length.
-    
+
     Accumulation process:
-    - Initial phase difference: 0
-    - phase_accum[0] = 0 (initial value)
-    - phase_accum[1] = 0 + delta_phi[0]
-    - phase_accum[2] = 0 + delta_phi[0] + delta_phi[1]
+    - Initial phase difference: phase_diff[0]
+    - phase_accum[0] = phase_diff[0]
+    - phase_accum[1] = phase_diff[0] + phase_diff[1]
     - ...
-    - phase_accum[n] = sum of all delta_phi values
-    - Finally, duplicate the last accumulated value to match original signal length
+    - phase_accum[n] = sum of all phase_diff values
 
     Args:
         phase_diff (np.ndarray): Differential phase (delta_phi), length = len(time) - 1.
@@ -125,16 +112,9 @@ def _accumulate_phase_diff(phase_diff):
         phase_accum (np.ndarray): Accumulated phase, length = len(time).
             The last value is duplicated to match the original signal length.
     """
-    n = len(phase_diff)
-    # Accumulate: start with 0, then add each delta_phi
-    phase_accum = np.zeros(n + 1)
-    
-    # phase_accum[0] = 0 (initial phase difference)
-    for i in range(n):
-        phase_accum[i + 1] = phase_accum[i] + phase_diff[i]
-    
-    # The last accumulated value (sum of all delta_phi) is the final phase difference
-    # This matches the original signal length: len(phase_accum) = len(phase_diff) + 1
+    phase_accum = np.cumsum(phase_diff)
+    # Duplicate the last value to match the original signal length
+    phase_accum = np.append(phase_accum, phase_accum[-1])
     return phase_accum
 
 
@@ -462,19 +442,24 @@ class PhaseConverter:
         return _phase_to_density(phase, freq, c, m_e, eps0, qe, passes)
 
     def calc_phase_iq_atan2(
-        self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False
+        self,
+        i_signal: np.ndarray,
+        q_signal: np.ndarray,
+        isnorm: bool = True,
+        isflip: bool = False,
     ) -> np.ndarray:
         """
         Calculates the phase from I and Q signals.
         Normalizes the I/Q signals to a unit circle and calculates the accumulated phase.
         """
-        # Normalize
-        iq_mag = np.sqrt(i_signal**2 + q_signal**2)
-        iq_mag[iq_mag == 0] = 1.0
-        i_norm = i_signal / iq_mag
-        q_norm = q_signal / iq_mag
+        # 1. Normalize I and Q signals (numba-optimized)
+        if isnorm:
+            i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
+        else:
+            i_norm = i_signal
+            q_norm = q_signal
 
-        # Calculate phase
+        # 2. Calculate phase by arctan (direct calculation)
         phase = np.unwrap(np.arctan2(q_norm, i_norm))
         phase -= phase[0]  # Calibrate to start at 0
         if isflip:
@@ -482,7 +467,11 @@ class PhaseConverter:
         return phase
 
     def calc_phase_iq_asin2(
-        self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False
+        self,
+        i_signal: np.ndarray,
+        q_signal: np.ndarray,
+        isnorm: bool = True,
+        isflip: bool = False,
     ) -> np.ndarray:
         """
         Calculates the phase from I and Q signals using a differential cross-product method.
@@ -491,28 +480,34 @@ class PhaseConverter:
         OPTIMIZED: Uses numba JIT compilation for enhanced performance.
         """
         # 1. Normalize I and Q signals (numba-optimized)
-        i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
+        if isnorm:
+            i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
+        else:
+            i_norm = i_signal
+            q_norm = q_signal
 
         # 2. Calculate the differential phase (numba-optimized)
-        del_phase = _calculate_differential_phase(i_norm, q_norm)
+        phase_diff = _calculate_differential_phase(i_norm, q_norm)
 
         # Handle any potential NaNs, as in the MATLAB code
-        del_phase[np.isnan(del_phase)] = 0.0
-
-        # Scale by factor of 2 as in original algorithm
-        del_phase *= 2.0
+        phase_diff[np.isnan(phase_diff)] = 0.0
 
         # 3. Accumulate the phase differences (numba-optimized)
-        accumulated_phase = _accumulate_phase_diff(del_phase)
+        phase_accum = _accumulate_phase_diff(phase_diff)
 
         # Match the sign from the MATLAB script
         if isflip:
-            accumulated_phase *= -1
+            phase_accum *= -1
 
-        return accumulated_phase
+        return phase_accum
 
     def calc_phase_iq(
-        self, i_signal: np.ndarray, q_signal: np.ndarray, isflip: bool = False
+        self,
+        i_signal: np.ndarray,
+        q_signal: np.ndarray,
+        iscxprod: bool = False,
+        isnorm: bool = True,
+        isflip: bool = False,
     ) -> np.ndarray:
         """
         Calculates phase from I and Q signals using the default atan2 method.
@@ -522,12 +517,21 @@ class PhaseConverter:
         Args:
             i_signal: In-phase signal array
             q_signal: Quadrature signal array
-            isflip: Whether to flip the sign of the result
+            iscxprod: Whether to use the cross-product method of phase calculation
+            isnorm: Whether to normalize the I and Q signals
+            isflip: Whether to flip the sign of the accumulated phase
 
         Returns:
             Phase array in radians
         """
-        return self.calc_phase_iq_asin2(i_signal, q_signal, isflip=isflip)
+        if iscxprod:
+            return self.calc_phase_iq_asin2(
+                i_signal, q_signal, isnorm=isnorm, isflip=isflip
+            )
+        else:
+            return self.calc_phase_iq_atan2(
+                i_signal, q_signal, isnorm=isnorm, isflip=isflip
+            )
 
     def _create_lpf(self, f_pass, f_stop, fs, approx=False, max_taps=None):
         """Creates a low-pass FIR filter using the remez algorithm."""
@@ -667,9 +671,8 @@ class PhaseConverter:
         fs: float,
         f_center: float,
         isbpf: bool = True,
-        isconj: bool = True,
+        isconj: bool = False,
         islpf: bool = True,
-        isold: bool = False,
         isflip: bool = False,
         plot_filters: bool = False,
     ) -> np.ndarray:
@@ -683,10 +686,9 @@ class PhaseConverter:
             fs (float): The sampling frequency.
             f_center (float): The center frequency of the IF signal, determined from STFT.
             isbpf (bool): Whether to apply BPF.
-            isconj (bool): Whether to use conjugate of the reference signal.
-            islpf (bool): Whether to apply LPF.
-            isold (bool): Whether to use the old method of phase calculation.
-            isflip (bool): Whether to flip the sign of the result.
+            isconj (bool): Whether to use conjugate of the reference signal for demodulation.
+            islpf (bool): Whether to apply LPF to the demodulated signal.
+            isflip (bool): Whether to flip the sign of the accumulated phase.
             plot_filters (bool): Whether to plot the filter responses.
 
         Returns:
@@ -754,39 +756,15 @@ class PhaseConverter:
 
         # 5. Calculate phase
         # The matlab script uses a differential method.
-        if isold:
-            re = (
-                filtfilt(lpf_coeffs, 1, np.real(demod_signal))
-                if islpf
-                else np.real(demod_signal)
-            )
-            im = (
-                filtfilt(lpf_coeffs, 1, np.imag(demod_signal))
-                if islpf
-                else np.imag(demod_signal)
-            )
-        else:
-            re = np.real(demod_lpf)
-            im = np.imag(demod_lpf)
+        re = np.real(demod_lpf)
+        im = np.imag(demod_lpf)
 
         # Vectorized differential phase calculation (cross-product method)
-        denominator = np.sqrt(re[:-1] ** 2 + im[:-1] ** 2) * np.sqrt(
-            re[1:] ** 2 + im[1:] ** 2
-        )
-        denominator[denominator == 0] = 1e-12  # Avoid division by zero
+        phase_diff = _calculate_differential_phase(re, im)
 
-        # Clip argument to arcsin to handle potential floating point errors
-        ratio = np.clip((re[:-1] * im[1:] - im[:-1] * re[1:]) / denominator, -1.0, 1.0)
-        d_phase = np.arcsin(ratio)
-        logging.debug(
-            f"{log_tag('PHI2N', 'CDM  ')} length of d_phase: {len(d_phase)} vs {len(re) - 1}"
-        )
-        # The first sample is compensated at _accumulate_phase_diff, so no need to prepend a 0.
-        phase_accum = _accumulate_phase_diff(d_phase)
-        logging.debug(
-            f"{log_tag('PHI2N', 'CDM  ')} length of phase_accum: {len(phase_accum)} vs {len(re)}"
-        )
-        # Calibrate to start at 0, assuming first samples are pre-plasma
+        # The first sample is phase_diff[0] at _accumulate_phase_diff, so no need to prepend a 0.
+        phase_accum = _accumulate_phase_diff(phase_diff)
+
         # MATLAB uses first 10000 samples; use same or adapt based on signal length
         if len(phase_accum) > 10000:
             phase_accum -= np.mean(phase_accum[:10000])
@@ -810,8 +788,8 @@ class PhaseConverter:
         Processes phase from FPGA data.
 
         This is a simplified version of the logic in FPGAreadData_ver2.m.
-        It calculates the phase difference and performs a basic offset correction.
-
+        It calculates the phase difference achcived by FPGA chips with COORDIC algorithm 
+        
         The full MATLAB script includes more advanced features like:
         - Moving average filtering of the phase difference.
         - Dynamic detection of the plasma discharge window.
