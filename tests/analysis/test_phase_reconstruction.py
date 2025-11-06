@@ -23,7 +23,7 @@ def test_cdm_phase_difference_matches_known_offset():
 
     conv = PhaseConverter()
     # CDM center frequency estimate can be provided as true value for this synthetic case
-    phase = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, isconj=False, isold=True)
+    phase = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, iszif=False)
 
     # unwrap and check the average offset is close to injected delta
     phase_u = np.unwrap(phase)

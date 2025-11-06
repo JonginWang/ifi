@@ -23,8 +23,11 @@ import logging
 
 from ifi.analysis.plots import (
     plot_response, plot_waveforms, plot_spectrogram, plot_density_results,
-    create_shot_results_directory, plot_shot_spectrograms, plot_shot_waveforms, plot_shot_density_evolution,
-    plot_shot_overview, load_cached_shot_data
+    plot_shot_spectrograms, plot_shot_waveforms, plot_shot_density_evolution,
+    plot_shot_overview
+)
+from ifi.utils.file_io import (
+    create_shot_results_directory, load_cached_shot_data
 )
 from ifi.analysis.spectrum import SpectrumAnalysis
 from ifi.utils.common import LogManager, ensure_dir_exists

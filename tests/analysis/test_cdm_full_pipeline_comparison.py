@@ -286,7 +286,7 @@ def test_cdm_using_phaseconverter():
         phase_python = conv.calc_phase_cdm(
             ref, probe, fs, f0,
             isbpf=False,  # No BPF
-            islpf=False,  # No LPF
+            islpf=True,  # LPF enabled (required to remove 2nd harmonic)
             isconj=False,  # No conjugate (matches MATLAB)
             isold=False,  # Use new method (LPF on demod_signal)
             isflip=False

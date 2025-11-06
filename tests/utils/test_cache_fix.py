@@ -103,7 +103,7 @@ def test_cache_and_import():
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        assert False
 
 if __name__ == "__main__":
     success = test_cache_and_import()

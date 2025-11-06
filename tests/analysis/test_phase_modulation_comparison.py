@@ -121,7 +121,7 @@ def test_constant_phase_offset():
         # Python: CDM method (lazy import)
         if _lazy_import_phase_converter():
             conv = PhaseConverter()
-            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, isconj=False, isold=False)
+            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
             
             # Python: IQ method (construct I/Q from signals)
             phase_iq = conv.calc_phase_iq(ref, probe)
@@ -245,7 +245,7 @@ def test_linear_phase_evolution():
         # Python: CDM method (lazy import)
         if _lazy_import_phase_converter():
             conv = PhaseConverter()
-            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, isconj=False, isold=False)
+            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
             
             # Python: IQ method
             phase_iq = conv.calc_phase_iq(ref, probe)
@@ -371,7 +371,7 @@ def test_sinusoidal_phase_modulation():
         # Python: CDM method
         if HAS_PHASE_CONVERTER:
             conv = PhaseConverter()
-            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, isconj=False, isold=False)
+            phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
             
             # Python: IQ method
             phase_iq = conv.calc_phase_iq(ref, probe)
