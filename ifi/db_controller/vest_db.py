@@ -459,6 +459,8 @@ class VEST_DB:
 
         # 2. Estimate sampling rate from the final time axis
         sample_rate = 0.0
+        t_start = None
+        t_end = None
         if len(time) > 1:
             dt = np.mean(np.diff(time))
             if dt > 0:
@@ -485,10 +487,8 @@ class VEST_DB:
             sample_rate = 25e3
 
         # 4. Recalculate time axis
-        # The MATLAB condition `diff(time) < 1/25e3` is a bit ambiguous for a whole array.
-        # It likely checks if the sampling rate is high (e.g., > 25 kHz).
-        # We can check the mean difference.
-        if len(time) > 1 and np.mean(np.diff(time)) < (1 / 25e3):
+        # Only recalculate for high-speed DAQ (2MHz or 250kHz) where t_start and t_end are defined
+        if t_start is not None and t_end is not None and len(time) > 1:
             # High-speed DAQ: create a new time axis
             self.logger.info(
                 f"{log_tag('VESTB','PROC ')} High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis."
@@ -497,7 +497,7 @@ class VEST_DB:
             time = new_time[:-1]
         else:
             # Low-speed DAQ: time values are already in seconds
-            self.logger.info(f"{log_tag('VESTB','PROC ')} normal-speed DAQ detected. Using original time values.")
+            self.logger.info(f"{log_tag('VESTB','PROC ')} Normal-speed DAQ detected. Using original time values.")
             pass  # Time is already correct
 
         return time, data, sample_rate
