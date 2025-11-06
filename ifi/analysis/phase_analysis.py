@@ -12,18 +12,26 @@ Methods:
     2. STFT Ridge Analysis: Use overlap STFT with ridge detection and band analysis
     3. CWT Phase Reconstruction: Use filtfilt + FIR decimation + CWT for phase recovery
 
+Functions:
+    _cordic_rotation_vectorized_jit: Numba JIT compiled CORDIC rotation for arrays
+    _cordic_vectoring_vectorized_jit: Numba JIT compiled CORDIC vectoring mode for arrays
+
 Classes:
-    PhaseChangeDetector: Main class for phase change detection
+    CORDICProcessor: CORDIC algorithm based phase calculation
     SignalStacker: Implements signal stacking methodology
     STFTRidgeAnalyzer: Implements STFT ridge analysis
     CWTPhaseReconstructor: Implements CWT phase reconstruction
+    PhaseChangeDetector: Main class for phase change detection
 """
 
 import numpy as np
 from scipy import signal as spsig
+from scipy.signal import remez
 from scipy.fft import fft, fftfreq
 from typing import Tuple, Optional, List, Dict, Any
-from numba import njit
+from numba import njit, prange
+
+from .functions.remezord import remezord
 
 # Import ssqueezepy after cache setup (which patches torch import)
 import ssqueezepy as ssqpy
@@ -33,7 +41,14 @@ from ..utils.common import LogManager, log_tag
 from .spectrum import SpectrumAnalysis
 from .phi2ne import PhaseConverter
 from ..utils.cache_setup import setup_project_cache  # noqa: F401
-
+from ..utils.validation import (
+    validate_sampling_frequency,
+    validate_signal,
+    validate_frequency,
+    validate_positive_number,
+    validate_signals_match,
+    validate_method,
+)
 # cache_config = setup_project_cache()
 LogManager()
 
@@ -51,15 +66,15 @@ def _cordic_rotation_vectorized_jit(
     Numba JIT compiled CORDIC rotation for arrays.
 
     Args:
-        x: Real components array
-        y: Imaginary components array
-        target_angles: Target angles array
-        angles: Precomputed angle table
-        n_iterations: Number of CORDIC iterations
-        scale_factor: CORDIC scale factor
+        x (np.ndarray): Real components array
+        y (np.ndarray): Imaginary components array
+        target_angles (np.ndarray): Target angles array
+        angles (np.ndarray): Precomputed angle table
+        n_iterations (int): Number of CORDIC iterations
+        scale_factor (float): CORDIC scale factor
 
     Returns:
-        Tuple of (magnitudes, phases)
+        Tuple[np.ndarray, np.ndarray]: Tuple of (magnitudes, phases)
     """
     n = len(x)
 
@@ -101,9 +116,105 @@ def _cordic_rotation_vectorized_jit(
     return magnitudes, angle_accum
 
 
+@njit(parallel=True)
+def _cordic_vectoring_vectorized_jit(
+    x: np.ndarray,
+    y: np.ndarray,
+    angle_table: np.ndarray,  # alpha[i] = atan(2^-i)
+    scale_factor: float,  # ∏√(1+2^{-2i}) = 1/K_n
+    zero_tol: float = 0.0,  # example: 1e-15
+    nan_phase: bool = False,  # True: set phase to NaN for zero vectors
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Numba JIT compiled CORDIC vectoring mode for arrays.
+
+    Vectoring mode: Drive y -> 0, compute phase directly.
+    This is optimal when we only need phase calculation (not rotation to target angle).
+
+    Args:
+        x (np.ndarray): Real components array
+        y (np.ndarray): Imaginary components array
+        angle_table (np.ndarray): Precomputed angle table [arctan(2^(-i)) for i in range(n_iter)]
+        scale_factor (float): CORDIC scale factor K_n
+        zero_tol (float): Tolerance for detecting zero vectors (default: 0.0)
+        nan_phase (bool): If True, set phase to NaN for zero vectors (default: False)
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: 
+            Tuple of (magnitudes, phases) where phases are in [-π, π] range
+    """
+    n = x.shape[0]
+    n_iter = angle_table.shape[0]
+
+    pow2 = np.empty(n_iter, dtype=np.float64)
+    for i in range(n_iter):
+        pow2[i] = 1.0 / (1 << i)
+
+    xr = x.copy()
+    yr = y.copy()
+    z = np.zeros(n, dtype=np.float64)
+
+    # (0,0) mask: detect vectors close to (0,0)
+    zero_mask = np.empty(n, dtype=np.uint8)
+    for j in range(n):
+        zero_mask[j] = 1 if (abs(xr[j]) + abs(yr[j]) <= zero_tol) else 0
+
+    # Quadrant folding: reverse x < 0 and correct z by ±π
+    # vectoring iteration converges more stably in the right half-plane (x≥0), avoiding overflow at boundaries like (-1,0)
+    for j in range(n):
+        if zero_mask[j] == 1:
+            continue
+        if xr[j] < 0.0:
+            yold = yr[j]
+            xr[j] = -xr[j]
+            yr[j] = -yr[j]
+            z[j] = np.pi if yold >= 0.0 else -np.pi
+
+    # Main CORDIC loop - parallelized across elements
+    for i in range(n_iter):
+        a = angle_table[i]
+        f = pow2[i]
+        for j in prange(n):
+            if zero_mask[j] == 1:
+                continue
+            dj = -1.0 if yr[j] >= 0.0 else 1.0
+            x_new = xr[j] - dj * yr[j] * f
+            y_new = yr[j] + dj * xr[j] * f
+            # core patch: invert phase accumulation sign
+            z[j] = z[j] - dj * a
+            xr[j] = x_new
+            yr[j] = y_new
+
+    mags = np.abs(xr) / scale_factor
+
+    # (0,0) sample processing
+    for j in range(n):
+        if zero_mask[j] == 1:
+            mags[j] = 0.0
+            z[j] = np.nan if nan_phase else 0.0
+
+    # final phase [-π, π] wrapping
+    for j in range(n):
+        if zero_mask[j] == 1:
+            continue
+        zj = z[j]
+        while zj <= -np.pi:
+            zj += 2.0 * np.pi
+        while zj > np.pi:
+            zj -= 2.0 * np.pi
+        z[j] = zj
+
+    return mags, z
+
+
 class CORDICProcessor:
     """
     CORDIC (COordinate Rotation DIgital Computer) processor for phase calculations.
+
+    Attributes:
+        n_iterations (int): Number of CORDIC iterations
+        angles (np.ndarray): Precomputed angle table [arctan(2^(-i)) for i in range(n_iterations)]
+        scale_factor (float): CORDIC scale factor K_n
     """
 
     def __init__(self, n_iterations: int = 16):
@@ -111,7 +222,7 @@ class CORDICProcessor:
         Initialize CORDIC processor.
 
         Args:
-            n_iterations: Number of CORDIC iterations (default: 16)
+            n_iterations (int): Number of CORDIC iterations (default: 16)
         """
         self.n_iterations = n_iterations
         # Use float arithmetic for negative powers
@@ -124,15 +235,21 @@ class CORDICProcessor:
         self, x: float, y: float, target_angle: float
     ) -> Tuple[float, float, float]:
         """
-        Perform CORDIC rotation to find magnitude and phase.
+        Perform CORDIC rotation to find magnitude and phase for a single point.
 
         Args:
-            x: Real component
-            y: Imaginary component
-            target_angle: Target angle for rotation
+            x (float): Real component
+            y (float): Imaginary component
+            target_angle (float): Target angle for rotation
 
         Returns:
-            Tuple of (magnitude, phase, scale_factor)
+            Tuple[float, float, float]: Tuple of (magnitude, phase, scale_factor)
+
+        Note:
+            If you need to calculate the phase of a vector (arctan2(y, x)),
+            use `cordic_vectoring_vectorized` instead. This method is designed
+            for rotating a vector to a specific target angle, not for phase calculation.
+            Known issue: `target_angle=0` may not produce accurate phase results.
         """
         # Initialize
         x_rot = x
@@ -170,12 +287,19 @@ class CORDICProcessor:
         Vectorized CORDIC rotation for arrays of complex numbers.
 
         Args:
-            x: Real components array
-            y: Imaginary components array
-            target_angles: Target angles array
+            x (np.ndarray): Real components array
+            y (np.ndarray): Imaginary components array
+            target_angles (np.ndarray): Target angles array
 
         Returns:
-            Tuple of (magnitudes, phases, scale_factor)
+            Tuple[np.ndarray, np.ndarray, float]: Tuple of (magnitudes, phases, scale_factor)
+
+        Note:
+            If you need to calculate phases of vectors (arctan2(y, x)),
+            use `cordic_vectoring_vectorized` instead. This method is designed
+            for rotating vectors to specific target angles, not for phase calculation.
+            Known issue: `target_angles=0` may not produce accurate phase results.
+            For phase calculation, vectoring mode is recommended and more accurate.
         """
         # Ensure arrays are the same length
         n = len(x)
@@ -202,12 +326,12 @@ class CORDICProcessor:
         Pure NumPy vectorized CORDIC rotation for small arrays.
 
         Args:
-            x: Real components array
-            y: Imaginary components array
-            target_angles: Target angles array
+            x (np.ndarray): Real components array
+            y (np.ndarray): Imaginary components array
+            target_angles (np.ndarray): Target angles array
 
         Returns:
-            Tuple of (magnitudes, phases)
+            Tuple[np.ndarray, np.ndarray]: Tuple of (magnitudes, phases)
         """
         n = len(x)
 
@@ -251,72 +375,227 @@ class CORDICProcessor:
 
         return magnitudes, angle_accum
 
-    def extract_phase_samples(
-        self, signal: np.ndarray, f0: float, fs: float, samples_per_period: int = 4
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def cordic_vectoring_vectorized(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        zero_tol: float = 0.0,
+        nan_phase: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
         """
-        Extract phase samples using CORDIC algorithm at specific points in each period.
-        Uses proper CORDIC rotation for phase calculation.
+        Vectorized CORDIC vectoring mode for arrays of complex numbers.
+
+        Vectoring mode computes phase directly by driving y -> 0.
+        This is optimal when we only need phase calculation (not rotation to target angle).
 
         Args:
-            signal: Input signal
-            f0: Fundamental frequency
-            fs: Sampling frequency
-            samples_per_period: Number of samples to extract per period (default: 4)
+            x (np.ndarray): Real components array
+            y (np.ndarray): Imaginary components array
+            zero_tol (float): Tolerance for detecting zero vectors (default: 0.0)
+            nan_phase (bool): If True, set phase to NaN for zero vectors (default: False)
 
         Returns:
-            Tuple of (time_points, phase_values)
+            Tuple[np.ndarray, np.ndarray, float]: 
+                Tuple of (magnitudes, phases, scale_factor) where phases are in [-π, π] range
         """
-        T = 1 / f0
-        samples_per_T = int(T * fs)
+        # Ensure arrays are the same length
+        n = len(x)
+        if len(y) != n:
+            raise ValueError("x and y arrays must have the same length")
 
-        if samples_per_T < 4:
-            # If period is too short, use every sample
-            samples_per_T = 1
-            samples_per_period = 1
+        # Use Numba JIT for large arrays, pure NumPy for small arrays
+        if n > 1000:  # Threshold for JIT compilation
+            magnitudes, phases = _cordic_vectoring_vectorized_jit(
+                x, y, self.angles, self.scale_factor, zero_tol, nan_phase
+            )
+        else:
+            # Use pure NumPy vectorization for small arrays
+            magnitudes, phases = self._cordic_vectoring_numpy_vectorized(
+                x, y, zero_tol, nan_phase
+            )
 
-        # Calculate all time points and signal indices at once
-        time_points = []
-        signal_indices = []
+        return magnitudes, phases, self.scale_factor
 
-        for period in range(len(signal) // samples_per_T):
-            period_start = period * samples_per_T
+    def _cordic_vectoring_numpy_vectorized(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        zero_tol: float = 0.0,
+        nan_phase: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Pure NumPy vectorized CORDIC vectoring mode for small arrays.
 
-            for sample_idx in range(samples_per_period):
-                # Calculate offset within the period
-                offset = int(sample_idx * samples_per_T / samples_per_period)
-                signal_idx = period_start + offset
+        Args:
+            x (np.ndarray): Real components array
+            y (np.ndarray): Imaginary components array
+            zero_tol (float): Tolerance for detecting zero vectors (default: 0.0)
+            nan_phase (bool): If True, set phase to NaN for zero vectors (default: False)
 
-                if signal_idx < len(signal) - 1:
-                    time_points.append(signal_idx / fs)
-                    signal_indices.append(signal_idx)
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: Tuple of (magnitudes, phases)
+        """
+        n = len(x)
 
-        if not signal_indices:
-            return np.array([]), np.array([])
+        # Initialize arrays
+        xr = x.copy()
+        yr = y.copy()
+        z = np.zeros(n, dtype=np.float64)
 
-        # Convert to numpy arrays for vectorized operations
-        signal_indices = np.array(signal_indices)
-        time_points = np.array(time_points)
+        # Precompute pow2 array
+        pow2 = np.array([1.0 / (1 << i) for i in range(self.n_iterations)], dtype=np.float64)
 
-        # Extract all x and y values at once
-        x_values = signal[signal_indices]
-        y_values = signal[signal_indices + 1]
+        # (0,0) mask: detect vectors close to (0,0)
+        zero_mask = (np.abs(xr) + np.abs(yr) <= zero_tol).astype(np.uint8)
 
-        # Use vectorized CORDIC rotation
-        magnitudes, phases, _ = self.cordic_rotation_vectorized(
-            x_values, y_values, np.zeros(len(x_values))
-        )
+        # Quadrant folding: reverse x < 0 and correct z by ±π
+        # vectoring iteration converges more stably in the right half-plane (x≥0), avoiding overflow at boundaries like (-1,0)
+        for j in range(n):
+            if zero_mask[j] == 1:
+                continue
+            if xr[j] < 0.0:
+                yold = yr[j]
+                xr[j] = -xr[j]
+                yr[j] = -yr[j]
+                z[j] = np.pi if yold >= 0.0 else -np.pi
+
+        # CORDIC iterations - pure NumPy
+        for i in range(self.n_iterations):
+            a = self.angles[i]
+            f = pow2[i]
+
+            # Handle zero vectors - skip computation
+            non_zero_mask = zero_mask == 0
+
+            # Determine rotation direction to drive y -> 0
+            # Classic vectoring: d = -sign(y)
+            dj = np.where(yr >= 0.0, -1.0, 1.0)
+
+            # CORDIC rotation with phase sign inversion
+            x_new = np.where(non_zero_mask, xr - dj * yr * f, xr)
+            y_new = np.where(non_zero_mask, yr + dj * xr * f, yr)
+            z = np.where(non_zero_mask, z - dj * a, z)  # core patch: invert phase accumulation sign
+
+            xr = x_new
+            yr = y_new
+
+        # Magnitude = |xr| / scale_factor (yr -> 0 after iterations)
+        magnitudes = np.abs(xr) / self.scale_factor
+
+        # (0,0) sample processing
+        for j in range(n):
+            if zero_mask[j] == 1:
+                magnitudes[j] = 0.0
+                z[j] = np.nan if nan_phase else 0.0
+
+        # final phase [-π, π] wrapping
+        for j in range(n):
+            if zero_mask[j] == 1:
+                continue
+            zj = z[j]
+            while zj <= -np.pi:
+                zj += 2.0 * np.pi
+            while zj > np.pi:
+                zj -= 2.0 * np.pi
+            z[j] = zj
+
+        return magnitudes, z
+
+    def extract_phase_samples(
+        self,
+        signal: np.ndarray,
+        f0: float,
+        fs: float,
+        samples_per_period: Optional[int] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Extract phase samples using CORDIC algorithm.
+
+        Uses Hilbert Transform to create analytic signal, then extracts phase using CORDIC.
+        By default, uses all samples to maintain maximum time resolution.
+        For computational efficiency, can resample using anti-aliasing filter.
+
+        Args:
+            signal (np.ndarray): Input signal
+            f0 (float): Fundamental frequency
+            fs (float): Sampling frequency
+            samples_per_period (Optional[int]): 
+                - If None: Use all samples (maintains time resolution, recommended for stacked signals)
+                - If int: Extract this many samples per period using anti-aliased decimation
+                - Default: None (use all samples)
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: Tuple of (time_points, phase_values)
+        """
+        # Create analytic signal using Hilbert Transform
+        # This is the correct way to extract instantaneous phase from a real signal.
+        # Analytic signal: z(t) = signal(t) + j * H{signal(t)}
+        # where H{} is the Hilbert Transform.
+        analytic = spsig.hilbert(signal)
+
+        if samples_per_period is None:
+            # Use all samples - maintains maximum time resolution
+            # This is recommended for stacked signals where noise is already reduced
+            time_points = np.arange(len(signal)) / fs
+            x_values = np.real(analytic)
+            y_values = np.imag(analytic)
+        else:
+            # Resample using anti-aliasing filter to prevent phase distortion
+            # This maintains phase information while reducing computational load
+            T = 1 / f0
+            samples_per_T = int(T * fs)
+
+            if samples_per_T < 4:
+                # If period is too short, use every sample
+                time_points = np.arange(len(signal)) / fs
+                x_values = np.real(analytic)
+                y_values = np.imag(analytic)
+            else:
+                # Calculate decimation factor to achieve desired samples_per_period
+                # Target: samples_per_period samples per period
+                # Current: samples_per_T samples per period
+                decimation_factor = max(1, samples_per_T // samples_per_period)
+
+                # Check if decimation is needed and feasible
+                if decimation_factor == 1 or samples_per_period >= samples_per_T:
+                    # No decimation needed, use all samples
+                    time_points = np.arange(len(signal)) / fs
+                    x_values = np.real(analytic)
+                    y_values = np.imag(analytic)
+                elif len(signal) < decimation_factor * 2:
+                    # Signal too short for decimation, use all samples
+                    time_points = np.arange(len(signal)) / fs
+                    x_values = np.real(analytic)
+                    y_values = np.imag(analytic)
+                else:
+                    # Use decimate with anti-aliasing filter to preserve phase information
+                    # decimate uses FIR filter to prevent aliasing before downsampling
+                    # This ensures phase information is preserved during downsampling
+                    try:
+                        x_values_decimated = spsig.decimate(np.real(analytic), decimation_factor, ftype="fir")
+                        y_values_decimated = spsig.decimate(np.imag(analytic), decimation_factor, ftype="fir")
+
+                        # Calculate time points for decimated signal
+                        time_points = np.arange(len(x_values_decimated)) * (decimation_factor / fs)
+
+                        x_values = x_values_decimated
+                        y_values = y_values_decimated
+                    except (ValueError, RuntimeError):
+                        # If decimation fails (e.g., invalid cutoff frequency), fall back to all samples
+                        time_points = np.arange(len(signal)) / fs
+                        x_values = np.real(analytic)
+                        y_values = np.imag(analytic)
+
+        # Use vectorized CORDIC vectoring mode to calculate phase from analytic signal
+        # This computes atan2(imag, real) which gives the instantaneous phase
+        magnitudes, phases, _ = self.cordic_vectoring_vectorized(x_values, y_values)
 
         # Unwrap phases to maintain continuity
+        # CORDIC vectoring mode outputs phases in [-π, π] range.
+        # When actual phase changes exceed this range, wrapping occurs.
+        # Use numpy.unwrap to automatically detect and correct 2π jumps.
         if len(phases) > 1:
-            phase_diffs = np.diff(phases)
-            # Find jumps > π and correct them
-            jump_indices = np.where(np.abs(phase_diffs) > np.pi)[0]
-            for idx in jump_indices:
-                if phase_diffs[idx] > np.pi:
-                    phases[idx + 1 :] -= 2 * np.pi
-                elif phase_diffs[idx] < -np.pi:
-                    phases[idx + 1 :] += 2 * np.pi
+            phases = np.unwrap(phases)
 
         return time_points, phases
 
@@ -336,8 +615,6 @@ class SignalStacker:
             fs: Sampling frequency in Hz
         """
         # Validate input parameters
-        from ..utils.validation import validate_sampling_frequency
-
         self.fs = validate_sampling_frequency(fs, "sampling_frequency")
 
         self.spectrum_analyzer = SpectrumAnalysis()
@@ -358,8 +635,6 @@ class SignalStacker:
             Fundamental frequency in Hz
         """
         # Validate input parameters
-        from ..utils.validation import validate_signal, validate_frequency
-
         signal = validate_signal(signal, "signal", min_length=2)
 
         if len(f_range) != 2:
@@ -415,12 +690,6 @@ class SignalStacker:
             Tuple of (stacked_signal, time_points)
         """
         # Validate input parameters
-        from ..utils.validation import (
-            validate_signal,
-            validate_frequency,
-            validate_positive_number,
-        )
-
         signal = validate_signal(signal, "signal", min_length=2)
         f0 = validate_frequency(f0, "fundamental_frequency")
         n_stacks = validate_positive_number(n_stacks, "n_stacks")
@@ -552,7 +821,7 @@ class SignalStacker:
 
         try:
             phase_diff = self.phase_converter.calc_phase_cdm(
-                ref_signal, probe_signal, self.fs, f0, isbpf=True, isconj=True
+                ref_signal, probe_signal, self.fs, f0, isbpf=True, isconj=False, islpf=True, iszif=False, isflip=False
             )
         except Exception as e:
             # If CDM fails, raise the original error instead of silent fallback
@@ -980,12 +1249,6 @@ class SignalStacker:
             Tuple of (phase_difference, fundamental_frequency)
         """
         # Validate input parameters
-        from ..utils.validation import (
-            validate_signal,
-            validate_signals_match,
-            validate_method,
-        )
-
         ref_signal = validate_signal(ref_signal, "ref_signal", min_length=2)
         probe_signal = validate_signal(probe_signal, "probe_signal", min_length=2)
         validate_signals_match(ref_signal, probe_signal, "ref_signal", "probe_signal")
@@ -994,8 +1257,6 @@ class SignalStacker:
         method = validate_method(method, valid_methods, "method")
 
         if f0 is not None:
-            from ..utils.validation import validate_frequency
-
             f0 = validate_frequency(f0, "fundamental_frequency")
         else:
             # Detect fundamental frequency from reference signal
@@ -1174,28 +1435,87 @@ class CWTPhaseReconstructor:
 
     def design_fir_filter(self, f0: float, bandwidth: float = 0.1) -> np.ndarray:
         """
-        Design FIR filter for the target frequency band.
+        Design FIR filter for the target frequency band using remez algorithm.
+
+        Uses remezord to calculate optimal filter length based on frequency
+        requirements and ripple specifications, then designs the filter using
+        the Remez exchange algorithm. This approach is consistent with
+        phi2ne.py's _create_bpf method.
+
+        Note: This method is currently only used in tests. It may be removed
+        in the future if no production code requires it.
 
         Args:
-            f0: Target frequency
-            bandwidth: Bandwidth as fraction of f0
+            f0: Target frequency (Hz)
+            bandwidth: Bandwidth as fraction of f0 (default: 0.1 = 10%)
 
         Returns:
-            FIR filter coefficients
+            FIR filter coefficients (bandpass filter)
         """
-        # Design bandpass filter
-        low_freq = f0 * (1 - bandwidth / 2)
-        high_freq = f0 * (1 + bandwidth / 2)
+        # Design bandpass filter edges (similar to phi2ne.py _create_bpf)
+        # For a bandpass filter with bandwidth around f0, we need:
+        # - Lower stopband edge (f_stop1)
+        # - Lower passband edge (f_pass1)
+        # - Upper passband edge (f_pass2)
+        # - Upper stopband edge (f_stop2)
+        # Use a transition band of bandwidth * 0.5 on each side
+        transition = f0 * bandwidth * 0.5
+        f_pass1 = f0 * (1 - bandwidth / 2)  # Lower passband edge
+        f_pass2 = f0 * (1 + bandwidth / 2)  # Upper passband edge
+        f_stop1 = f_pass1 - transition  # Lower stopband edge
+        f_stop2 = f_pass2 + transition  # Upper stopband edge
 
-        # Normalize frequencies
-        low_norm = low_freq / (self.fs / 2)
-        high_norm = high_freq / (self.fs / 2)
+        # Ensure frequencies are within valid range
+        nyq = 0.5 * self.fs
+        if f_stop2 >= nyq:
+            f_stop2 = nyq * 0.99  # Slightly below Nyquist
+            if f_pass2 >= f_stop2:
+                f_pass2 = f_stop2 * 0.95
+        if f_stop1 < 0:
+            f_stop1 = 0.01 * nyq  # Small positive value
+            if f_pass1 <= f_stop1:
+                f_pass1 = f_stop1 * 1.1
 
-        # Design FIR filter
-        filter_order = 101
-        filter_coeffs = spsig.firwin(
-            filter_order, [low_norm, high_norm], pass_zero=False, window="hamming"
+        # Define frequency bands and amplitudes
+        freqs = [f_stop1, f_pass1, f_pass2, f_stop2]
+        amps = [0, 1, 0]  # Stopband, passband, stopband
+
+        # Define ripple specifications (same as phi2ne.py _create_bpf)
+        rip_stop1 = 1e-4  # Stopband ripple (linear)
+        rip_pass = 0.057501127785  # Passband ripple (linear), ~0.5 dB
+        rip_stop2 = 1e-4  # Stopband ripple (linear)
+        rips = [rip_stop1, rip_pass, rip_stop2]
+
+        # Calculate optimal filter length using remezord
+        [numtaps, bands, desired, weight] = remezord(
+            freqs, amps, rips, Hz=self.fs, alg="herrmann"
         )
+
+        # Ensure odd number of taps for Type I filter
+        if numtaps % 2 == 0:
+            numtaps += 1
+
+        # Design filter using Remez exchange algorithm
+        # remezord normalizes frequencies to [0, 0.5] range, so bands are already normalized
+        # Check if bands are normalized (all <= 1.0) or in Hz
+        if np.all(np.array(bands) <= 1.0):
+            filter_coeffs = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=desired,
+                weight=weight,
+                fs=1.0,
+                grid_density=20,
+            )
+        else:
+            filter_coeffs = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=desired,
+                weight=weight,
+                fs=self.fs,
+                grid_density=20,
+            )
 
         return filter_coeffs
 
@@ -1203,7 +1523,11 @@ class CWTPhaseReconstructor:
         self, signal: np.ndarray, decimation_factor: int = 4
     ) -> np.ndarray:
         """
-        Decimate signal using FIR filter.
+        Decimate signal using anti-aliasing filter.
+
+        Uses scipy.signal.decimate for phase-preserving downsampling.
+        This is equivalent to the previous custom implementation but uses
+        the standard library function for consistency with extract_phase_samples.
 
         Args:
             signal: Input signal
@@ -1212,16 +1536,14 @@ class CWTPhaseReconstructor:
         Returns:
             Decimated signal
         """
-        # Design anti-aliasing filter
-        filter_order = 101
-        cutoff = 0.8 / decimation_factor  # 80% of Nyquist
-        filter_coeffs = spsig.firwin(filter_order, cutoff, window="hamming")
-
-        # Apply zero-phase filtering
-        filtered_signal = spsig.filtfilt(filter_coeffs, 1, signal)
-
-        # Decimate
-        decimated_signal = filtered_signal[::decimation_factor]
+        # Use scipy.signal.decimate for phase-preserving decimation
+        # This uses FIR anti-aliasing filter internally, same as extract_phase_samples
+        try:
+            decimated_signal = spsig.decimate(signal, decimation_factor, ftype="fir")
+        except (ValueError, RuntimeError):
+            # If decimation fails (e.g., signal too short), return original signal
+            # This can happen when signal length < decimation_factor * filter_length
+            decimated_signal = signal
 
         return decimated_signal
 
