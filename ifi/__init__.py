@@ -29,13 +29,11 @@ _MARKERS_TO_GET_PROJ_ROOT = (".git", "pyproject.toml", "setup.cfg")
 def get_project_root(
     package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
 ) -> Optional[Path]:
-    """
-    Get the project root directory.
+    """Get the project root directory.
 
     Args:
         package_name(str): The name of the package to get the project root for.
         markers(tuple[str, ...]): The markers to use to find the project root.
-
     Returns:
         Optional[Path]: The project root directory.
     """
@@ -72,13 +70,11 @@ def get_project_root(
 def add_project_root(
     package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
 ) -> None:
-    """
-    Add the project root to the Python path.
+    """Add the project root to the Python path.
 
     Args:
         package_name(str): The name of the package to add the project root for.
         markers(tuple[str, ...]): The markers to use to find the project root.
-
     Returns:
         None
     """
