@@ -32,6 +32,7 @@ Functions:
         plot_cwt: Plot the CWT for a shot.
         plot_response: Plot the response for a shot.
         plot_shot_overview: Plot the shot overview for a shot.
+        plot_analysis_overview: Plot comprehensive analysis overview for a shot.
 """
 
 from pathlib import Path
@@ -65,6 +66,50 @@ logger = LogManager().get_logger(__name__)
 """
 
 
+def _is_jupyter_environment() -> bool:
+    """
+    Detect if code is running in a Jupyter notebook environment.
+    
+    Returns:
+        bool: True if running in Jupyter notebook, False otherwise
+    """
+    try:
+        # Method 1: Try to import and get IPython instance
+        try:
+            from IPython import get_ipython
+            ipython = get_ipython()
+            if ipython is not None:
+                # Check if running in Jupyter notebook (not just IPython)
+                if hasattr(ipython, 'kernel'):
+                    return True
+                
+                # Check class name (Jupyter uses ZMQInteractiveShell)
+                class_name = ipython.__class__.__name__
+                if 'ZMQ' in class_name or 'Jupyter' in class_name:
+                    return True
+        except (ImportError, NameError):
+            pass
+        
+        # Method 2: Check for Jupyter-specific environment variables
+        import os
+        if os.environ.get('JPY_PARENT_PID') is not None:
+            return True
+        
+        # Method 3: Check if running in IPython/Jupyter by checking __main__
+        import sys
+        if hasattr(sys, 'ps1') and sys.ps1:
+            # Interactive shell, but not necessarily Jupyter
+            pass
+        elif 'ipykernel' in sys.modules:
+            # ipykernel is loaded, likely Jupyter
+            return True
+            
+    except Exception:
+        pass
+    
+    return False
+
+
 def setup_interactive_mode(backend: str = "auto", style: str = "default"):
     """
     Setup matplotlib for optimal interactive use.
@@ -83,15 +128,28 @@ def setup_interactive_mode(backend: str = "auto", style: str = "default"):
     ```
     """
     if backend == "auto":
-        try:
-            import tkinter  # noqa: F401
-
-            matplotlib.use("TkAgg")
-        except ImportError:
+        # Check if running in Jupyter notebook first
+        if _is_jupyter_environment():
             try:
-                matplotlib.use("Qt5Agg")
+                # Try JupyterLab inline backend first
+                matplotlib.use("module://matplotlib_inline.backend_inline")
+            except (ImportError, ValueError):
+                try:
+                    # Fall back to classic inline backend
+                    matplotlib.use("inline")
+                except (ImportError, ValueError):
+                    # If inline backends are not available, use Agg (non-interactive)
+                    matplotlib.use("Agg")
+        else:
+            # Non-Jupyter environment: try interactive backends
+            try:
+                import tkinter  # noqa: F401
+                matplotlib.use("TkAgg")
             except ImportError:
-                matplotlib.use("Agg")
+                try:
+                    matplotlib.use("Qt5Agg")
+                except ImportError:
+                    matplotlib.use("Agg")
     else:
         matplotlib.use(backend)
 
@@ -136,11 +194,14 @@ def interactive_plotting(
     """
     original_backend = matplotlib.get_backend()
     original_interactive = plt.isinteractive()
+    is_jupyter = _is_jupyter_environment()
 
     try:
         if show_plots:
             setup_interactive_mode()
-            plt.ion()
+            # In Jupyter, don't use plt.ion() as inline backend handles display automatically
+            if not is_jupyter:
+                plt.ion()
         yield
     finally:
         if save_dir:
@@ -167,14 +228,24 @@ def interactive_plotting(
                     logger.error(f"{log_tag('ION','ERROR')} Failed to save figure {i}: {e}")
 
         if show_plots:
-            plt.ioff()
-        if block:
-            plt.show(block=True)
-        else:
-            plt.show(block=False)
+            # In Jupyter, inline backend automatically displays plots
+            # Only call plt.show() if not in Jupyter or if explicitly requested
+            if is_jupyter:
+                # In Jupyter, just display the figure (inline backend handles it)
+                for i in plt.get_fignums():
+                    fig = plt.figure(i)
+                    plt.show(block=False)
+            else:
+                # Non-Jupyter: restore interactive state and show plots
+                plt.ioff()
+                if block:
+                    plt.show(block=True)
+                else:
+                    plt.show(block=False)
 
         matplotlib.use(original_backend)
-        plt.interactive(original_interactive)
+        if not is_jupyter:
+            plt.interactive(original_interactive)
 
 
 """
@@ -485,6 +556,8 @@ class Plotter:
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
         if show_plot:
+            # In Jupyter, inline backend automatically displays plots
+            # plt.show() is still called to ensure display, but block=False
             plt.show(block=False)
 
         return fig, axes
@@ -678,6 +751,8 @@ class Plotter:
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
         if show_plot:
+            # In Jupyter, inline backend automatically displays plots
+            # plt.show() is still called to ensure display, but block=False
             plt.show(block=False)
 
         return fig, axes
@@ -721,7 +796,6 @@ class Plotter:
             if time_data is None:
                 max_len = max(len(data) for data in density_data.values())
                 time_data = np.arange(max_len)
-
             signals = density_data
 
         else:
@@ -757,6 +831,8 @@ class Plotter:
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
         if show_plot:
+            # In Jupyter, inline backend automatically displays plots
+            # plt.show() is still called to ensure display, but block=False
             plt.show(block=False)
 
         return fig, ax
@@ -806,6 +882,8 @@ class Plotter:
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
         if show_plot:
+            # In Jupyter, inline backend automatically displays plots
+            # plt.show() is still called to ensure display, but block=False
             plt.show(block=False)
 
         return fig, ax
@@ -898,6 +976,8 @@ class Plotter:
             fig.savefig(save_path, dpi=150, bbox_inches="tight")
 
         if show_plot:
+            # In Jupyter, inline backend automatically displays plots
+            # plt.show() is still called to ensure display, but block=False
             plt.show(block=False)
 
         return fig, axes
@@ -1107,7 +1187,34 @@ def plot_spectrograms(stft_results, **kwargs):
         plotter = Plotter()
         for filename, results_by_col in stft_results.items():
             for col_name, results in results_by_col.items():
-                plotter.plot_time_frequency(results["Zxx"], method="stft", **kwargs)
+                # Handle STFT results format: {freq_STFT, time_STFT, STFT_matrix}
+                if "STFT_matrix" in results and "freq_STFT" in results and "time_STFT" in results:
+                    # Pre-computed STFT: use precomputed method
+                    freqs = results["freq_STFT"]
+                    times = results["time_STFT"]
+                    stft_matrix = results["STFT_matrix"]
+                    plotter.plot_time_frequency(
+                        (freqs, times, stft_matrix),
+                        method="precomputed",
+                        title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
+                        **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                    )
+                elif "Zxx" in results:
+                    # Old format: try to extract freqs and times if available
+                    stft_data = results["Zxx"]
+                    if "freqs" in results and "times" in results:
+                        plotter.plot_time_frequency(
+                            (results["freqs"], results["times"], stft_data),
+                            method="precomputed",
+                            title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
+                            **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                        )
+                    else:
+                        logger.warning(f"STFT data format incomplete for {filename}/{col_name}, skipping")
+                        continue
+                else:
+                    logger.warning(f"Unknown STFT data format for {filename}/{col_name}")
+                    continue
 
 
 def plot_cwt(cwt_results, **kwargs):
@@ -1116,9 +1223,34 @@ def plot_cwt(cwt_results, **kwargs):
         plotter = Plotter()
         for filename, analysis in cwt_results.items():
             for col_name, result in analysis.items():
-                plotter.plot_time_frequency(
-                    result["cwt_matrix"], method="cwt", **kwargs
-                )
+                # Handle CWT results format: {freq_CWT, time_CWT, CWT_matrix}
+                if "CWT_matrix" in result and "freq_CWT" in result and "time_CWT" in result:
+                    # Pre-computed CWT: use precomputed method
+                    freqs = result["freq_CWT"]
+                    times = result["time_CWT"]
+                    cwt_matrix = result["CWT_matrix"]
+                    plotter.plot_time_frequency(
+                        (freqs, times, cwt_matrix),
+                        method="precomputed",
+                        title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
+                        **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                    )
+                elif "cwt_matrix" in result:
+                    # Old format: try to extract freqs and times if available
+                    cwt_data = result["cwt_matrix"]
+                    if "freqs" in result and "times" in result:
+                        plotter.plot_time_frequency(
+                            (result["freqs"], result["times"], cwt_data),
+                            method="precomputed",
+                            title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
+                            **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                        )
+                    else:
+                        logger.warning(f"CWT data format incomplete for {filename}/{col_name}, skipping")
+                        continue
+                else:
+                    logger.warning(f"Unknown CWT data format for {filename}/{col_name}")
+                    continue
 
 
 def plot_response(freqs, responses, **kwargs):
@@ -1135,6 +1267,99 @@ def plot_shot_overview(shot_data, vest_data, results_dir, shot_num, **kwargs):
         return plotter.plot_shot_overview(
             shot_data, vest_data, results_dir, shot_num, **kwargs
         )
+
+
+def plot_analysis_overview(
+    shot_num: int,
+    signals_dict: Dict[str, pd.DataFrame],
+    density_dict: Dict[str, pd.DataFrame],
+    vest_data: Optional[pd.DataFrame] = None,
+    trigger_time: float = 0.0,
+    title_prefix: str = "",
+    downsample: int = 10,
+    **kwargs,
+):
+    """
+    Plot comprehensive analysis overview for a shot.
+    
+    This function creates an overview plot showing:
+    - Processed signals (waveforms)
+    - Density evolution
+    - VEST data (if available)
+    
+    Args:
+        shot_num(int): Shot number for plot titles
+        signals_dict(Dict[str, pd.DataFrame]): Dictionary of signal DataFrames
+        density_dict(Dict[str, pd.DataFrame]): Dictionary of density DataFrames
+        vest_data(Optional[pd.DataFrame]): Optional VEST database data
+        trigger_time(float): Trigger time offset
+        title_prefix(str): Prefix for plot titles
+        downsample(int): Downsampling factor for plotting
+        **kwargs: Additional arguments passed to plotting functions
+        
+    Returns:
+        None
+    """
+    plotter = Plotter()
+    
+    # Plot signals
+    for name, df in signals_dict.items():
+        if df is not None and not df.empty:
+            try:
+                plotter.plot_waveforms(
+                    df,
+                    title=f"{title_prefix}{name}",
+                    trigger_time=trigger_time,
+                    downsample=downsample,
+                    show_plot=True,
+                    **kwargs
+                )
+            except Exception as e:
+                logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot {name}: {e}")
+    
+    # Plot density
+    for name, df in density_dict.items():
+        if df is not None and not df.empty:
+            try:
+                # Extract time from index if available
+                time_data = None
+                if hasattr(df, "index") and df.index.name == "TIME":
+                    time_data = df.index.values
+                elif "TIME" in df.columns:
+                    time_data = df["TIME"].values
+                
+                plotter.plot_density(
+                    df,
+                    time_data=time_data,
+                    title=f"{title_prefix}{name}",
+                    show_plot=True,
+                    **kwargs
+                )
+            except Exception as e:
+                logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot density {name}: {e}")
+    
+    # Plot VEST data if available
+    if vest_data is not None and not vest_data.empty:
+        try:
+            # Find IP column
+            ip_col = None
+            for col in vest_data.columns:
+                if "ip" in col.lower() or "current" in col.lower():
+                    ip_col = col
+                    break
+            
+            if ip_col:
+                fig, ax = plt.subplots(figsize=(12, 6))
+                time_vest = vest_data.index.values + trigger_time
+                ax.plot(time_vest * 1000, vest_data[ip_col].values, "r-", linewidth=2)
+                ax.set_xlabel("Time [ms]", **FontStyle.label)
+                ax.set_ylabel(f"{ip_col}", **FontStyle.label)
+                ax.set_title(f"{title_prefix}Plasma Current", **FontStyle.title)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show(block=False)
+        except Exception as e:
+            logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot VEST data: {e}")
 
 
 ## Main-guard test code removed. See archived copy in `ifi/olds/plots_old_20251030.py`.
