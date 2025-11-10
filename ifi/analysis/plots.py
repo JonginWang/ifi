@@ -610,6 +610,7 @@ class Plotter:
             method = "precomputed"
             n_signals = 1
             signals = {"Precomputed": None}  # Dummy for loop structure
+            time = times  # Set time for consistency
         else:
             # Prepare data for analysis
             time, signals = self._prepare_time_data(data, fs)
@@ -623,6 +624,12 @@ class Plotter:
                 signals = {k: v[::downsample] for k, v in signals.items()}
 
             n_signals = len(signals)
+            
+            # Ensure n_signals is at least 1
+            if n_signals == 0:
+                raise ValueError(
+                    "No signals found in data. Please provide data with at least one signal channel."
+                )
 
         # Time scaling
         time_scale_factor = 1
@@ -1161,9 +1168,8 @@ def plot_spectrogram(freqs, times, Sxx, **kwargs):
     """Legacy function - now uses Plotter class with interactive plotting."""
     with interactive_plotting(show_plots=True, block=False):
         plotter = Plotter()
-        # Create a dummy signal for the unified interface
-        dummy_data = np.zeros((len(times), 1))
-        return plotter.plot_time_frequency(dummy_data, method="stft", **kwargs)
+        # Pass pre-computed arrays directly as tuple
+        return plotter.plot_time_frequency((freqs, times, Sxx), method="precomputed", **kwargs)
 
 
 def plot_density_results(density_data, **kwargs):
