@@ -212,6 +212,14 @@ def get_interferometry_params(
     freq_280ghz = freq_280hz / 1e9  # Convert to GHz for display
     n_path_94ghz = int(config.get("94GHz", "n_path"))
     n_path_280ghz = int(config.get("280GHz", "n_path"))
+    
+    # Flexible frequency detection: use ranges instead of exact values
+    # 93-95 GHz range → use 94GHz flag
+    # 275-285 GHz range → use 280GHz flag
+    freq_94ghz_min = freq_94ghz - 1.0  # 93 GHz
+    freq_94ghz_max = freq_94ghz + 1.0  # 95 GHz
+    freq_280ghz_min = freq_280ghz - 5.0  # 275 GHz
+    freq_280ghz_max = freq_280ghz + 5.0  # 285 GHz
 
     # Rule 3: Shots 41542 and above
     if shot_num >= 41542:
