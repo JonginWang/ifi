@@ -293,8 +293,9 @@ def test_main_analysis_errors():
                     self.no_offset_removal = False
                     self.offset_window = 2001
                     self.stft = True
+                    self.stft_cols = None
                     self.cwt = False
-                    self.ft_cols = None
+                    self.cwt_cols = None
                     self.scheduler = 'threads'
                     self.save_plots = False
                     self.save_data = False
@@ -317,8 +318,9 @@ def test_main_analysis_errors():
                     self.no_offset_removal = False
                     self.offset_window = 2001
                     self.stft = True
+                    self.stft_cols = None
                     self.cwt = False
-                    self.ft_cols = None
+                    self.cwt_cols = None
                     self.scheduler = 'threads'
                     self.save_plots = False
                     self.save_data = False
@@ -341,8 +343,9 @@ def test_main_analysis_errors():
                     self.no_offset_removal = False
                     self.offset_window = 2001
                     self.stft = True
+                    self.stft_cols = None
                     self.cwt = False
-                    self.ft_cols = None
+                    self.cwt_cols = None
                     self.scheduler = 'invalid_scheduler'
                     self.save_plots = False
                     self.save_data = False
