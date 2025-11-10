@@ -13,7 +13,6 @@ Functions:
 
         Options:
             - query: Shot number or pattern
-            - stft: Whether to run the STFT analysis.
             - density: Whether to run the density analysis.
             - plot: Whether to plot the results.
             - overview_plot: Whether to plot the overview.
@@ -27,6 +26,7 @@ Functions:
             - plot_raw: Whether to plot the raw data.
             - trigger_time: Trigger time.
             - downsample: Downsample factor.
+            - stft: Whether to run the STFT analysis.
             - stft_cols: STFT columns to use.
             - cwt: Whether to run the CWT analysis.
             - cwt_cols: CWT columns to use.
@@ -45,6 +45,8 @@ import matplotlib.pyplot as plt
 
 from .main_analysis import run_analysis
 from ..utils.common import LogManager
+from ..db_controller.nas_db import NAS_DB
+from ..db_controller.vest_db import VEST_DB
 
 LogManager(level="DEBUG")
 
@@ -60,10 +62,9 @@ def create_mock_args():
     args = Namespace(
         # --- Essential Arguments ---
         query=["45821"],  # Shot number or pattern
-        stft=True,
         density=True,
-        plot=True,
-        overview_plot=True,
+        plot=False,  # Disable interactive plotting for testing (can enable later)
+        overview_plot=False,
         # --- Data Source Arguments ---
         data_folders=None,
         add_path=False,
@@ -75,16 +76,19 @@ def create_mock_args():
         baseline="ip",  # 'ip', 'trig', or None
         # --- Plotting Arguments ---
         plot_raw=False,
+        no_plot_raw=False,
+        no_plot_ft=False,
         trigger_time=0.290,
         downsample=10,
         # --- STFT/CWT Arguments ---
-        stft_cols=None,  # e.g., [0, 1] or None for all
-        cwt=False,
-        cwt_cols=None,
+        stft=True,
+        stft_cols=[0, 1],  # Column indices for STFT analysis
+        cwt=False,  # Disable CWT for this test (STFT, density, plot, save only)
+        cwt_cols=[0, 1],  # Column indices for CWT analysis (not used when cwt=False)
         # --- Saving Arguments ---
         results_dir="ifi/results",
         save_plots=False,
-        save_data=False,
+        save_data=True,  # Enable data saving to test HDF5 output
         # --- Performance Arguments ---
         scheduler="single-threaded",  # Use 'single-threaded' for easier debugging
     )
@@ -103,31 +107,70 @@ if __name__ == "__main__":
     # analysis_args.vest_fields = []
     # analysis_args.overview_plot = False
 
-    # 2. Run the analysis pipeline
+    # 2. Initialize database controllers
+    try:
+        nas_db = NAS_DB(config_path="ifi/config.ini")
+        vest_db = VEST_DB(config_path="ifi/config.ini")
+        logging.info("Database controllers initialized successfully.")
+    except FileNotFoundError:
+        logging.error("Configuration file 'ifi/config.ini' not found. Exiting.")
+        exit(1)
+    except Exception as e:
+        logging.error(f"Failed to initialize database controllers: {e}")
+        exit(1)
+
+    # 3. Run the analysis pipeline
     # The results are returned in a dictionary.
     logging.info("Starting interactive analysis...")
-    results = run_analysis(analysis_args)
+    results = run_analysis(
+        query=analysis_args.query,
+        args=analysis_args,
+        nas_db=nas_db,
+        vest_db=vest_db
+    )
     logging.info("Analysis finished.")
 
-    # 3. Access and explore the results
+    # 4. Access and explore the results
     # The 'results' dictionary contains all the major data artifacts.
     # You can now inspect these variables in Spyder's Variable Explorer.
     if results:
-        processed_data = results.get("processed_data")
-        stft_results = results.get("stft_results")
-        cwt_results = results.get("cwt_results")
-        density_data = results.get("density_data")
-        vest_data = results.get("vest_data")
-
         logging.info("--- Available Data ---")
-        if processed_data is not None:
-            logging.info(f"Processed Data Shape: {processed_data.shape}")
-        if stft_results:
-            logging.info(f"STFT Results available for: {list(stft_results.keys())}")
-        if density_data is not None and not density_data.empty:
-            logging.info(f"Density Data Shape: {density_data.shape}")
-        if vest_data is not None and not vest_data.empty:
-            logging.info(f"VEST Data Shape: {vest_data.shape}")
+        logging.info(f"Number of shots analyzed: {len(results)}")
+        
+        for shot_num, bundle in results.items():
+            logging.info(f"\n--- Shot #{shot_num} ---")
+            
+            # Access processed data
+            processed_data = bundle.get("processed_data", {})
+            if processed_data:
+                signals = processed_data.get("signals", {})
+                density = processed_data.get("density", {})
+                
+                if signals:
+                    logging.info(f"Signals available for frequencies: {list(signals.keys())} GHz")
+                    for freq, df in signals.items():
+                        logging.info(f"  {freq} GHz: Shape {df.shape}, Columns: {list(df.columns)[:5]}...")
+                
+                if density:
+                    logging.info(f"Density data available for frequencies: {list(density.keys())} GHz")
+                    for freq, df in density.items():
+                        logging.info(f"  {freq} GHz: Shape {df.shape}, Columns: {list(df.columns)[:5]}...")
+            
+            # Access analysis results
+            analysis_results = bundle.get("analysis_results", {})
+            stft_results = analysis_results.get("stft", {})
+            cwt_results = analysis_results.get("cwt", {})
+            
+            if stft_results:
+                logging.info(f"STFT Results available for: {list(stft_results.keys())}")
+            if cwt_results:
+                logging.info(f"CWT Results available for: {list(cwt_results.keys())}")
+            
+            # Access VEST data
+            raw_data = bundle.get("raw_data", {})
+            vest_data = raw_data.get("vest", {})
+            if vest_data:
+                logging.info(f"VEST Data available: {list(vest_data.keys())}")
 
         # Keep plots open for inspection
         if analysis_args.plot or analysis_args.overview_plot:

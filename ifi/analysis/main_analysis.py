@@ -105,8 +105,14 @@ def load_and_process_file(nas_instance, file_path, args):
         all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
         cols_to_analyze_idxs = range(len(all_data_cols))
-        if args.ft_cols is not None:
-            cols_to_analyze_idxs = args.ft_cols
+        if args.stft_cols is not None:
+            stft_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.stft_cols))
+            if len(stft_cols_idxs) > 0:
+                logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {stft_cols_idxs} vs input columns: {args.stft_cols}")
+                cols_to_analyze_idxs = list(stft_cols_idxs)
+            else:
+                logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for STFT. Skipping STFT analysis.")
+                cols_to_analyze_idxs = []
 
         fs = 1 / df_processed["TIME"].diff().mean()
 
@@ -133,8 +139,14 @@ def load_and_process_file(nas_instance, file_path, args):
         all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
         cols_to_analyze_idxs = range(len(all_data_cols))
-        if args.ft_cols is not None:
-            cols_to_analyze_idxs = args.ft_cols
+        if args.cwt_cols is not None:
+            cwt_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.cwt_cols))
+            if len(cwt_cols_idxs) > 0:
+                logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {cwt_cols_idxs} vs input columns: {args.cwt_cols}")
+                cols_to_analyze_idxs = list(cwt_cols_idxs)
+            else:
+                logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for CWT. Skipping CWT analysis.")
+                cols_to_analyze_idxs = []
 
         fs = 1 / df_processed["TIME"].diff().mean()
 
@@ -144,9 +156,51 @@ def load_and_process_file(nas_instance, file_path, args):
                 continue
             col_name = all_data_cols[col_idx]
             signal = df_processed[col_name].to_numpy()
-            freq_CWT, CWT_matrix = analyzer.compute_cwt(signal, fs)
+            
+            # Find center frequency for memory optimization
+            f_center = analyzer.find_center_frequency_fft(signal, fs)
+            
+            # Memory optimization parameters
+            # Use decimation if signal is very long (> 100k samples)
+            decimation_factor = 1
+            if len(signal) > 100000:
+                # Calculate decimation factor to reduce to ~50k samples
+                decimation_factor = max(1, len(signal) // 10000)
+                logging.info(
+                    f"{log_tag('ANALY','LOAD')} Large signal detected ({len(signal)} samples). "
+                    f"Using decimation factor {decimation_factor} for CWT."
+                )
+            
+            # Compute CWT with memory optimization
+            if f_center > 0:
+                # Use f_center mode: only compute ±10% around center frequency
+                freq_CWT, CWT_matrix = analyzer.compute_cwt(
+                    signal, 
+                    fs, 
+                    f_center=f_center,
+                    f_deviation=0.1,  # ±10% deviation
+                    decimation_factor=decimation_factor
+                )
+            else:
+                # Fallback: use default CWT if center frequency detection failed
+                logging.warning(
+                    f"{log_tag('ANALY','LOAD')} Center frequency detection failed for {col_name}. "
+                    f"Using default CWT (may use more memory)."
+                )
+                freq_CWT, CWT_matrix = analyzer.compute_cwt(
+                    signal, 
+                    fs,
+                    decimation_factor=decimation_factor
+                )
+            
+            # Adjust time axis if decimation was applied
+            if decimation_factor > 1:
+                time_CWT = df_processed["TIME"].iloc[::decimation_factor].values
+            else:
+                time_CWT = df_processed["TIME"].values
+            
             cwt_result_for_file[col_name] = {
-                "time_CWT": df_processed["TIME"],
+                "time_CWT": time_CWT,
                 "freq_CWT": freq_CWT,
                 "CWT_matrix": CWT_matrix,
             }
@@ -330,13 +384,38 @@ def run_analysis(
 
         # --- Group Data by Frequency ---
         # Group files by frequency based on interferometry parameters
+        # Use flexible frequency detection: map actual frequencies to standard groups
+        # 93-95 GHz range → use 94GHz group
+        # 275-285 GHz range → use 280GHz group
         freq_groups = {}
         for basename, params in shot_interferometry_params.items():
-            freq_ghz = params.get("freq_ghz", 94.0)  # Default to 94GHz
-            if freq_ghz not in freq_groups:
-                freq_groups[freq_ghz] = {"files": [], "params": []}
-            freq_groups[freq_ghz]["files"].append(basename)
-            freq_groups[freq_ghz]["params"].append(params)
+            freq_ghz = params.get("freq_ghz", 94.0)  # Actual frequency from config
+            
+            # Map to standard frequency group
+            if 93.0 <= freq_ghz <= 95.0:
+                # Map to 94GHz group
+                group_freq = 94.0
+            elif 275.0 <= freq_ghz <= 285.0:
+                # Map to 280GHz group
+                group_freq = 280.0
+            else:
+                # Use actual frequency as group key (for other frequencies)
+                group_freq = freq_ghz
+                logging.warning(
+                    f"{log_tag('ANALY','RUN')} Frequency {freq_ghz} GHz outside standard ranges "
+                    f"(93-95 or 275-285). Using actual frequency as group key."
+                )
+            
+            if group_freq not in freq_groups:
+                freq_groups[group_freq] = {"files": [], "params": []}
+            freq_groups[group_freq]["files"].append(basename)
+            freq_groups[group_freq]["params"].append(params)
+            
+            # Log frequency mapping
+            if freq_ghz != group_freq:
+                logging.info(
+                    f"{log_tag('ANALY','RUN')} Mapped frequency {freq_ghz} GHz → {group_freq} GHz group for {basename}"
+                )
 
         logging.info(
             f"{log_tag('ANALY','RUN')} Frequency groups found: {list(freq_groups.keys())} GHz"
@@ -438,51 +517,44 @@ def run_analysis(
             else:
                 logging.warning(f"{log_tag('ANALY','RUN')} Unknown frequency group: {freq_ghz} GHz")
 
-        # For backward compatibility, use the largest frequency group as main combined_signals
-        if freq_combined_signals:
-            main_freq = max(freq_combined_signals.keys())
-            combined_signals = freq_combined_signals[main_freq]
-            logging.info(f"{log_tag('ANALY','RUN')} Using {main_freq} GHz as main combined_signals")
+        # Keep freq_combined_signals as dict structure (94GHz and 280GHz separate)
+        # This avoids time resolution conflicts and preserves frequency separation
+        combined_signals = freq_combined_signals  # dict[str, DataFrame] format: {94.0: DataFrame, 280.0: DataFrame}
+        
+        # For backward compatibility, also keep main_freq for plotting and baseline correction
+        main_freq = max(freq_combined_signals.keys()) if freq_combined_signals else None
+        main_combined_signals = freq_combined_signals[main_freq] if main_freq else pd.DataFrame()
+        logging.info(f"{log_tag('ANALY','RUN')} Combined signals organized by frequency: {list(combined_signals.keys())} GHz")
+        if main_freq:
+            logging.info(f"{log_tag('ANALY','RUN')} Using {main_freq} GHz as main combined_signals for baseline correction")
+        
         current_vest_data = vest_data_by_shot.get(shot_num, {})
         vest_ip_data = current_vest_data.get("25k")
         if vest_ip_data is None:
             vest_ip_data = current_vest_data.get("250k")
 
         # --- 5. Density Calculation & Baseline Correction ---
+        # Organize density_data by frequency to match combined_signals structure
         phase_converter = phi2ne.PhaseConverter()
-        density_data = pd.DataFrame(index=combined_signals.index)
+        density_data = {}  # dict[str, DataFrame] format: {94.0: DataFrame, 280.0: DataFrame}
 
-        # DEBUG: Check combined_signals structure
-        logging.debug(f"{log_tag('ANALY','RUN')} DEBUGGING combined_signals")
-        logging.debug(f"{log_tag('ANALY','RUN')} Combined signals shape: {combined_signals.shape}")
-        logging.debug(f"{log_tag('ANALY','RUN')} Available columns: {list(combined_signals.columns)}")
-        logging.debug(
-            f"{log_tag('ANALY','RUN')} Index info: {combined_signals.index.name} - range: {combined_signals.index.min():.6f} to {combined_signals.index.max():.6f}"
-        )
-        logging.debug(f"{log_tag('ANALY','RUN')} Index length: {len(combined_signals.index)}")
-
-        if len(combined_signals) > 0:
-            logging.debug(f"{log_tag('ANALY','RUN')} First 5 rows of combined_signals:")
-            logging.debug(f"{log_tag('ANALY','RUN')} {combined_signals.head()}")
-
-            # Check time resolution
-            time_diff = combined_signals.index.to_series().diff().mean()
-            logging.debug(f"{log_tag('ANALY','RUN')} Time resolution analysis:")
-            logging.debug(f"{log_tag('ANALY','RUN')} Mean time diff: {time_diff}")
-            logging.debug(f"{log_tag('ANALY','RUN')} Time diff type: {type(time_diff)}")
-            logging.debug(f"{log_tag('ANALY','RUN')} Is NaN?: {pd.isna(time_diff)}")
-            logging.debug(f"{log_tag('ANALY','RUN')} Is zero?: {time_diff == 0}")
-
-            # Check first few time differences
-            time_diffs = combined_signals.index.to_series().diff().head(10)
-            logging.debug(f"{log_tag('ANALY','RUN')} First 10 time diffs: {time_diffs.tolist()}")
-
+        # DEBUG: Check combined_signals structure (now a dict)
+        logging.debug(f"{log_tag('ANALY','RUN')} DEBUGGING combined_signals (dict structure)")
+        for freq_key, freq_df in combined_signals.items():
+            logging.debug(f"{log_tag('ANALY','RUN')} {freq_key} GHz - Shape: {freq_df.shape}, Columns: {list(freq_df.columns)}")
+            if len(freq_df) > 0:
+                time_diff = freq_df.index.to_series().diff().mean()
+                logging.debug(f"{log_tag('ANALY','RUN')} {freq_key} GHz - Time resolution: {time_diff:.2e} s")
         logging.debug(f"{log_tag('ANALY','RUN')} END DEBUG")
 
         if args.density:
             # Process each frequency group separately for density calculation
+            # Create frequency-specific density DataFrames
             for freq_ghz, freq_data in freq_combined_signals.items():
                 logging.info(f"{log_tag('ANALY','RUN')} Processing density calculation for {freq_ghz} GHz")
+
+                # Initialize density DataFrame for this frequency
+                freq_density_data = pd.DataFrame(index=freq_data.index)
 
                 # Get files for this frequency
                 freq_files = freq_groups[freq_ghz]["files"]
@@ -612,7 +684,8 @@ def run_analysis(
                                     phase = phase_converter.calc_phase_cdm(
                                         ref_signal, probe_signal, fs, f_center
                                     )
-                                    density_data[f"ne_{probe_col}_{basename}"] = (
+                                    # Store in frequency-specific density DataFrame
+                                    freq_density_data[f"ne_{probe_col}_{basename}"] = (
                                         phase_converter.phase_to_density(
                                             phase, analysis_params=params
                                         )
@@ -650,7 +723,8 @@ def run_analysis(
                                                 probe_signal,
                                                 isflip=True,
                                             )
-                                            density_data[
+                                            # Store in frequency-specific density DataFrame
+                                            freq_density_data[
                                                 f"ne_{probe_col}_{basename}"
                                             ] = phase_converter.phase_to_density(
                                                 phase, analysis_params=params
@@ -698,7 +772,8 @@ def run_analysis(
                                         phase = phase_converter.calc_phase_iq(
                                             i_signal, q_signal
                                         )
-                                        density_data[f"ne_IQ_{basename}"] = (
+                                        # Store in frequency-specific density DataFrame
+                                        freq_density_data[f"ne_IQ_{basename}"] = (
                                             phase_converter.phase_to_density(
                                                 phase, analysis_params=params
                                             )
@@ -723,25 +798,33 @@ def run_analysis(
                             logging.warning(
                                 f"{log_tag('ANALY','RUN')} Unknown interferometry method: {params['method']} for file {basename}"
                             )
-
-            # Apply baseline correction to all density columns
-            if args.baseline and vest_ip_data is not None and not density_data.empty:
-                time_axis = combined_signals.index.to_numpy()
-                ip_column_name = None
-                if args.baseline == "ip":
-                    # Try to find IP column in vest_ip_data - common names
-                    for col_name in vest_ip_data.columns:
-                        if "ip" in col_name.lower() or "current" in col_name.lower():
-                            ip_column_name = col_name
-                            break
-                density_data = phase_converter.correct_baseline(
-                    density_data,
-                    time_axis,
-                    args.baseline,
-                    shot_num=shot_num,
-                    vest_data=vest_ip_data,
-                    ip_column_name=ip_column_name,
-                )
+                
+                # Store frequency-specific density data
+                if not freq_density_data.empty:
+                    # Apply baseline correction to this frequency's density data
+                    if args.baseline and vest_ip_data is not None:
+                        time_axis = freq_data.index.to_numpy()
+                        ip_column_name = None
+                        if args.baseline == "ip":
+                            # Try to find IP column in vest_ip_data - common names
+                            for col_name in vest_ip_data.columns:
+                                if "ip" in col_name.lower() or "current" in col_name.lower():
+                                    ip_column_name = col_name
+                                    break
+                        freq_density_data = phase_converter.correct_baseline(
+                            freq_density_data,
+                            time_axis,
+                            args.baseline,
+                            shot_num=shot_num,
+                            vest_data=vest_ip_data,
+                            ip_column_name=ip_column_name,
+                        )
+                    
+                    # Store in frequency-keyed dict
+                    density_data[str(freq_ghz)] = freq_density_data
+                    logging.info(
+                        f"{log_tag('ANALY','RUN')} Stored density data for {freq_ghz} GHz with {len(freq_density_data.columns)} columns"
+                    )
 
         # --- 6. Final Output Bundle ---
         analysis_bundle = {
@@ -760,7 +843,7 @@ def run_analysis(
 
             # Use a context manager to handle plot creation and showing/saving
             with plots.ifion_plotting(
-                interactive=args.plot,
+                show_plots=args.plot,
                 save_dir=Path(args.results_dir) / str(shot_num)
                 if args.save_plots
                 else None,
@@ -782,10 +865,14 @@ def run_analysis(
                         )
 
                 if not args.no_plot_raw:
+                    # For plotting, use main_combined_signals (single DataFrame) for backward compatibility
+                    # If plotting functions need dict structure, they can be updated later
+                    plot_signals = main_combined_signals if isinstance(combined_signals, dict) else combined_signals
+                    plot_density = density_data.get(str(main_freq), pd.DataFrame()) if isinstance(density_data, dict) else density_data
                     plots.plot_analysis_overview(
                         shot_num,
-                        {"Processed Signals": combined_signals},
-                        {"Density": density_data},
+                        {"Processed Signals": plot_signals},
+                        {"Density": plot_density},
                         vest_ip_data,
                         trigger_time=args.trigger_time,
                         title_prefix=title_prefix,
@@ -800,13 +887,68 @@ def run_analysis(
                 if shot_num != 0
                 else "unknown_shots"
             )
+            
+            # Convert combined_signals dict to format expected by save_results_to_hdf5
+            # save_results_to_hdf5 expects signals as dict[str, DataFrame]
+            # combined_signals is now dict[float, DataFrame] (keys are 94.0, 280.0)
+            # Convert to dict[str, DataFrame] with string keys
+            signals_dict = {}
+            if isinstance(combined_signals, dict):
+                for freq_key, freq_df in combined_signals.items():
+                    # Convert frequency key to string and prepare DataFrame
+                    freq_str = str(freq_key)
+                    # Convert index to TIME column if needed
+                    freq_df_copy = freq_df.copy()
+                    if freq_df_copy.index.name == "TIME":
+                        freq_df_copy = freq_df_copy.reset_index()
+                    elif "TIME" not in freq_df_copy.columns:
+                        if freq_df_copy.index.name is None or freq_df_copy.index.name == "":
+                            freq_df_copy = freq_df_copy.reset_index()
+                            freq_df_copy.rename(columns={freq_df_copy.columns[0]: "TIME"}, inplace=True)
+                    # Use frequency as part of the key name
+                    signals_dict[f"freq_{freq_str}_GHz"] = freq_df_copy
+            else:
+                # Fallback: if combined_signals is still DataFrame (shouldn't happen)
+                combined_df = combined_signals.copy()
+                if combined_df.index.name == "TIME":
+                    combined_df = combined_df.reset_index()
+                signals_dict["combined"] = combined_df
+            
+            # Convert density_data dict to format expected by save_results_to_hdf5
+            # For now, combine all frequency density data into one DataFrame
+            # TODO: Update save_results_to_hdf5 to handle dict structure
+            if isinstance(density_data, dict):
+                # Combine all frequency density DataFrames
+                # Use the main frequency's index as reference
+                if main_freq and str(main_freq) in density_data:
+                    combined_density = density_data[str(main_freq)].copy()
+                    # Add other frequencies' density data if they exist
+                    for freq_key, freq_df in density_data.items():
+                        if freq_key != str(main_freq) and not freq_df.empty:
+                            # Reindex to main frequency's time axis
+                            freq_df_reindexed = freq_df.reindex(
+                                combined_density.index, method="nearest", limit=1
+                            )
+                            # Add columns with frequency prefix
+                            for col in freq_df_reindexed.columns:
+                                combined_density[f"{freq_key}GHz_{col}"] = freq_df_reindexed[col]
+                    density_data_for_save = combined_density
+                elif density_data:
+                    # Use first available frequency
+                    first_freq = list(density_data.keys())[0]
+                    density_data_for_save = density_data[first_freq]
+                else:
+                    density_data_for_save = pd.DataFrame()
+            else:
+                density_data_for_save = density_data
+            
             file_io.save_results_to_hdf5(
                 output_dir,
                 shot_num,
-                combined_signals,
+                signals_dict,
                 shot_stft_data,
                 shot_cwt_data,
-                density_data,
+                density_data_for_save,
                 vest_ip_data,
             )
 
@@ -889,14 +1031,22 @@ def main():
         help="Perform STFT analysis when retrieving data.",
     )
     parser.add_argument(
-        "--cwt", action="store_true", help="Perform CWT analysis when retrieving data."
-    )
-    parser.add_argument(
-        "--ft_cols",
+        "--stft_cols",
         nargs="*",
         type=int,
         default=[],
-        help="""The indices of the columns to perform freq.-time transform analysis on.
+        help="""The indices of the columns to perform STFT analysis on.
+            If empty, all columns will be analyzed.""",
+    )
+    parser.add_argument(
+        "--cwt", action="store_true", help="Perform CWT analysis when retrieving data."
+    )
+    parser.add_argument(
+        "--cwt_cols",
+        nargs="*",
+        type=int,
+        default=[],
+        help="""The indices of the columns to perform CWT analysis on.
             If empty, all columns will be analyzed.""",
     )
 
