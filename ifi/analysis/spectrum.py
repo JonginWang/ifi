@@ -308,12 +308,15 @@ class SpectrumAnalysis:
         wavelet: str = "gmw",
         f_min: float = None,
         f_max: float = None,
+        f_center: float = None,
+        f_deviation: float = 0.1,
         nv: int = 32,
         scales: str = "log-piecewise",
+        decimation_factor: int = 1,
         **kwargs,
     ):
         """
-        Compute Continuous Wavelet Transform using ssqueezepy.
+        Compute Continuous Wavelet Transform using ssqueezepy with memory optimization.
 
         Args:
             signal (np.ndarray): Input signal
@@ -321,42 +324,166 @@ class SpectrumAnalysis:
             wavelet (str, optional): Wavelet type. Default is "gmw".
             f_min (float, optional): Minimum frequency (Hz). Default is None.
             f_max (float, optional): Maximum frequency (Hz). Default is None.
+            f_center (float, optional): Center frequency (Hz). If provided, frequency range
+                will be limited to f_center ± (f_center * f_deviation). Default is None.
+            f_deviation (float, optional): Frequency deviation factor for f_center mode.
+                Range will be f_center * (1 ± f_deviation). Default is 0.1 (10%).
             nv (int, optional): Number of voices (wavelets per octave). Default is 32.
-            scales (str, optional): Scale distribution ('log', 'log-piecewise', 'linear' or array). Default is "log-piecewise".
+            scales (str, optional): Scale distribution ('log', 'log-piecewise', 'linear' or array). 
+                Default is "log-piecewise".
+            decimation_factor (int, optional): Decimation factor to reduce time axis data points.
+                Signal will be downsampled by this factor before CWT. Default is 1 (no decimation).
             **kwargs: Additional arguments for ssqueezepy.cwt
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: Tuple containing the "frequencies" and "CWT matrix"
+                Note: If decimation_factor > 1, the CWT matrix will have fewer time points.
 
         Raises:
             ValueError: If the wavelet type is not supported
             ValueError: If the frequency range is not valid
             ValueError: If the scales are not valid
+            ValueError: If decimation_factor is not a positive integer
         """
         logger.debug(
             f"{log_tag('SPECR','SCWT')} Computing CWT with ssqueezepy using '{wavelet}' wavelet."
         )
+        
+        # Validate decimation_factor
+        if decimation_factor < 1 or not isinstance(decimation_factor, int):
+            raise ValueError(f"decimation_factor must be a positive integer, got {decimation_factor}")
+        
+        # Determine frequency range BEFORE decimation (if f_center is provided)
+        # This ensures we use the original frequency range even after decimation
+        original_fs = fs  # noqa: F841
+        original_nyquist = fs / 2  # noqa: F841
+        if f_center is not None and f_center > 0:
+            # Calculate frequency range around f_center using original fs
+            f_range_min = f_center * (1 - f_deviation)
+            f_range_max = f_center * (1 + f_deviation)
+            logger.info(
+                f"{log_tag('SPECR','SCWT')} Using f_center mode: "
+                f"f_center={f_center/1e6:.2f} MHz, "
+                f"range=[{f_range_min/1e6:.2f}, {f_range_max/1e6:.2f}] MHz "
+                f"(±{f_deviation*100:.1f}%)"
+            )
+            f_min = f_range_min
+            f_max = f_range_max
+        elif f_min is None or f_max is None:
+            # If no frequency range specified, use default (full range)
+            logger.debug(
+                f"{log_tag('SPECR','SCWT')} No frequency range specified, using full range"
+            )
+        
+        # Apply decimation to reduce time axis data points
+        if decimation_factor > 1:
+            logger.info(
+                f"{log_tag('SPECR','SCWT')} Applying decimation factor {decimation_factor} "
+                f"(reducing signal length from {len(signal)} to {len(signal) // decimation_factor})"
+            )
+            # Use scipy.signal.decimate for anti-aliasing
+            from scipy import signal as spsig
+            signal = spsig.decimate(signal, decimation_factor, ftype='fir')
+            fs = fs / decimation_factor
+            logger.debug(
+                f"{log_tag('SPECR','SCWT')} Decimated signal: length={len(signal)}, fs={fs/1e6:.2f} MHz"
+            )
+            
+            # Adjust frequency range if it exceeds new Nyquist frequency
+            nyquist = fs / 2
+            if f_min is not None and f_max is not None:
+                if f_max > nyquist:
+                    logger.warning(
+                        f"{log_tag('SPECR','SCWT')} f_max ({f_max/1e6:.2f} MHz) exceeds decimated "
+                        f"Nyquist frequency ({nyquist/1e6:.2f} MHz). "
+                        f"Clamping to {nyquist*0.90/1e6:.2f} MHz."
+                    )
+                    f_max = nyquist * 0.90
+                if f_min > nyquist:
+                    logger.warning(
+                        f"{log_tag('SPECR','SCWT')} f_min ({f_min/1e6:.2f} MHz) exceeds decimated "
+                        f"Nyquist frequency ({nyquist/1e6:.2f} MHz). "
+                        f"Setting to 05% of Nyquist."
+                    )
+                    f_min = nyquist * 0.05
+        
         wav = ssqpy.Wavelet(wavelet)
-
+        
         # Convert frequency range to scales if provided
         if f_min is not None and f_max is not None:
+            # Validate frequency range against current fs (after decimation)
+            nyquist = fs / 2
+            if f_max > nyquist:
+                logger.warning(
+                    f"{log_tag('SPECR','SCWT')} f_max ({f_max/1e6:.2f} MHz) exceeds Nyquist "
+                    f"frequency ({nyquist/1e6:.2f} MHz). Clamping to 90% of Nyquist."
+                )
+                f_max = nyquist * 0.90  # Slightly below Nyquist to avoid issues
+            if f_min < 0:
+                logger.warning(
+                    f"{log_tag('SPECR','SCWT')} f_min ({f_min/1e6:.2f} MHz) is negative. "
+                    f"Setting to 05% of Nyquist."
+                )
+                f_min = nyquist * 0.05
+            elif f_min >= nyquist:
+                logger.warning(
+                    f"{log_tag('SPECR','SCWT')} f_min ({f_min/1e6:.2f} MHz) exceeds Nyquist. "
+                    f"Setting to 05% of Nyquist."
+                )
+                f_min = nyquist * 0.05
+            
+            # Ensure f_min < f_max
+            if f_min >= f_max:
+                logger.warning(
+                    f"{log_tag('SPECR','SCWT')} Invalid frequency range: f_min >= f_max. "
+                    f"Using default range."
+                )
+                f_min = None
+                f_max = None
+        
+        # Convert frequency range to scales if provided
+        if f_min is not None and f_max is not None and f_min < f_max:
             # Calculate appropriate scales for frequency range
+            # Scale formula: scale = fs / (2 * freq)
             scale_min = fs / (2 * f_max)  # Higher freq -> smaller scale
             scale_max = fs / (2 * f_min)  # Lower freq -> larger scale
-
+            
             # Generate logarithmically spaced scales
-            n_scales = int(nv * np.log2(scale_max / scale_min))
-            scales = np.logspace(np.log10(scale_min), np.log10(scale_max), n_scales)
-
-            Wx, scales_out = ssqpy.cwt(
-                signal, fs=fs, wavelet=wav, scales=scales, **kwargs
-            )
+            # Number of octaves = log2(scale_max / scale_min)
+            # Number of scales = nv * number_of_octaves
+            n_octaves = np.log2(scale_max / scale_min)
+            if n_octaves <= 0:
+                logger.warning(
+                    f"{log_tag('SPECR','SCWT')} Invalid octave range ({n_octaves:.2f}). "
+                    f"Using default scaling."
+                )
+                Wx, scales_out = ssqpy.cwt(signal, fs=fs, wavelet=wav, nv=nv, **kwargs)
+            else:
+                n_scales = max(int(nv * n_octaves), 10)  # Minimum 10 scales
+                scales = np.logspace(np.log10(scale_min), np.log10(scale_max), n_scales)
+                
+                logger.debug(
+                    f"{log_tag('SPECR','SCWT')} Frequency range: [{f_min/1e6:.2f}, {f_max/1e6:.2f}] MHz, "
+                    f"Scales: {len(scales)} scales, {n_octaves:.2f} octaves"
+                )
+                
+                Wx, scales_out = ssqpy.cwt(
+                    signal, fs=fs, wavelet=wav, scales=scales, **kwargs
+                )
         else:
             # Use default scaling
+            logger.debug(
+                f"{log_tag('SPECR','SCWT')} Using default scaling with nv={nv}"
+            )
             Wx, scales_out = ssqpy.cwt(signal, fs=fs, wavelet=wav, nv=nv, **kwargs)
 
         # Convert scales to frequencies
         freqs_cwt = scale_to_freq(scales_out, wav, len(signal), fs=fs)
+        
+        logger.info(
+            f"{log_tag('SPECR','SCWT')} CWT computed: "
+            f"shape={Wx.shape}, freq_range=[{freqs_cwt.min()/1e6:.2f}, {freqs_cwt.max()/1e6:.2f}] MHz"
+        )
 
         return freqs_cwt, Wx
 
