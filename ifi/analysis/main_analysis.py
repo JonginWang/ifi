@@ -74,24 +74,32 @@ def load_and_process_file(nas_instance, file_path, args):
     Raises:
         See log file for more details.
     """
-    logging.info(f"{log_tag('ANALY','LOAD')} Starting processing for: {Path(file_path).name}")
+    # Extract basename for consistent key usage
+    # This avoids issues with network paths (e.g., //147.47.31.91/vest/...)
+    # by using only the filename as the dictionary key
+    file_basename = Path(file_path).name
+    logging.info(f"{log_tag('ANALY','LOAD')} Starting processing for: {file_basename}")
 
     # 1. Read single file data
-    # Use get_shot_data for better path handling and caching
-    data_dict = nas_instance.get_shot_data(str(Path(file_path).name), force_remote=args.force_remote)
-    if not data_dict or file_path not in data_dict:
+    # Use basename instead of full path to avoid network path issues
+    # get_shot_data will use basename as the dictionary key
+    data_dict = nas_instance.get_shot_data(file_basename, force_remote=args.force_remote)
+    
+    # Check with basename (consistent with get_shot_data return keys)
+    if not data_dict or file_basename not in data_dict:
         logging.warning(
             "\n"
             + "=" * 80
             + "\n"
-            + f"  Failed to read {file_path}. Skipping.  ".center(80, "!")
+            + f"  Failed to read {file_basename}. Skipping.  ".center(80, "!")
             + "\n"
             + "=" * 80
             + "\n"
         )
         return None, None, None, None  # Return None for all results
 
-    df_raw = data_dict[file_path]
+    # Use basename to get data (consistent key)
+    df_raw = data_dict[file_basename]
 
     # 2. Refine data (Removing nan values)
     df_refined = processing.refine_data(df_raw)

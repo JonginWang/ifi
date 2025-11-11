@@ -665,7 +665,8 @@ class NAS_DB:
 
                                 self.logger.info(f"{log_tag('NASDB','CACHE')} Restored metadata: {df.attrs}")
 
-                            data_dict[file_path] = df
+                            # Use basename as key for consistency (avoids network path issues)
+                            data_dict[basename] = df
                         else:
                             self.logger.warning(f"{log_tag('NASDB','CACHE')} -> Key NOT FOUND in cache file. Re-fetching.")
                             files_to_fetch.append(file_path)
@@ -704,10 +705,12 @@ class NAS_DB:
         for file_path in files_to_fetch:
             df = self._read_shot_file(file_path, **kwargs)
             if df is not None:
-                data_dict[file_path] = df
+                # Extract basename for consistent key usage (avoids network path issues)
+                basename = Path(file_path).name
+                # Use basename as key for consistency
+                data_dict[basename] = df
 
                 # --- Cache the newly fetched file ---
-                basename = Path(file_path).name
                 match = re.match(r"(\d+)", basename)
                 shot_num_for_cache = int(match.group(1)) if match else None
 
