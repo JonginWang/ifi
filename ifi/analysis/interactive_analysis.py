@@ -86,6 +86,10 @@ def create_mock_args():
         no_plot_ft=False,
         trigger_time=0.290,
         downsample=10,
+        # --- Density Plotting Options ---
+        color_density_by_amplitude=False,  # Enable amplitude-based color-coding for density plots
+        amplitude_colormap="coolwarm",  # Colormap for amplitude coloring
+        amplitude_impedance=50.0,  # System impedance in ohms [Ω]
         # --- STFT/CWT Arguments ---
         stft=True,
         stft_cols=[0, 1],  # Column indices for STFT analysis

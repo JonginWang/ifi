@@ -45,7 +45,7 @@ from typing import Union # noqa: F401
 # ============================================================================
 # Threshold for Numba JIT compilation
 # ============================================================================
-N_JIT_THRESHOLD = 10000  # Use JIT for arrays longer than this
+N_JIT_THRESHOLD = 100_000  # Use JIT for arrays longer than this
 
 
 # ============================================================================

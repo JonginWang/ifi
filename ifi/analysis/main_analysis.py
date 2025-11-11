@@ -564,6 +564,9 @@ def run_analysis(
         logging.debug(f"{log_tag('ANALY','RUN')} END DEBUG")
 
         if args.density:
+            # Store probe amplitudes for color-coding (organized by frequency group)
+            probe_amplitudes_by_freq = {}  # dict[freq_ghz, dict[density_col_name, amplitude_array]]
+            
             # Process each frequency group separately for density calculation
             # Create frequency-specific density DataFrames
             for freq_ghz, freq_data in freq_combined_signals.items():
@@ -571,6 +574,9 @@ def run_analysis(
 
                 # Initialize density DataFrame for this frequency
                 freq_density_data = pd.DataFrame(index=freq_data.index)
+                
+                # Initialize probe amplitudes dict for this frequency
+                probe_amplitudes = {}
 
                 # Get files for this frequency
                 freq_files = freq_groups[freq_ghz]["files"]
@@ -701,11 +707,15 @@ def run_analysis(
                                         ref_signal, probe_signal, fs, f_center
                                     )
                                     # Store in frequency-specific density DataFrame
-                                    freq_density_data[f"ne_{probe_col}_{basename}"] = (
+                                    density_col_name = f"ne_{probe_col}_{basename}"
+                                    freq_density_data[density_col_name] = (
                                         phase_converter.phase_to_density(
                                             phase, analysis_params=params
                                         )
                                     )
+                                    # Store probe signal amplitude for color-coding
+                                    if args.color_density_by_amplitude:
+                                        probe_amplitudes[density_col_name] = probe_signal
                                     logging.info(
                                         f"{log_tag('ANALY','RUN')} CDM: Calculated density for {probe_col} in {basename}"
                                     )
@@ -740,11 +750,15 @@ def run_analysis(
                                                 isflip=False,
                                             )
                                             # Store in frequency-specific density DataFrame
-                                            freq_density_data[
-                                                f"ne_{probe_col}_{basename}"
-                                            ] = phase_converter.phase_to_density(
-                                                phase, analysis_params=params
+                                            density_col_name = f"ne_{probe_col}_{basename}"
+                                            freq_density_data[density_col_name] = (
+                                                phase_converter.phase_to_density(
+                                                    phase, analysis_params=params
+                                                )
                                             )
+                                            # Store probe signal amplitude for color-coding
+                                            if args.color_density_by_amplitude:
+                                                probe_amplitudes[density_col_name] = probe_signal
                                             logging.info(
                                                 f"{log_tag('ANALY','RUN')} FPGA: Calculated density for {probe_col} in {basename}"
                                             )
@@ -815,7 +829,7 @@ def run_analysis(
                                 f"{log_tag('ANALY','RUN')} Unknown interferometry method: {params['method']} for file {basename}"
                             )
                 
-                # Store frequency-specific density data
+                # Store frequency-specific density data and probe amplitudes
                 if not freq_density_data.empty:
                     # Apply baseline correction to this frequency's density data
                     if args.baseline and vest_ip_data is not None:
@@ -838,6 +852,11 @@ def run_analysis(
                     
                     # Store in frequency-keyed dict
                     density_data[str(freq_ghz)] = freq_density_data
+                    
+                    # Store probe amplitudes for this frequency (if enabled)
+                    if args.color_density_by_amplitude and probe_amplitudes:
+                        probe_amplitudes_by_freq[str(freq_ghz)] = probe_amplitudes
+                    
                     logging.info(
                         f"{log_tag('ANALY','RUN')} Stored density data for {freq_ghz} GHz with {len(freq_density_data.columns)} columns"
                     )
@@ -887,6 +906,19 @@ def run_analysis(
                     # If plotting functions need dict structure, they can be updated later
                     plot_signals = main_combined_signals if isinstance(combined_signals, dict) else combined_signals
                     plot_density = density_data.get(str(main_freq), pd.DataFrame()) if isinstance(density_data, dict) else density_data
+                    
+                    # Prepare probe amplitudes for color-coding (if enabled)
+                    plot_probe_amplitudes = None
+                    if args.color_density_by_amplitude and isinstance(density_data, dict):
+                        # Get probe amplitudes for the main frequency group
+                        main_freq_amplitudes = probe_amplitudes_by_freq.get(str(main_freq), {})
+                        if main_freq_amplitudes and isinstance(plot_density, pd.DataFrame):
+                            # Match density column names to probe amplitudes
+                            plot_probe_amplitudes = {}
+                            for col_name in plot_density.columns:
+                                if col_name in main_freq_amplitudes:
+                                    plot_probe_amplitudes[col_name] = main_freq_amplitudes[col_name]
+                    
                     plots.plot_analysis_overview(
                         shot_num,
                         {"Processed Signals": plot_signals},
@@ -895,6 +927,10 @@ def run_analysis(
                         trigger_time=args.trigger_time,
                         title_prefix=title_prefix,
                         downsample=args.downsample,
+                        color_density_by_amplitude=args.color_density_by_amplitude,
+                        probe_amplitudes=plot_probe_amplitudes,
+                        amplitude_colormap=args.amplitude_colormap,
+                        amplitude_impedance=args.amplitude_impedance,
                     )
 
         # --- Saving Logic Update ---
@@ -1118,6 +1154,29 @@ def main():
         choices=["ip", "trig"],
         default=None,
         help="Perform baseline correction on density data.",
+    )
+
+    # Density plotting options
+    parser.add_argument(
+        "--color_density_by_amplitude",
+        action="store_true",
+        help="Color-code density plots by probe signal amplitude. "
+             "Requires probe signal data to be available.",
+    )
+    parser.add_argument(
+        "--amplitude_colormap",
+        type=str,
+        default="coolwarm",
+        help="Matplotlib colormap for amplitude-based density coloring. "
+             "Options: 'viridis', 'plasma', 'inferno', 'magma', 'coolwarm', etc. "
+             "Default: 'coolwarm'.",
+    )
+    parser.add_argument(
+        "--amplitude_impedance",
+        type=float,
+        default=50.0,
+        help="System impedance in ohms [Ω] for amplitude-to-dB conversion. "
+             "Default: 50.0 Ω.",
     )
 
     # Output flags

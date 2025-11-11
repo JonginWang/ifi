@@ -44,33 +44,20 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
+from matplotlib.collections import LineCollection
 try:
     from ..db_controller.vest_db import VEST_DB
     from .spectrum import SpectrumAnalysis
     from .params.params_plot import set_plot_style, FontStyle
     from ..utils.common import LogManager, ensure_dir_exists, log_tag
-    from .functions.power_conversion import (
-        pow2db,
-        db2pow,  # noqa: F401
-        amp2db,  # noqa: F401
-        db2amp,  # noqa: F401
-        mag2db,  # noqa: F401
-        db2mag,  # noqa: F401
-    )
+    from .functions.power_conversion import pow2db, amp2db
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     from ifi.db_controller.vest_db import VEST_DB
     from ifi.analysis.spectrum import SpectrumAnalysis
     from ifi.analysis.params.params_plot import set_plot_style, FontStyle
     from ifi.utils.common import LogManager, ensure_dir_exists, log_tag
-    from ifi.analysis.functions.power_conversion import (
-        pow2db,
-        db2pow,  # noqa: F401
-        amp2db,  # noqa: F401
-        db2amp,  # noqa: F401
-        mag2db,  # noqa: F401
-        db2mag,  # noqa: F401
-    )
+    from ifi.analysis.functions.power_conversion import pow2db, amp2db
 
 logger = LogManager().get_logger(__name__)
 
@@ -701,7 +688,7 @@ class Plotter:
                     freqs_scaled,
                     Sxx_plot,
                     shading="gouraud",
-                    cmap="viridis",
+                    cmap="plasma",  # default colormap
                 )
 
             elif method.lower() == "stft":
@@ -723,7 +710,7 @@ class Plotter:
                     freqs_scaled,
                     Sxx_plot,
                     shading="gouraud",
-                    cmap="viridis",
+                    cmap="plasma",  # default colormap
                 )
 
                 # Add frequency ridge if available
@@ -793,27 +780,107 @@ class Plotter:
         show_plot: bool = True,
         density_scale: str = "10^18 m^-3",
         time_scale: str = "s",
+        probe_amplitude: Optional[Union[np.ndarray, Dict[str, np.ndarray]]] = None,
+        color_by_amplitude: bool = False,
+        amplitude_colormap: str = "coolwarm",
+        amplitude_impedance: float = 50,
+        amplitude_dbm: bool = True,
+        amplitude_unit: str = "V",
     ) -> Tuple[Figure, np.ndarray]:
         """
         Plot density results with flexible data formats and scaling.
 
+        This function can optionally color-code the density plot based on probe signal
+        amplitude. When `color_by_amplitude=True`, each data point is colored according
+        to its corresponding amplitude value, creating a visual representation of signal
+        strength alongside density evolution.
+
         Args:
-            density_data(Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]): Density data in various formats
-            time_data(Optional[np.ndarray]): Optional time array
-            title(str): Plot title
-            save_path(Optional[str]): Optional path to save figure
-            show_plot(bool): Whether to display the plot
-            density_scale(str): Density scale ('m^-2', 'm^-3', '10^18 m^-2', etc.)
-            time_scale(str): Time scale ('s', 'ms', 'us', 'ns')
+            density_data (Union[pd.DataFrame, Dict[str, np.ndarray], np.ndarray]):
+                Density data in various formats. If DataFrame, columns are signal names.
+                If dict, keys are signal names and values are arrays.
+                If array, treated as single "Density" signal.
+            time_data (Optional[np.ndarray]): Optional time array. If None, inferred from
+                density_data index or generated automatically.
+            title (str): Plot title. Default is "Density Results".
+            save_path (Optional[str]): Optional path to save figure.
+            show_plot (bool): Whether to display the plot. Default is True.
+            density_scale (str): Density scale ('m^-2', 'm^-3', '10^18 m^-2', etc.).
+                Default is "10^18 m^-3".
+            time_scale (str): Time scale ('s', 'ms', 'us', 'ns'). Default is "s".
+            probe_amplitude (Optional[Union[np.ndarray, Dict[str, np.ndarray]]]):
+                Probe signal amplitude in volts [V] for color-coding. If None and
+                color_by_amplitude=True, amplitude-based coloring is disabled.
+                - If np.ndarray: Single amplitude array (applied to all signals or first signal).
+                - If Dict[str, np.ndarray]: Amplitude arrays keyed by signal name.
+            color_by_amplitude (bool): If True, color-code plot lines by amplitude.
+                Default is False.
+            amplitude_colormap (str): Matplotlib colormap name for amplitude coloring.
+                Default is "coolwarm". Options: 'viridis', 'plasma', 'inferno', 'coolwarm',
+                'coolwarm', 'RdYlBu', etc.
+            amplitude_impedance (float): System impedance in ohms [Ω] for amplitude-to-dB
+                conversion. Default is 50 Ω.
+            amplitude_dbm (bool): If True, convert amplitude to dBm [dBm] for color mapping.
+                If False, convert to dB [dB]. Default is True.
+            amplitude_unit (str): Unit of the amplitude. Default is "mV".
+                Options: 'mV', 'V', 'dBm', 'dB'. (default is "V")
 
         Returns:
             Tuple[Figure, np.ndarray]:
-                Tuple containing the matplotlib figure and the axis
+                Tuple containing the matplotlib figure and the axis.
+
+        Notes:
+            - When `color_by_amplitude=True`, the plot uses LineCollection to create
+              color-coded line segments, where each segment's color represents the amplitude
+              at that point.
+            - Amplitude values are converted to dB/dBm using `amp2db` from `power_conversion.py`.
+            - The colormap is normalized to the amplitude range (min to max).
+            - If `probe_amplitude` is provided as a single array but multiple density signals
+              exist, the same amplitude is used for all signals.
+
+        Examples:
+            ```python
+            import numpy as np
+            import pandas as pd
+            from ifi.analysis.plots import Plotter
+
+            plotter = Plotter()
+
+            # Basic density plot
+            density = np.random.rand(1000) * 1e18
+            time = np.linspace(0, 1, 1000)
+            fig, ax = plotter.plot_density(density, time_data=time)
+
+            # Density plot with amplitude-based coloring
+            probe_amp = np.random.rand(1000) * 0.1  # 0-0.1 V
+            fig, ax = plotter.plot_density(
+                density,
+                time_data=time,
+                probe_amplitude=probe_amp,
+                color_by_amplitude=True,
+                amplitude_colormap="plasma"
+            )
+
+            # Multiple signals with different amplitudes
+            density_dict = {
+                "CH1": np.random.rand(1000) * 1e18,
+                "CH2": np.random.rand(1000) * 1e18
+            }
+            amp_dict = {
+                "CH1": np.random.rand(1000) * 0.1,
+                "CH2": np.random.rand(1000) * 0.15
+            }
+            fig, ax = plotter.plot_density(
+                density_dict,
+                probe_amplitude=amp_dict,
+                color_by_amplitude=True
+            )
+            ```
         """
         # Prepare data
         if isinstance(density_data, pd.DataFrame):
             if time_data is None and hasattr(density_data, "index"):
-                time_data = density_data.index
+                time_data = density_data.index.values
             elif time_data is None:
                 time_data = np.arange(len(density_data))
 
@@ -828,7 +895,10 @@ class Plotter:
         else:
             if time_data is None:
                 time_data = np.arange(len(density_data))
-            signals = {"Density": density_data}
+            signals = {"Density": np.asarray(density_data)}
+
+        # Ensure time_data is numpy array
+        time_data = np.asarray(time_data)
 
         # Apply time and density scaling
         time_scaled, _, time_label, _ = self._apply_scaling(
@@ -838,18 +908,81 @@ class Plotter:
             time_data, signals, time_scale, density_scale
         )
 
+        # Prepare amplitude data if color-coding is enabled
+        amplitude_data = None
+        if color_by_amplitude and probe_amplitude is not None:
+            if isinstance(probe_amplitude, dict):
+                # Match amplitude arrays to signal names
+                amplitude_data = {}
+                for name in signals.keys():
+                    if name in probe_amplitude:
+                        amplitude_data[name] = np.asarray(probe_amplitude[name])
+                    elif len(probe_amplitude) == 1:
+                        # Use single amplitude array for all signals
+                        amplitude_data[name] = np.asarray(list(probe_amplitude.values())[0])
+            else:
+                # Single amplitude array - apply to all signals or first signal
+                amp_array = np.asarray(probe_amplitude)
+                if len(signals) == 1:
+                    amplitude_data = {list(signals.keys())[0]: amp_array}
+                else:
+                    # Apply same amplitude to all signals
+                    amplitude_data = {name: amp_array for name in signals.keys()}
+
         # Create plot
         fig, ax = plt.subplots(figsize=(12, 6))
 
+        # Plot each signal
         for name, data in density_scaled.items():
-            ax.plot(time_scaled, data, label=name)
+            # Ensure data and time have same length
+            min_len = min(len(time_scaled), len(data))
+            time_plot = time_scaled[:min_len]
+            data_plot = data[:min_len]
+
+            if color_by_amplitude and amplitude_data is not None and name in amplitude_data:
+                # Color-code by amplitude
+                amp_array = amplitude_data[name]
+                # Ensure amplitude array matches data length
+                min_amp_len = min(len(amp_array), min_len)
+                amp_plot = amp_array[:min_amp_len]
+                time_plot = time_plot[:min_amp_len]
+                data_plot = data_plot[:min_amp_len]
+
+                # Convert amplitude to dB/dBm for color mapping
+                amp_pow = amp2db(np.abs(amp_plot), impedance=amplitude_impedance, dbm=amplitude_dbm) if 1==0 else np.abs(amp_plot)
+
+                # Create line segments for color mapping
+                points = np.array([time_plot, data_plot]).T.reshape(-1, 1, 2)
+                segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+                # Create LineCollection with color mapping
+                lc = LineCollection(
+                    segments,
+                    cmap=plt.get_cmap(amplitude_colormap),
+                    norm=plt.Normalize(vmin=amp_pow.min(), vmax=amp_pow.max()),
+                )
+                # Set color for each segment based on amplitude
+                lc.set_array(amp_pow[:-1])  # Use amplitude at start of each segment
+                lc.set_linewidth(2)
+                line = ax.add_collection(lc)
+
+                # Add colorbar
+                cbar = plt.colorbar(line, ax=ax)
+                if amplitude_dbm:
+                    amp_unit = "dBm" if amplitude_unit == "dBm" else "V"
+                else:
+                    amp_unit = "dB" if amplitude_unit == "dB" else "V"
+                cbar.set_label(f"Probe Amplitude [{amp_unit}]", **FontStyle.label)
+            else:
+                # Standard line plot
+                ax.plot(time_plot, data_plot, label=name, linewidth=2)
 
         ax.set_xlabel(time_label, **FontStyle.label)
         ax.set_ylabel(f"LID {density_label}", **FontStyle.label)
         ax.set_title(title, **FontStyle.title)
         ax.grid(True, alpha=0.3)
 
-        if len(signals) > 1:
+        if len(signals) > 1 and not color_by_amplitude:
             ax.legend()
 
         plt.tight_layout()
@@ -1335,6 +1468,10 @@ def plot_analysis_overview(
     trigger_time: float = 0.0,
     title_prefix: str = "",
     downsample: int = 10,
+    color_density_by_amplitude: bool = False,
+    probe_amplitudes: Optional[Dict[str, np.ndarray]] = None,
+    amplitude_colormap: str = "coolwarm",
+    amplitude_impedance: float = 50.0,
     **kwargs,
 ):
     """
@@ -1386,11 +1523,25 @@ def plot_analysis_overview(
                 elif "TIME" in df.columns:
                     time_data = df["TIME"].values
 
+                # Prepare probe amplitudes for this density DataFrame
+                plot_probe_amp = None
+                if color_density_by_amplitude and probe_amplitudes is not None:
+                    # Match density column names to probe amplitudes
+                    if isinstance(df, pd.DataFrame):
+                        plot_probe_amp = {}
+                        for col_name in df.columns:
+                            if col_name in probe_amplitudes:
+                                plot_probe_amp[col_name] = probe_amplitudes[col_name]
+
                 plotter.plot_density(
                     df,
                     time_data=time_data,
                     title=f"{title_prefix}{name}",
                     show_plot=True,
+                    probe_amplitude=plot_probe_amp,
+                    color_by_amplitude=color_density_by_amplitude,
+                    amplitude_colormap=amplitude_colormap,
+                    amplitude_impedance=amplitude_impedance,
                     **kwargs,
                 )
             except Exception as e:
