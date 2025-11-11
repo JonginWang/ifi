@@ -388,7 +388,7 @@ class Plotter:
         if sci_match:
             exponent = int(sci_match.group(1))
             unit = sci_match.group(2).strip()
-            signal_scale_factor = 10**exponent
+            signal_scale_factor = 10**(-exponent)
 
             # Convert superscript notation to LaTeX (without $ delimiters for now)
             def replace_superscript(match):
