@@ -737,7 +737,7 @@ def run_analysis(
                                                 probe_signal,
                                                 time_axis,
                                                 probe_signal,
-                                                isflip=True,
+                                                isflip=False,
                                             )
                                             # Store in frequency-specific density DataFrame
                                             freq_density_data[
