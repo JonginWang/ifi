@@ -13,10 +13,11 @@ Classes:
 
 import numpy as np
 from scipy import signal as spsig
-from typing import Tuple
+from typing import Tuple, Optional
 from functools import lru_cache
 
 from ..utils.common import LogManager, log_tag
+from ..utils.validation import validate_signal, validate_frequency
 
 # Import external packages for time-frequency transforms
 import ssqueezepy as ssqpy  # noqa: E402
@@ -554,7 +555,12 @@ class SpectrumAnalysis:
 
         return (freq_ridge, ridge_idxs) if return_idx else freq_ridge
 
-    def find_center_frequency_fft(self, signal: np.ndarray, fs: float) -> float:
+    def find_center_frequency_fft(
+        self, 
+        signal: np.ndarray, 
+        fs: float,
+        f_range: Optional[Tuple[float, Optional[float]]] = None
+    ) -> float:
         """
         Finds the center frequency of a signal using FFT.
 
@@ -565,15 +571,74 @@ class SpectrumAnalysis:
         Args:
             signal (np.ndarray): The input signal array.
             fs (float): The sampling frequency of the signal.
+            f_range (Optional[Tuple[float, Optional[float]]]): Optional frequency range 
+                to search (min_f, max_f). If None, uses default threshold 
+                (5% of Nyquist or 5MHz, whichever is smaller). If max_f is None, 
+                uses Nyquist frequency as maximum.
 
         Returns:
             float: The estimated center frequency in Hz.
+
+        Raises:
+            ValueError: If f_range is invalid or no frequencies found in range.
         """
         logger.debug(f"{log_tag('SPECR','FCENT')} Finding center frequency of signal.")
 
-        n = len(signal)
-        if n == 0:
-            return 0.0
+        # Validate input signal
+        try:
+            signal = validate_signal(signal, "signal", min_length=2)
+        except (ValueError, TypeError):
+            # Fallback for backward compatibility if validation fails
+            n = len(signal)
+            if n == 0:
+                logger.warning(
+                    f"{log_tag('SPECR','FCENT')} Empty signal provided. Returning 0.0 Hz."
+                )
+                return 0.0
+        else:
+            n = len(signal)
+
+        # Validate and process frequency range
+        if f_range is not None:
+            if len(f_range) != 2:
+                raise ValueError("f_range must be a tuple of (min_f, max_f)")
+            
+            # Set default maximum frequency to Nyquist frequency
+            nyquist = fs / 2
+            if f_range[1] is None:
+                f_range_processed = (
+                    validate_frequency(f_range[0], "f_range[0]"), 
+                    nyquist
+                )
+            else:
+                f_range_processed = (
+                    validate_frequency(f_range[0], "f_range[0]"),
+                    validate_frequency(f_range[1], "f_range[1]"),
+                )
+            
+            if f_range_processed[0] >= f_range_processed[1]:
+                raise ValueError(
+                    f"f_range[0] ({f_range_processed[0]}) must be less than "
+                    f"f_range[1] ({f_range_processed[1]})"
+                )
+            
+            f_min = f_range_processed[0]
+            f_max = f_range_processed[1]
+            
+            logger.debug(
+                f"{log_tag('SPECR','FCENT')} Using custom frequency range: "
+                f"[{f_min/1e6:.2f}, {f_max/1e6:.2f}] MHz"
+            )
+        else:
+            # Use default threshold (backward compatibility)
+            nyquist = fs / 2
+            f_min = min(nyquist * 0.05, 5e6)
+            f_max = nyquist
+            
+            logger.debug(
+                f"{log_tag('SPECR','FCENT')} Using default threshold: "
+                f"min={f_min/1e6:.2f} MHz (5% of Nyquist or 5MHz)"
+            )
 
         # Compute FFT
         yf = np.fft.fft(signal)
@@ -583,29 +648,39 @@ class SpectrumAnalysis:
         xf_positive = xf[: n // 2]
         yf_positive = 2.0 / n * np.abs(yf[0 : n // 2])
 
-        # Define a minimum frequency threshold to ignore DC and low-freq noise
-        # Threshold: Min(5% of Nyquist frequency, 5MHz)
-        nyquist = fs / 2
-        min_freq_threshold = min(nyquist * 0.05, 5e6)
+        # Filter to frequency range
+        if f_range is not None:
+            # Use specified range
+            mask = (xf_positive >= f_min) & (xf_positive <= f_max)
+            freqs_filtered = xf_positive[mask]
+            fft_vals_filtered = yf_positive[mask]
+            
+            if len(freqs_filtered) == 0:
+                raise ValueError(
+                    f"No frequencies found in range [{f_min/1e6:.2f}, {f_max/1e6:.2f}] MHz"
+                )
+            
+            peak_idx = np.argmax(fft_vals_filtered)
+            f_center = freqs_filtered[peak_idx]
+        else:
+            # Use default threshold behavior (backward compatibility)
+            try:
+                search_start_idx = np.where(xf_positive > f_min)[0][0]
+            except IndexError:
+                # This happens if all frequencies are below the threshold.
+                # In this case, just search from the beginning of positive freqs.
+                search_start_idx = 0
 
-        # Find the index where frequency is just above the threshold
-        try:
-            search_start_idx = np.where(xf_positive > min_freq_threshold)[0][0]
-        except IndexError:
-            # This happens if all frequencies are below the threshold.
-            # In this case, just search from the beginning of positive freqs.
-            search_start_idx = 0
+            # Find the peak frequency above the threshold
+            if search_start_idx >= len(yf_positive):
+                # If search start index is out of bounds, there's no valid range to search
+                logger.warning(
+                    f"{log_tag('SPECR','FCENT')} No valid range to search for center frequency. Returning 0.0 Hz."
+                )
+                return 0.0
 
-        # Find the peak frequency above the threshold
-        if search_start_idx >= len(yf_positive):
-            # If search start index is out of bounds, there's no valid range to search
-            logger.warning(
-                f"{log_tag('SPECR','FCENT')} No valid range to search for center frequency. Returning 0.0 Hz."
-            )
-            return 0.0
-
-        peak_idx = np.argmax(yf_positive[search_start_idx:]) + search_start_idx
-        f_center = xf_positive[peak_idx]
+            peak_idx = np.argmax(yf_positive[search_start_idx:]) + search_start_idx
+            f_center = xf_positive[peak_idx]
 
         logger.info(f"{log_tag('SPECR','FCENT')} fc: {f_center / 1e6:.2f} MHz")
 

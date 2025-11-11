@@ -13,8 +13,8 @@ Methods:
     3. CWT Phase Reconstruction: Use filtfilt + FIR decimation + CWT for phase recovery
 
 Functions:
-    _cordic_rotation_vectorized_jit: Numba JIT compiled CORDIC rotation for arrays
-    _cordic_vectoring_vectorized_jit: Numba JIT compiled CORDIC vectoring mode for arrays
+    _cordic_rotation_jit: Numba JIT compiled CORDIC rotation for arrays
+    _cordic_vectoring_jit: Numba JIT compiled CORDIC vectoring mode for arrays
 
 Classes:
     CORDICProcessor: CORDIC algorithm based phase calculation
@@ -26,12 +26,8 @@ Classes:
 
 import numpy as np
 from scipy import signal as spsig
-from scipy.signal import remez
-from scipy.fft import fft, fftfreq
-from typing import Tuple, Optional, List, Dict, Any
+from typing import Tuple, Optional, List, Dict, Any, Union
 from numba import njit, prange
-
-from .functions.remezord import remezord
 
 # Import ssqueezepy after cache setup (which patches torch import)
 import ssqueezepy as ssqpy
@@ -49,12 +45,13 @@ from ..utils.validation import (
     validate_signals_match,
     validate_method,
 )
+
 # cache_config = setup_project_cache()
-LogManager()
+logger = LogManager().get_logger(__name__)
 
 
 @njit
-def _cordic_rotation_vectorized_jit(
+def _cordic_rotation_jit(
     x: np.ndarray,
     y: np.ndarray,
     target_angles: np.ndarray,
@@ -117,7 +114,7 @@ def _cordic_rotation_vectorized_jit(
 
 
 @njit(parallel=True)
-def _cordic_vectoring_vectorized_jit(
+def _cordic_vectoring_jit(
     x: np.ndarray,
     y: np.ndarray,
     angle_table: np.ndarray,  # alpha[i] = atan(2^-i)
@@ -140,7 +137,7 @@ def _cordic_vectoring_vectorized_jit(
         nan_phase (bool): If True, set phase to NaN for zero vectors (default: False)
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: 
+        Tuple[np.ndarray, np.ndarray]:
             Tuple of (magnitudes, phases) where phases are in [-π, π] range
     """
     n = x.shape[0]
@@ -231,95 +228,158 @@ class CORDICProcessor:
             np.sqrt(1.0 + 2.0 ** (-2 * np.arange(n_iterations)))
         )
 
-    def cordic_rotation(
-        self, x: float, y: float, target_angle: float
-    ) -> Tuple[float, float, float]:
+    def cordic(
+        self,
+        x: Union[float, np.ndarray],
+        y: Union[float, np.ndarray],
+        target_angle: Optional[Union[float, np.ndarray]] = None,
+        method: str = "rotation",
+        zero_tol: float = 0.0,
+        nan_phase: bool = False,
+        **kwargs: Any,
+    ) -> Union[Tuple[float, float, float], Tuple[np.ndarray, np.ndarray, float]]:
         """
-        Perform CORDIC rotation to find magnitude and phase for a single point.
+        Unified CORDIC method that handles both scalars and arrays for rotation or vectoring mode.
 
         Args:
-            x (float): Real component
-            y (float): Imaginary component
-            target_angle (float): Target angle for rotation
-
+            x (float | np.ndarray): Real component(s)
+            y (float | np.ndarray): Imaginary component(s)
+            target_angle (float | np.ndarray, optional): Target angle(s) for rotation mode.
+                                                         Required for "rotation" method, ignored for "vectoring".
+            method (str): Method to use ("rotation" or "vectoring"). Default is "rotation".
+            zero_tol (float): Tolerance for detecting zero vectors in vectoring mode (default: 0.0).
+                              Ignored for rotation mode.
+            nan_phase (bool): If True, set phase to NaN for zero vectors in vectoring mode (default: False).
+                              Ignored for rotation mode.
+            **kwargs: Additional keyword arguments (currently unused, reserved for future use).
+            
         Returns:
-            Tuple[float, float, float]: Tuple of (magnitude, phase, scale_factor)
-
-        Note:
-            If you need to calculate the phase of a vector (arctan2(y, x)),
-            use `cordic_vectoring_vectorized` instead. This method is designed
-            for rotating a vector to a specific target angle, not for phase calculation.
-            Known issue: `target_angle=0` may not produce accurate phase results.
+            Tuple containing (magnitudes, phases, scale_factor):
+            - If inputs are scalars: (float, float, float)
+            - If inputs are arrays: (np.ndarray, np.ndarray, float)
+            
+        Raises:
+            ValueError: If method is invalid, or if arrays have mismatched lengths.
+            TypeError: If target_angle is required but not provided for rotation mode.
         """
-        # Initialize
-        x_rot = x
-        y_rot = y
-        angle_accum = 0.0
-
-        # Determine rotation direction
-        if target_angle < 0:
-            direction = -1
+        # Validate method
+        if method not in ("rotation", "vectoring"):
+            raise ValueError(f"Invalid method: {method}. Must be 'rotation' or 'vectoring'")
+        
+        # Check if inputs are arrays (not strings, bytes, or other non-numeric sequence types)
+        # Use hasattr to detect array-like objects (including plot lists, numpy arrays, lists, tuples)
+        # Exclude strings and bytes which have __len__ but are not numeric arrays
+        has_length = hasattr(x, "__len__") and not isinstance(x, (str, bytes))
+        
+        if not has_length:
+            # Scalar input: convert to arrays for unified processing
+            try:
+                x = np.asarray([x], dtype=np.float64)
+                y = np.asarray([y], dtype=np.float64)
+            except (ValueError, TypeError) as e:
+                raise TypeError(
+                    f"Inputs x and y must be numeric scalars or array-like objects. "
+                    f"Got x type: {type(x)}, y type: {type(y)}. Error: {e}"
+                )
+            
+            if method == "rotation":
+                if target_angle is None:
+                    raise TypeError("target_angle is required for rotation mode")
+                try:
+                    target_angle = np.asarray([target_angle], dtype=np.float64)
+                except (ValueError, TypeError) as e:
+                    raise TypeError(
+                        f"target_angle must be a numeric scalar or array-like object. "
+                        f"Got type: {type(target_angle)}. Error: {e}"
+                    )
+            is_scalar = True
         else:
-            direction = 1
-
-        # CORDIC iterations
-        for i in range(self.n_iterations):
-            if direction * angle_accum < direction * target_angle:
-                x_new = x_rot - direction * y_rot * 2.0 ** (-i)
-                y_new = y_rot + direction * x_rot * 2.0 ** (-i)
-                angle_accum += direction * self.angles[i]
-            else:
-                x_new = x_rot + direction * y_rot * 2.0 ** (-i)
-                y_new = y_rot - direction * x_rot * 2.0 ** (-i)
-                angle_accum -= direction * self.angles[i]
-
-            x_rot, y_rot = x_new, y_new
-
-        # Calculate magnitude and normalize
-        magnitude = np.sqrt(x_rot**2 + y_rot**2) / self.scale_factor
-
-        return magnitude, angle_accum, self.scale_factor
-
-    def cordic_rotation_vectorized(
-        self, x: np.ndarray, y: np.ndarray, target_angles: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray, float]:
-        """
-        Vectorized CORDIC rotation for arrays of complex numbers.
-
-        Args:
-            x (np.ndarray): Real components array
-            y (np.ndarray): Imaginary components array
-            target_angles (np.ndarray): Target angles array
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray, float]: Tuple of (magnitudes, phases, scale_factor)
-
-        Note:
-            If you need to calculate phases of vectors (arctan2(y, x)),
-            use `cordic_vectoring_vectorized` instead. This method is designed
-            for rotating vectors to specific target angles, not for phase calculation.
-            Known issue: `target_angles=0` may not produce accurate phase results.
-            For phase calculation, vectoring mode is recommended and more accurate.
-        """
-        # Ensure arrays are the same length
+            # Array-like input: ensure numpy arrays with proper dtype
+            # Handle list, tuple, numpy array, or other array-like inputs (including plot lists)
+            try:
+                x = np.asarray(x, dtype=np.float64)
+                y = np.asarray(y, dtype=np.float64)
+            except (ValueError, TypeError) as e:
+                raise TypeError(
+                    f"Inputs x and y must be numeric scalars or array-like objects. "
+                    f"Got x type: {type(x)}, y type: {type(y)}. Error: {e}"
+                )
+            is_scalar = False
+            
+            # Validate array lengths
+            if len(x) != len(y):
+                raise ValueError(f"x and y arrays must have the same length. Got {len(x)} and {len(y)}")
+            
+            if method == "rotation":
+                if target_angle is None:
+                    raise TypeError("target_angle is required for rotation mode")
+                try:
+                    target_angle = np.asarray(target_angle, dtype=np.float64)
+                except (ValueError, TypeError) as e:
+                    raise TypeError(
+                        f"target_angle must be a numeric scalar or array-like object. "
+                        f"Got type: {type(target_angle)}. Error: {e}"
+                    )
+                if len(target_angle) != len(x):
+                    raise ValueError(
+                        f"target_angle array must have the same length as x and y. "
+                        f"Got {len(target_angle)} and {len(x)}"
+                    )
+        
         n = len(x)
-        if len(y) != n or len(target_angles) != n:
-            raise ValueError("All input arrays must have the same length")
-
-        # Use Numba JIT for large arrays, pure NumPy for small arrays
-        if n > 1000:  # Threshold for JIT compilation
-            magnitudes, phases = _cordic_rotation_vectorized_jit(
-                x, y, target_angles, self.angles, self.n_iterations, self.scale_factor
-            )
+        
+        # Extract vectoring mode parameters from kwargs (for backward compatibility)
+        # Explicit parameters take precedence over kwargs
+        # Only use kwargs if explicit parameter is at default value
+        if "zero_tol" in kwargs:
+            kwargs_zero_tol = kwargs["zero_tol"]
+            # Use kwargs value only if explicit parameter is default (0.0)
+            if zero_tol == 0.0 and kwargs_zero_tol != 0.0:
+                zero_tol = kwargs_zero_tol
+        
+        if "nan_phase" in kwargs:
+            kwargs_nan_phase = kwargs["nan_phase"]
+            # Use kwargs value only if explicit parameter is default (False)
+            if not nan_phase and kwargs_nan_phase:
+                nan_phase = kwargs_nan_phase
+        
+        # Warn if rotation mode receives vectoring-specific parameters
+        if method == "rotation":
+            if (kwargs.get("zero_tol") is not None and kwargs.get("zero_tol") != 0.0) or kwargs.get("nan_phase"):
+                import warnings
+                warnings.warn(
+                    "zero_tol and nan_phase parameters are ignored in rotation mode. "
+                    "These parameters are only used in vectoring mode.",
+                    UserWarning,
+                    stacklevel=2
+                )
+        
+        # Select implementation based on array size and method
+        if n > 1000:
+            # Use Numba JIT for large arrays
+            if method == "rotation":
+                magnitudes, phases = _cordic_rotation_jit(
+                    x, y, target_angle, self.angles, self.n_iterations, self.scale_factor
+                )
+            elif method == "vectoring":
+                magnitudes, phases = _cordic_vectoring_jit(
+                    x, y, self.angles, self.scale_factor, zero_tol, nan_phase
+                )
         else:
-            # Use pure NumPy vectorization for small arrays
-            magnitudes, phases = self._cordic_rotation_numpy_vectorized(
-                x, y, target_angles
-            )
-
+            # Use pure NumPy for small arrays
+            if method == "rotation":
+                magnitudes, phases = self._cordic_rotation_numpy(x, y, target_angle)
+            elif method == "vectoring":
+                magnitudes, phases = self._cordic_vectoring_numpy(x, y, zero_tol, nan_phase)
+        
+        # Return scalars if input was scalar
+        if is_scalar:
+            return float(magnitudes[0]), float(phases[0]), self.scale_factor
+        
         return magnitudes, phases, self.scale_factor
 
-    def _cordic_rotation_numpy_vectorized(
+
+    def _cordic_rotation_numpy(
         self, x: np.ndarray, y: np.ndarray, target_angles: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -375,48 +435,7 @@ class CORDICProcessor:
 
         return magnitudes, angle_accum
 
-    def cordic_vectoring_vectorized(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        zero_tol: float = 0.0,
-        nan_phase: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, float]:
-        """
-        Vectorized CORDIC vectoring mode for arrays of complex numbers.
-
-        Vectoring mode computes phase directly by driving y -> 0.
-        This is optimal when we only need phase calculation (not rotation to target angle).
-
-        Args:
-            x (np.ndarray): Real components array
-            y (np.ndarray): Imaginary components array
-            zero_tol (float): Tolerance for detecting zero vectors (default: 0.0)
-            nan_phase (bool): If True, set phase to NaN for zero vectors (default: False)
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray, float]: 
-                Tuple of (magnitudes, phases, scale_factor) where phases are in [-π, π] range
-        """
-        # Ensure arrays are the same length
-        n = len(x)
-        if len(y) != n:
-            raise ValueError("x and y arrays must have the same length")
-
-        # Use Numba JIT for large arrays, pure NumPy for small arrays
-        if n > 1000:  # Threshold for JIT compilation
-            magnitudes, phases = _cordic_vectoring_vectorized_jit(
-                x, y, self.angles, self.scale_factor, zero_tol, nan_phase
-            )
-        else:
-            # Use pure NumPy vectorization for small arrays
-            magnitudes, phases = self._cordic_vectoring_numpy_vectorized(
-                x, y, zero_tol, nan_phase
-            )
-
-        return magnitudes, phases, self.scale_factor
-
-    def _cordic_vectoring_numpy_vectorized(
+    def _cordic_vectoring_numpy(
         self,
         x: np.ndarray,
         y: np.ndarray,
@@ -443,7 +462,9 @@ class CORDICProcessor:
         z = np.zeros(n, dtype=np.float64)
 
         # Precompute pow2 array
-        pow2 = np.array([1.0 / (1 << i) for i in range(self.n_iterations)], dtype=np.float64)
+        pow2 = np.array(
+            [1.0 / (1 << i) for i in range(self.n_iterations)], dtype=np.float64
+        )
 
         # (0,0) mask: detect vectors close to (0,0)
         zero_mask = (np.abs(xr) + np.abs(yr) <= zero_tol).astype(np.uint8)
@@ -474,7 +495,9 @@ class CORDICProcessor:
             # CORDIC rotation with phase sign inversion
             x_new = np.where(non_zero_mask, xr - dj * yr * f, xr)
             y_new = np.where(non_zero_mask, yr + dj * xr * f, yr)
-            z = np.where(non_zero_mask, z - dj * a, z)  # core patch: invert phase accumulation sign
+            z = np.where(
+                non_zero_mask, z - dj * a, z
+            )  # core patch: invert phase accumulation sign
 
             xr = x_new
             yr = y_new
@@ -519,7 +542,7 @@ class CORDICProcessor:
             signal (np.ndarray): Input signal
             f0 (float): Fundamental frequency
             fs (float): Sampling frequency
-            samples_per_period (Optional[int]): 
+            samples_per_period (Optional[int]):
                 - If None: Use all samples (maintains time resolution, recommended for stacked signals)
                 - If int: Extract this many samples per period using anti-aliased decimation
                 - Default: None (use all samples)
@@ -572,11 +595,17 @@ class CORDICProcessor:
                     # decimate uses FIR filter to prevent aliasing before downsampling
                     # This ensures phase information is preserved during downsampling
                     try:
-                        x_values_decimated = spsig.decimate(np.real(analytic), decimation_factor, ftype="fir")
-                        y_values_decimated = spsig.decimate(np.imag(analytic), decimation_factor, ftype="fir")
+                        x_values_decimated = spsig.decimate(
+                            np.real(analytic), decimation_factor, ftype="fir"
+                        )
+                        y_values_decimated = spsig.decimate(
+                            np.imag(analytic), decimation_factor, ftype="fir"
+                        )
 
                         # Calculate time points for decimated signal
-                        time_points = np.arange(len(x_values_decimated)) * (decimation_factor / fs)
+                        time_points = np.arange(len(x_values_decimated)) * (
+                            decimation_factor / fs
+                        )
 
                         x_values = x_values_decimated
                         y_values = y_values_decimated
@@ -586,9 +615,11 @@ class CORDICProcessor:
                         x_values = np.real(analytic)
                         y_values = np.imag(analytic)
 
-        # Use vectorized CORDIC vectoring mode to calculate phase from analytic signal
+        # Use unified CORDIC vectoring mode to calculate phase from analytic signal
         # This computes atan2(imag, real) which gives the instantaneous phase
-        magnitudes, phases, _ = self.cordic_vectoring_vectorized(x_values, y_values)
+        magnitudes, phases, _ = self.cordic(
+            x_values, y_values, method="vectoring", target_angle=None
+        )
 
         # Unwrap phases to maintain continuity
         # CORDIC vectoring mode outputs phases in [-π, π] range.
@@ -627,12 +658,19 @@ class SignalStacker:
         """
         Find the fundamental frequency of the signal.
 
+        This method delegates to SpectrumAnalysis.find_center_frequency_fft() for
+        efficient frequency detection while maintaining the same interface for
+        backward compatibility.
+
         Args:
             signal: Input signal
             f_range: Frequency range to search (min_f, max_f)
 
         Returns:
             Fundamental frequency in Hz
+
+        Raises:
+            ValueError: If f_range is invalid or no frequencies found in range
         """
         # Validate input parameters
         signal = validate_signal(signal, "signal", min_length=2)
@@ -642,31 +680,21 @@ class SignalStacker:
 
         # Set default maximum frequency to Nyquist frequency
         if f_range[1] is None:
-            f_range = (validate_frequency(f_range[0], "f_range[0]"), self.fs / 2)
+            f_range_processed = (validate_frequency(f_range[0], "f_range[0]"), self.fs / 2)
         else:
-            f_range = (
+            f_range_processed = (
                 validate_frequency(f_range[0], "f_range[0]"),
                 validate_frequency(f_range[1], "f_range[1]"),
             )
 
-        if f_range[0] >= f_range[1]:
+        if f_range_processed[0] >= f_range_processed[1]:
             raise ValueError("f_range[0] must be less than f_range[1]")
 
-        # Use FFT to find dominant frequency
-        freqs = fftfreq(len(signal), 1 / self.fs)
-        fft_vals = np.abs(fft(signal))
-
-        # Filter to frequency range
-        mask = (freqs >= f_range[0]) & (freqs <= f_range[1])
-        freqs_filtered = freqs[mask]
-        fft_vals_filtered = fft_vals[mask]
-
-        if len(freqs_filtered) == 0:
-            raise ValueError(f"No frequencies found in range {f_range}")
-
-        # Find peak frequency
-        peak_idx = np.argmax(fft_vals_filtered)
-        fundamental_freq = freqs_filtered[peak_idx]
+        # Delegate to SpectrumAnalysis.find_center_frequency_fft for efficient computation
+        # This uses positive frequencies only and proper normalization
+        fundamental_freq = self.spectrum_analyzer.find_center_frequency_fft(
+            signal, self.fs, f_range=f_range_processed
+        )
 
         return fundamental_freq
 
@@ -708,8 +736,8 @@ class SignalStacker:
 
         if time_axis is not None:
             # Use time axis to find exact period boundaries
-            period_boundaries = []
-            current_time = 0
+            period_boundaries = [0]
+            current_time = time_axis[0]
 
             while current_time < time_axis[-1]:
                 # Find closest time index
@@ -815,19 +843,29 @@ class SignalStacker:
             import logging
 
             logging.warning(
-                f"{log_tag('STACK','CDM')} Fundamental frequency {f0:.2f} Hz is close to Nyquist frequency {self.fs / 2:.2f} Hz. "
-                f"{log_tag('STACK','CDM')} Consider increasing sampling rate for better accuracy."
+                f"{log_tag('STACK', 'CDM')} Fundamental frequency {f0:.2f} Hz is close to Nyquist frequency {self.fs / 2:.2f} Hz. "
+                f"{log_tag('STACK', 'CDM')} Consider increasing sampling rate for better accuracy."
             )
 
         try:
             phase_diff = self.phase_converter.calc_phase_cdm(
-                ref_signal, probe_signal, self.fs, f0, isbpf=True, isconj=False, islpf=True, iszif=False, isflip=False
+                ref_signal,
+                probe_signal,
+                self.fs,
+                f0,
+                isbpf=True,
+                isconj=False,
+                islpf=True,
+                iszif=False,
+                isflip=False,
             )
         except Exception as e:
             # If CDM fails, raise the original error instead of silent fallback
-            logging.error(f"{log_tag('STACK','CDM')} CDM method failed: {e}."
+            logging.error(
+                f"{log_tag('STACK', 'CDM')} CDM method failed: {e}."
                 f"This may indicate insufficient sampling rate "
-                f"or invalid signal characteristics for CDM analysis.")
+                f"or invalid signal characteristics for CDM analysis."
+            )
             raise RuntimeError(
                 f"CDM method failed: {e}. This may indicate insufficient sampling rate "
                 f"or invalid signal characteristics for CDM analysis."
@@ -1312,34 +1350,47 @@ class STFTRidgeAnalyzer:
         self.phase_converter = PhaseConverter()
 
     def compute_stft_with_ridge(
-        self, signal: np.ndarray, f0: float, nperseg: int = 1024, noverlap: int = 512
+        self, 
+        signal: np.ndarray, 
+        f0: float, 
+        nperseg: int = 1024, 
+        noverlap: int = 512,
+        penalty: float = 2.0,
+        n_bin: int = 15,
+        library: str = "ssqueezepy"
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Compute STFT and find frequency ridge.
+        Compute STFT and find frequency ridge using robust ridge tracking algorithm.
+
+        This method uses SpectrumAnalysis.find_freq_ridge() which employs
+        ssqueezepy.extract_ridges() or ridge_tracking.py algorithms with penalty
+        and bin settings for more robust ridge detection compared to simple argmax.
 
         Args:
             signal: Input signal
             f0: Target frequency
             nperseg: Number of points per segment
             noverlap: Number of points to overlap
+            penalty: Penalty for ridge extraction (0.5, 2, 5, 20, 40). Default is 2.0.
+                Higher penalty reduces frequency jumps.
+            n_bin: Number of bins for ridge extraction (> 15 for single, ~4 for multiple).
+                Default is 15.
+            library: Library to use for ridge extraction ('ssqueezepy' or 'MATLAB').
+                Default is 'ssqueezepy'.
 
         Returns:
             Tuple of (frequencies, times, ridge_frequencies)
         """
-        # Compute STFT
-        f, t, Sxx = spsig.stft(signal, fs=self.fs, nperseg=nperseg, noverlap=noverlap)
+        # Compute STFT using SpectrumAnalysis for consistency
+        f, t, Zxx = self.spectrum_analyzer.compute_stft(
+            signal, self.fs, nperseg=nperseg, noverlap=noverlap
+        )
 
-        # Find ridge around target frequency
-        f_tolerance = f0 * 0.1  # 10% tolerance
-        f_mask = (f >= f0 - f_tolerance) & (f <= f0 + f_tolerance)
-
-        # Find ridge in the band
-        Sxx_band = Sxx[f_mask, :]
-        f_band = f[f_mask]
-
-        # Find peak frequency at each time
-        ridge_idx = np.argmax(np.abs(Sxx_band), axis=0)
-        ridge_freqs = f_band[ridge_idx]
+        # Use robust ridge tracking algorithm instead of simple argmax
+        # This handles noise better and avoids false detection of low-frequency components
+        ridge_freqs = self.spectrum_analyzer.find_freq_ridge(
+            Zxx, f, penalty=penalty, n_bin=n_bin, method="stft", library=library
+        )
 
         return f, t, ridge_freqs
 
@@ -1356,26 +1407,39 @@ class STFTRidgeAnalyzer:
 
         Args:
             signal: Input signal
-            ridge_freqs: Ridge frequencies
-            times: Time points
-            nperseg: Number of points per segment
-            noverlap: Number of points to overlap
+            ridge_freqs: Ridge frequencies (from compute_stft_with_ridge)
+            times: Time points (from compute_stft_with_ridge)
+            nperseg: Number of points per segment (must match compute_stft_with_ridge)
+            noverlap: Number of points to overlap (must match compute_stft_with_ridge)
 
         Returns:
             Phase values at ridge frequencies
         """
-        # Compute STFT
-        f, t, Sxx = spsig.stft(signal, fs=self.fs, nperseg=nperseg, noverlap=noverlap)
+        # Compute STFT using SpectrumAnalysis for consistency
+        f, t, Zxx = self.spectrum_analyzer.compute_stft(
+            signal, self.fs, nperseg=nperseg, noverlap=noverlap
+        )
 
         # Extract phase at ridge frequencies
-        phases = []
-        for i, (t_val, ridge_freq) in enumerate(zip(times, ridge_freqs)):
-            # Find closest frequency
-            f_idx = np.argmin(np.abs(f - ridge_freq))
-            phase = np.angle(Sxx[f_idx, i])
-            phases.append(phase)
+        # Find closest frequency indices for each ridge frequency
+        f_indices = np.searchsorted(f, ridge_freqs)
+        # Clamp indices to valid range
+        f_indices = np.clip(f_indices, 0, len(f) - 1)
+        
+        # Ensure time indices match
+        if len(times) != len(ridge_freqs):
+            raise ValueError(
+                f"Length mismatch: times ({len(times)}) and ridge_freqs ({len(ridge_freqs)}) must have same length"
+            )
+        
+        # Find time indices corresponding to times array
+        t_indices = np.searchsorted(t, times)
+        t_indices = np.clip(t_indices, 0, len(t) - 1)
+        
+        # Extract phases using vectorized operations
+        phases = np.angle(Zxx[f_indices, t_indices])
 
-        return np.array(phases)
+        return phases
 
     def compute_phase_difference(
         self, ref_signal: np.ndarray, probe_signal: np.ndarray, f0: float
@@ -1432,18 +1496,14 @@ class CWTPhaseReconstructor:
         """
         self.fs = fs
         self.spectrum_analyzer = SpectrumAnalysis()
+        self.phase_converter = PhaseConverter()
 
     def design_fir_filter(self, f0: float, bandwidth: float = 0.1) -> np.ndarray:
         """
-        Design FIR filter for the target frequency band using remez algorithm.
+        Design FIR filter for the target frequency band using PhaseConverter._create_bpf.
 
-        Uses remezord to calculate optimal filter length based on frequency
-        requirements and ripple specifications, then designs the filter using
-        the Remez exchange algorithm. This approach is consistent with
-        phi2ne.py's _create_bpf method.
-
-        Note: This method is currently only used in tests. It may be removed
-        in the future if no production code requires it.
+        This method delegates to PhaseConverter._create_bpf() to avoid code duplication.
+        The filter design logic is already well-implemented in phi2ne.py.
 
         Args:
             f0: Target frequency (Hz)
@@ -1452,12 +1512,7 @@ class CWTPhaseReconstructor:
         Returns:
             FIR filter coefficients (bandpass filter)
         """
-        # Design bandpass filter edges (similar to phi2ne.py _create_bpf)
-        # For a bandpass filter with bandwidth around f0, we need:
-        # - Lower stopband edge (f_stop1)
-        # - Lower passband edge (f_pass1)
-        # - Upper passband edge (f_pass2)
-        # - Upper stopband edge (f_stop2)
+        # Calculate bandpass filter edges
         # Use a transition band of bandwidth * 0.5 on each side
         transition = f0 * bandwidth * 0.5
         f_pass1 = f0 * (1 - bandwidth / 2)  # Lower passband edge
@@ -1476,46 +1531,11 @@ class CWTPhaseReconstructor:
             if f_pass1 <= f_stop1:
                 f_pass1 = f_stop1 * 1.1
 
-        # Define frequency bands and amplitudes
-        freqs = [f_stop1, f_pass1, f_pass2, f_stop2]
-        amps = [0, 1, 0]  # Stopband, passband, stopband
-
-        # Define ripple specifications (same as phi2ne.py _create_bpf)
-        rip_stop1 = 1e-4  # Stopband ripple (linear)
-        rip_pass = 0.057501127785  # Passband ripple (linear), ~0.5 dB
-        rip_stop2 = 1e-4  # Stopband ripple (linear)
-        rips = [rip_stop1, rip_pass, rip_stop2]
-
-        # Calculate optimal filter length using remezord
-        [numtaps, bands, desired, weight] = remezord(
-            freqs, amps, rips, Hz=self.fs, alg="herrmann"
+        # Delegate to PhaseConverter._create_bpf for filter design
+        # This reuses the well-tested implementation from phi2ne.py
+        filter_coeffs = self.phase_converter._create_bpf(
+            f_stop1, f_pass1, f_pass2, f_stop2, self.fs, approx=False
         )
-
-        # Ensure odd number of taps for Type I filter
-        if numtaps % 2 == 0:
-            numtaps += 1
-
-        # Design filter using Remez exchange algorithm
-        # remezord normalizes frequencies to [0, 0.5] range, so bands are already normalized
-        # Check if bands are normalized (all <= 1.0) or in Hz
-        if np.all(np.array(bands) <= 1.0):
-            filter_coeffs = remez(
-                numtaps=numtaps,
-                bands=bands,
-                desired=desired,
-                weight=weight,
-                fs=1.0,
-                grid_density=20,
-            )
-        else:
-            filter_coeffs = remez(
-                numtaps=numtaps,
-                bands=bands,
-                desired=desired,
-                weight=weight,
-                fs=self.fs,
-                grid_density=20,
-            )
 
         return filter_coeffs
 

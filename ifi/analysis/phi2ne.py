@@ -19,7 +19,6 @@ Classes:
     PhaseConverter: A class for converting phase to density.
 """
 
-import logging
 from pathlib import Path
 import configparser
 from typing import Dict, Any
@@ -137,7 +136,7 @@ def _phase_to_density(phase, freq, c, m_e, eps0, qe, n_path):
         nedl (np.ndarray): Line-integrated density.
     """
     # Calculate critical density
-    n_c = m_e * eps0 * (2 * np.pi * freq) ** 2 / qe**2
+    n_c = m_e * eps0 * (2 * np.pi * freq)**2 / (qe**2)
 
     # Calculate line-integrated density
     nedl = (c * n_c / (np.pi * freq)) * phase
@@ -216,10 +215,10 @@ def get_interferometry_params(
     # Flexible frequency detection: use ranges instead of exact values
     # 93-95 GHz range → use 94GHz flag
     # 275-285 GHz range → use 280GHz flag
-    freq_94ghz_min = freq_94ghz - 1.0  # 93 GHz
-    freq_94ghz_max = freq_94ghz + 1.0  # 95 GHz
-    freq_280ghz_min = freq_280ghz - 5.0  # 275 GHz
-    freq_280ghz_max = freq_280ghz + 5.0  # 285 GHz
+    # freq_94ghz_min = freq_94ghz - 1.0  # 93 GHz
+    # freq_94ghz_max = freq_94ghz + 1.0  # 95 GHz
+    # freq_280ghz_min = freq_280ghz - 5.0  # 275 GHz
+    # freq_280ghz_max = freq_280ghz + 5.0  # 285 GHz
 
     # Rule 3: Shots 41542 and above
     if shot_num >= 41542:
@@ -416,9 +415,8 @@ class PhaseConverter:
         # Convert wavelength to frequency if provided
         if wavelength is not None:
             if freq_hz is not None:
-                import logging
 
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'PARAM')} Both freq_hz and wavelength provided. Using freq_hz."
                 )
             else:
@@ -575,15 +573,15 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'LPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
             )
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'LPF  ')} Difference is significant. Using the value from remezord."
             )
             pass
         elif approx:
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'LPF  ')} Using approximate numtaps: {numtaps_approx}"
             )
             numtaps = numtaps_approx
@@ -628,15 +626,15 @@ class PhaseConverter:
 
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'BPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
             )
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'BPF  ')} Difference is significant. Using the value from remezord."
             )
             pass
         elif approx:
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'BPF  ')} Using approximate numtaps: {numtaps_approx}"
             )
             numtaps = numtaps_approx
@@ -666,7 +664,7 @@ class PhaseConverter:
         """Plots the frequency response of the FIR filter."""
         if fs is None:
             fs = 2 * np.pi
-            logging.warning(
+            logger.warning(
                 f"{log_tag('PHI2N', 'VFILT')} fs is not provided, using 2*pi, resulting in frequency in rad/sample"
             )
         freqs_at_response, responses = freqz(taps, worN=2048, fs=fs)
@@ -860,19 +858,19 @@ class PhaseConverter:
 
         if mode == "ip":
             if shot_num is None:
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'BLINE')} 'ip' baseline mode selected but shot_num not provided. Skipping."
                 )
                 return corrected_df
 
             if vest_data is None or vest_data.empty:
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'BLINE')} 'ip' baseline mode selected but VEST DB not available. Skipping."
                 )
                 return corrected_df
 
             if ip_column_name is None or ip_column_name not in vest_data.columns:
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'BLINE')} Plasma current column '{ip_column_name}' not in VEST DB. Skipping."
                 )
                 return corrected_df
@@ -895,10 +893,10 @@ class PhaseConverter:
                 t_end = t_rampup - 3e-3
 
             except IndexError:
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'BLINE')} Plasma current never exceeded threshold ({ip_threshold})."
                 )
-                logging.warning(
+                logger.warning(
                     f"{log_tag('PHI2N', 'BLINE')} Cannot determine ramp-up for 'ip' baseline. Skipping."
                 )
                 return corrected_df
@@ -907,7 +905,7 @@ class PhaseConverter:
             t_start, t_end = 0.285, 0.290
 
         else:
-            logging.warning(
+            logger.warning(
                 f"{log_tag('PHI2N', 'BLINE')} Invalid baseline mode '{mode}'. Skipping."
             )
             return corrected_df
@@ -916,18 +914,18 @@ class PhaseConverter:
         baseline_idxs = np.where((time_axis >= t_start) & (time_axis <= t_end))[0]
 
         if len(baseline_idxs) == 0:
-            logging.warning(
+            logger.warning(
                 f"{log_tag('PHI2N', 'BLINE')} No data found in the baseline window [{t_start:.4f}s, {t_end:.4f}s]. Skipping."
             )
             return corrected_df
 
-        logging.info(
+        logger.info(
             f"{log_tag('PHI2N', 'BLINE')} Correcting baseline using window [{t_start:.4f}s, {t_end:.4f}s] ({len(baseline_idxs)} points)."
         )
         for col in corrected_df.columns:
             baseline_mean = corrected_df[col].iloc[baseline_idxs].mean()
             corrected_df[col] -= baseline_mean
-            logging.info(
+            logger.info(
                 f"{log_tag('PHI2N', 'BLINE')} Column '{col}': Removed baseline of {baseline_mean:.2e}"
             )
 
