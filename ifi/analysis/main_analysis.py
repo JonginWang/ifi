@@ -858,12 +858,14 @@ def run_analysis(
             title_prefix = f"Shot #{shot_num} - " if shot_num else ""
 
             # Use a context manager to handle plot creation and showing/saving
+            # block=False if --no_plot_block is specified to prevent execution blocking
             with plots.ifion_plotting(
                 show_plots=args.plot,
                 save_dir=Path(args.results_dir) / str(shot_num)
                 if args.save_plots
                 else None,
                 save_prefix=title_prefix,
+                block=not args.no_plot_block,  # Block unless --no_plot_block is specified
             ):
                 if not args.no_plot_ft:
                     if shot_stft_data:
@@ -1069,6 +1071,12 @@ def main():
     # Flags for plotting
     parser.add_argument(
         "--plot", action="store_true", help="Show plots of the analysis results."
+    )
+    parser.add_argument(
+        "--no_plot_block",
+        action="store_true",
+        help="""Don't block execution when showing plots. 
+            Plots will be displayed in non-blocking mode, allowing the analysis to continue without waiting for plot windows to be closed.""",
     )
     parser.add_argument(
         "--no_plot_raw",
