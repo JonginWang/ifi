@@ -390,14 +390,15 @@ class Plotter:
             unit = sci_match.group(2).strip()
             signal_scale_factor = 10**exponent
 
-            # Convert superscript notation to LaTeX
+            # Convert superscript notation to LaTeX (without $ delimiters for now)
             def replace_superscript(match):
                 base = match.group(1)
                 exp = match.group(2)
-                return f"${base}^{{-{exp}}}$"
+                return f"{base}^{{-{exp}}}"
 
             unit_latex = re.sub(r"(\w+)\^-(\d+)", replace_superscript, unit)
-            signal_label = f"[{unit_latex}]"
+            # Include the 10^exponent part in the label with proper LaTeX formatting
+            signal_label = f"[$10^{{{exponent}}} {unit_latex}$]"
         else:
             # Standard scaling
             if signal_scale == "mV":
