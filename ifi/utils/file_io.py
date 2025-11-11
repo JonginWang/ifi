@@ -21,8 +21,11 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 import h5py
-
-from .common import ensure_dir_exists
+try:
+    from .common import ensure_dir_exists
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import ensure_dir_exists
 
 
 """

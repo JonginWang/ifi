@@ -13,10 +13,12 @@ Functions:
 
 import pandas as pd
 import numpy as np
+try:
+    from ..utils.common import LogManager, log_tag
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import LogManager, log_tag
 
-from ..utils.common import LogManager, log_tag
-
-LogManager()
 logger = LogManager().get_logger(__name__)
 
 
@@ -34,7 +36,9 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
         pandas.DataFrame: The refined DataFrame.
     """
     if not isinstance(df, pd.DataFrame):
-        logger.warning(f"{log_tag('PROCS','REFIN')} refine_data called with non-DataFrame input. Skipping.")
+        logger.warning(
+            f"{log_tag('PROCS', 'REFIN')} refine_data called with non-DataFrame input. Skipping."
+        )
         return df
 
     refined_df = df.copy()
@@ -42,7 +46,9 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
     # 1. Round all numeric columns to 10 decimal places
     numeric_cols = refined_df.select_dtypes(include=np.number).columns
     refined_df[numeric_cols] = refined_df[numeric_cols].round(10)
-    logger.info(f"{log_tag('PROCS','REFIN')} Rounded numeric data to 10 decimal places.")
+    logger.info(
+        f"{log_tag('PROCS', 'REFIN')} Rounded numeric data to 10 decimal places."
+    )
 
     # 2. Reconstruct TIME column
     if "TIME" in refined_df.columns and len(refined_df["TIME"]) > 1:
@@ -60,11 +66,11 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
             )
             refined_df["TIME"] = new_time_col
             logger.info(
-                f"{log_tag('PROCS','REFIN')} Reconstructed 'TIME' column with resolution: {time_resolution:.4e} s"
+                f"{log_tag('PROCS', 'REFIN')} Reconstructed 'TIME' column with resolution: {time_resolution:.4e} s"
             )
         else:
             logger.warning(
-                f"{log_tag('PROCS','REFIN')} Could not determine time resolution. Skipping TIME reconstruction."
+                f"{log_tag('PROCS', 'REFIN')} Could not determine time resolution. Skipping TIME reconstruction."
             )
 
     # 3. Drop rows with NaN values
@@ -74,7 +80,7 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
 
     if initial_rows > final_rows:
         logger.info(
-            f"{log_tag('PROCS','REFIN')} Dropped {initial_rows - final_rows} rows with NaN values."
+            f"{log_tag('PROCS', 'REFIN')} Dropped {initial_rows - final_rows} rows with NaN values."
         )
 
     return refined_df
@@ -93,19 +99,21 @@ def remove_offset(df: pd.DataFrame, window_size: int = 2001) -> pd.DataFrame:
     """
     if not isinstance(df, pd.DataFrame):
         logger.warning(
-            f"{log_tag('PROCS','RMOFF')} remove_offset called with non-DataFrame input. Skipping."
+            f"{log_tag('PROCS', 'RMOFF')} remove_offset called with non-DataFrame input. Skipping."
         )
         return df
 
     # Skip offset removal for FPGA data (.dat files)
     if df.attrs.get("source_file_type") == "dat":
-        logger.info(f"{log_tag('PROCS','RMOFF')} Skipping offset removal for FPGA data file.")
+        logger.info(
+            f"{log_tag('PROCS', 'RMOFF')} Skipping offset removal for FPGA data file."
+        )
         return df.copy()
 
     # If window_size is negative, use default.
     if window_size < 0:
         logger.warning(
-            f"{log_tag('PROCS','RMOFF')} Negative window_size ({window_size}) is invalid. Using default 2001."
+            f"{log_tag('PROCS', 'RMOFF')} Negative window_size ({window_size}) is invalid. Using default 2001."
         )
         window_size = 2001
 
@@ -123,19 +131,19 @@ def remove_offset(df: pd.DataFrame, window_size: int = 2001) -> pd.DataFrame:
         if dynamic_window_size < window_size:
             window_size = dynamic_window_size
             logger.info(
-                f"{log_tag('PROCS','RMOFF')} Dynamically adjusted window size to {window_size} for smaller dataset ({num_rows} rows)."
+                f"{log_tag('PROCS', 'RMOFF')} Dynamically adjusted window size to {window_size} for smaller dataset ({num_rows} rows)."
             )
 
     if window_size <= 0:
         logger.info(
-            f"{log_tag('PROCS','RMOFF')} Offset removal skipped as window_size is zero or negative."
+            f"{log_tag('PROCS', 'RMOFF')} Offset removal skipped as window_size is zero or negative."
         )
         return df.copy()
 
     if window_size % 2 == 0:
         window_size += 1
         logger.warning(
-            f"{log_tag('PROCS','RMOFF')} Window size must be odd. Adjusting to {window_size}."
+            f"{log_tag('PROCS', 'RMOFF')} Window size must be odd. Adjusting to {window_size}."
         )
 
     offset_removed_df = df.copy()
@@ -155,7 +163,7 @@ def remove_offset(df: pd.DataFrame, window_size: int = 2001) -> pd.DataFrame:
     rows_removed = initial_rows - len(offset_removed_df)
 
     logger.info(
-        f"{log_tag('PROCS','RMOFF')} Removed offset using a {window_size}-point moving average. ({rows_removed} rows removed at edges)"
+        f"{log_tag('PROCS', 'RMOFF')} Removed offset using a {window_size}-point moving average. ({rows_removed} rows removed at edges)"
     )
 
     return offset_removed_df

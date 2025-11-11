@@ -28,23 +28,35 @@ import numpy as np
 from scipy import signal as spsig
 from typing import Tuple, Optional, List, Dict, Any, Union
 from numba import njit, prange
-
-# Import ssqueezepy after cache setup (which patches torch import)
 import ssqueezepy as ssqpy
 from ssqueezepy.experimental import scale_to_freq
-
-from ..utils.common import LogManager, log_tag
-from .spectrum import SpectrumAnalysis
-from .phi2ne import PhaseConverter
-from ..utils.cache_setup import setup_project_cache  # noqa: F401
-from ..utils.validation import (
-    validate_sampling_frequency,
-    validate_signal,
-    validate_frequency,
-    validate_positive_number,
-    validate_signals_match,
-    validate_method,
-)
+try:
+    from ..utils.common import LogManager, log_tag
+    from .spectrum import SpectrumAnalysis
+    from .phi2ne import PhaseConverter
+    from ..utils.cache_setup import setup_project_cache  # noqa: F401
+    from ..utils.validation import (
+        validate_sampling_frequency,
+        validate_signal,
+        validate_frequency,
+        validate_positive_number,
+        validate_signals_match,
+        validate_method,
+    )
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import LogManager, log_tag
+    from ifi.analysis.spectrum import SpectrumAnalysis
+    from ifi.analysis.phi2ne import PhaseConverter
+    from ifi.utils.cache_setup import setup_project_cache  # noqa: F401
+    from ifi.utils.validation import (
+        validate_sampling_frequency,
+        validate_signal,
+        validate_frequency,
+        validate_positive_number,
+        validate_signals_match,
+        validate_method,
+    )
 
 # cache_config = setup_project_cache()
 logger = LogManager().get_logger(__name__)

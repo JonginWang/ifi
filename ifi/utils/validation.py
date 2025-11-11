@@ -23,8 +23,11 @@ import numpy as np
 import pandas as pd
 from typing import Union
 from pathlib import Path
-
-from .common import LogManager, log_tag
+try:
+    from .common import LogManager, log_tag
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import LogManager, log_tag
 
 LogManager()
 logger = LogManager().get_logger(__name__)

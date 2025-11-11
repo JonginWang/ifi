@@ -44,9 +44,11 @@ import h5py
 import re
 import tempfile
 import threading
-
-
-from ..utils.common import LogManager, ensure_str_path, log_tag
+try:
+    from ..utils.common import LogManager, ensure_str_path, log_tag
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import LogManager, ensure_str_path, log_tag
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.

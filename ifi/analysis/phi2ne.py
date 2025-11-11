@@ -3,20 +3,58 @@
 Phase to Density Conversion
 ===========================
 
-This module contains the functions for phase to density conversion.
-The functions are optimized for performance using numba.
-The functions are used in the main_analysis.py module.
+This module provides functions and classes for converting interferometer phase measurements
+to line-integrated electron density. It supports multiple phase extraction methods (IQ, CDM, FPGA)
+and includes Numba-optimized core calculations for high performance.
+
+Key Features:
+    - Multiple phase extraction methods: IQ (atan2/asin2), CDM (Complex Demodulation), FPGA
+    - Numba-optimized core calculations for performance
+    - Automatic parameter detection based on shot number and filename
+    - FIR filter design for signal processing (LPF, BPF)
+    - Baseline correction using plasma current or trigger time
 
 Functions:
-    numba-optimized functions:
-        _normalize_iq_signals: Normalize I and Q signals.
+    Numba-optimized (internal):
+        _normalize_iq_signals: Normalize I and Q signals to unit circle.
         _calculate_differential_phase: Calculate differential phase using cross-product method.
-        _accumulate_phase_diff: Accumulate phase difference.
-        _phase_to_density: Convert phase to density.
-    get_interferometry_params: Get interferometry parameters for a given shot number and filename.
+        _accumulate_phase_diff: Accumulate phase differences for phase reconstruction.
+        _phase_to_density: Core phase-to-density conversion calculation.
+    
+    Public:
+        get_interferometry_params: Get interferometry parameters based on shot number and filename.
 
 Classes:
-    PhaseConverter: A class for converting phase to density.
+    PhaseConverter: Main class for phase-to-density conversion with multiple methods.
+
+Phase Extraction Methods:
+    - IQ Method: Uses I/Q signals directly (atan2 or asin2 cross-product)
+    - CDM Method: Complex Demodulation with BPF, Hilbert transform, and LPF
+    - FPGA Method: Direct phase difference from FPGA-processed data
+
+Shot Number Ranges:
+    - 30000-39265: IQ method (94 GHz)
+    - 39302-41398: FPGA method (94 GHz)
+    - 41542+: CDM method (94 GHz or 280 GHz based on filename)
+
+Examples:
+    ```python
+    from ifi.analysis.phi2ne import PhaseConverter, get_interferometry_params
+    
+    # Get parameters for a shot
+    params = get_interferometry_params(45821, "45821_056.csv")
+    print(f"Method: {params['method']}, Frequency: {params['freq_ghz']} GHz")
+    
+    # Convert phase to density
+    converter = PhaseConverter()
+    phase = np.array([0.1, 0.2, 0.3])  # radians
+    density = converter.phase_to_density(phase, freq_hz=94e9, n_path=2)
+    
+    # Calculate phase from I/Q signals
+    i_signal = np.array([1.0, 0.5, -0.5])
+    q_signal = np.array([0.0, 0.866, 0.866])
+    phase = converter.calc_phase_iq(i_signal, q_signal)
+    ```
 """
 
 from pathlib import Path
@@ -28,12 +66,15 @@ import pandas as pd
 from scipy import constants
 from scipy.signal import hilbert, remez, filtfilt, freqz
 import matplotlib.pyplot as plt
-
-# "eegpy" is a package that contains the remezord function, translated from MATLAB
-# Though remezord is not in scipy, we could import by piece of script under ifi/analysis/functions/remezord.py
-from .functions.remezord import remezord
-from .plots import plot_response
-from ..utils.common import LogManager, log_tag
+try:
+    from .functions.remezord import remezord  # remezord is from eegpy package, translated from MATLAB
+    from .plots import plot_response
+    from ..utils.common import LogManager, log_tag
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.analysis.functions.remezord import remezord
+    from ifi.analysis.plots import plot_response
+    from ifi.utils.common import LogManager, log_tag
 
 logger = LogManager().get_logger(__name__)
 
@@ -41,15 +82,33 @@ logger = LogManager().get_logger(__name__)
 @numba.jit(nopython=True, cache=True, fastmath=True)
 def _normalize_iq_signals(i_signal, q_signal):
     """
-    Numba-optimized function to normalize I and Q signals.
+    Normalize I and Q signals to unit circle (Numba-optimized).
+
+    This function normalizes I/Q signals by dividing by their magnitude, ensuring
+    the resulting signals lie on the unit circle. This is useful for phase extraction
+    as it removes amplitude variations while preserving phase information.
 
     Args:
-        i_signal (np.ndarray): I signal.
-        q_signal (np.ndarray): Q signal.
+        i_signal (np.ndarray): In-phase signal array (1D).
+        q_signal (np.ndarray): Quadrature signal array (1D), must have same length as i_signal.
 
     Returns:
-        i_norm (np.ndarray): Normalized I signal.
-        q_norm (np.ndarray): Normalized Q signal.
+        Tuple[np.ndarray, np.ndarray]:
+            - i_norm (np.ndarray): Normalized I signal (unit circle).
+            - q_norm (np.ndarray): Normalized Q signal (unit circle).
+
+    Notes:
+        - Zero magnitude values are replaced with 1.0 to avoid division by zero.
+        - The function is JIT-compiled with Numba for performance.
+        - Input arrays must have the same length.
+
+    Examples:
+        ```python
+        i = np.array([1.0, 0.5, 0.0])
+        q = np.array([0.0, 0.866, 1.0])
+        i_norm, q_norm = _normalize_iq_signals(i, q)
+        # Result: i_norm and q_norm have unit magnitude
+        ```
     """
     iq_mag = np.sqrt(i_signal**2 + q_signal**2)
     # Avoid division by zero
@@ -65,14 +124,35 @@ def _normalize_iq_signals(i_signal, q_signal):
 @numba.jit(nopython=True, cache=True, fastmath=True)
 def _calculate_differential_phase(i_norm, q_norm):
     """
-    Numba-optimized function to calculate differential phase using cross-product method.
+    Calculate differential phase using cross-product method (Numba-optimized).
+
+    This function computes the phase difference between consecutive samples using
+    the cross-product method: Δφ = 2 * arcsin((I[n] * Q[n+1] - Q[n] * I[n+1]) / (|I[n],Q[n]| * |I[n+1],Q[n+1]|))
+
+    The cross-product method is more robust to noise than direct phase subtraction
+    and is used in the asin2 phase extraction algorithm.
 
     Args:
-        i_norm (np.ndarray): Normalized I signal.
-        q_norm (np.ndarray): Normalized Q signal.
+        i_norm (np.ndarray): Normalized I signal (unit circle, 1D array).
+        q_norm (np.ndarray): Normalized Q signal (unit circle, 1D array), must have same length as i_norm.
 
     Returns:
-        phase_diff (np.ndarray): Differential phase.
+        np.ndarray: Differential phase array (length = len(i_norm) - 1) in radians.
+            Each element represents the phase difference between consecutive samples.
+
+    Notes:
+        - The output array is one element shorter than the input (n-1 differences for n samples).
+        - The arcsin argument is clipped to [-1, 1] to handle floating-point errors.
+        - Zero denominators are replaced with 1e-12 to avoid division by zero.
+        - The function is JIT-compiled with Numba for performance.
+
+    Examples:
+        ```python
+        i_norm = np.array([1.0, 0.707, 0.0])
+        q_norm = np.array([0.0, 0.707, 1.0])
+        phase_diff = _calculate_differential_phase(i_norm, q_norm)
+        # Result: Array of phase differences between consecutive samples
+        ```
     """
     # Vectorized differential phase calculation (cross-product method)
     denominator = np.sqrt(i_norm[:-1] ** 2 + q_norm[:-1] ** 2) * np.sqrt(
@@ -92,25 +172,33 @@ def _calculate_differential_phase(i_norm, q_norm):
 @numba.jit(nopython=True, cache=True, fastmath=True)
 def _accumulate_phase_diff(phase_diff):
     """
-    Numba-optimized cumulative sum for CDM phase reconstruction.
+    Accumulate phase differences to reconstruct absolute phase (Numba-optimized).
 
-    CDM algorithm using asin produces delta_phi[0] to delta_phi[len(time)-2],
-    which is one element shorter than the original signal length.
-
-    Accumulation process (vectorized using np.cumsum):
-    - phase_accum = cumsum(phase_diff)
-    - phase_accum[0] = phase_diff[0]
-    - phase_accum[1] = phase_diff[0] + phase_diff[1]
-    - ...
-    - phase_accum[n-1] = sum of all phase_diff values
-    - Finally, duplicate the last value to match original signal length
+    This function performs cumulative summation of phase differences to reconstruct
+    the absolute phase from differential phase measurements. The CDM and asin2 methods
+    produce phase differences that are one element shorter than the original signal,
+    so the last value is duplicated to match the original signal length.
 
     Args:
-        phase_diff (np.ndarray): Differential phase (delta_phi), length = len(time) - 1.
+        phase_diff (np.ndarray): Differential phase array (delta_phi) in radians.
+            Length = n - 1 for an original signal of length n.
 
     Returns:
-        phase_accum (np.ndarray): Accumulated phase, length = len(time).
-            The last value is duplicated to match the original signal length.
+        np.ndarray: Accumulated phase array in radians, length = n (original signal length).
+            The last value is duplicated from the cumulative sum to match the original length.
+
+    Notes:
+        - Uses cumulative sum: phase_accum[i] = sum(phase_diff[0:i+1])
+        - The last value is duplicated: phase_accum[n-1] = phase_accum[n-2]
+        - This ensures the output length matches the original signal length.
+        - The function is JIT-compiled with Numba for performance.
+
+    Examples:
+        ```python
+        phase_diff = np.array([0.1, 0.2, -0.1])  # 3 differences
+        phase_accum = _accumulate_phase_diff(phase_diff)
+        # Result: [0.1, 0.3, 0.2, 0.2]  # 4 values (last duplicated)
+        ```
     """
     phase_accum = np.cumsum(phase_diff)
     # Duplicate the last value to match the original signal length
@@ -121,19 +209,50 @@ def _accumulate_phase_diff(phase_diff):
 @numba.jit(nopython=True, cache=True, fastmath=True)
 def _phase_to_density(phase, freq, c, m_e, eps0, qe, n_path):
     """
-    Numba-optimized core calculation for phase to density conversion.
+    Convert phase to line-integrated electron density (Numba-optimized core calculation).
+
+    This function implements the core physics formula for converting interferometer phase
+    to line-integrated electron density. The formula is based on plasma dispersion relation
+    and interferometry principles.
+
+    Formula:
+        n_c = m_e * eps0 * (2π * freq)² / qe²  (critical density)
+        ∫n_e dl = (c * n_c / (π * freq)) * phase / n_path
 
     Args:
-        phase (np.ndarray): Phase.
-        freq (float): Frequency.
-        c (float): Speed of light.
-        m_e (float): Electron mass.
-        eps0 (float): Permittivity of free space.
-        qe (float): Electron charge.
-        n_path (int): Number of interferometer passes.
+        phase (np.ndarray): Phase array in radians (1D).
+        freq (float): Interferometer frequency in Hz.
+        c (float): Speed of light in m/s.
+        m_e (float): Electron mass in kg.
+        eps0 (float): Permittivity of free space in F/m.
+        qe (float): Electron charge in C.
+        n_path (int): Number of interferometer passes (double-pass = 2, single-pass = 1).
+            If n_path <= 0, division by n_path is skipped.
 
     Returns:
-        nedl (np.ndarray): Line-integrated density.
+        np.ndarray: Line-integrated electron density in m^-2 (same length as phase).
+
+    Notes:
+        - The function is JIT-compiled with Numba for performance.
+        - Physical constants should be from scipy.constants for accuracy.
+        - The formula assumes small phase approximation (valid for typical plasma densities).
+        - n_path accounts for multiple passes through the plasma (e.g., double-pass interferometer).
+
+    Examples:
+        ```python
+        phase = np.array([0.1, 0.2, 0.3])  # radians
+        from scipy import constants
+        density = _phase_to_density(
+            phase,
+            freq=94e9,  # 94 GHz
+            c=constants.c,
+            m_e=constants.m_e,
+            eps0=constants.epsilon_0,
+            qe=constants.e,
+            n_path=2  # double-pass
+        )
+        # Result: Line-integrated density in m^-2
+        ```
     """
     # Calculate critical density
     n_c = m_e * eps0 * (2 * np.pi * freq)**2 / (qe**2)
@@ -180,15 +299,75 @@ def get_interferometry_params(
     shot_num: int, filename: str, config_path: str = None
 ) -> Dict:
     """
-    Get interferometry parameters for a given shot number and filename.
+    Get interferometry parameters based on shot number and filename pattern.
+
+    This function automatically determines the appropriate interferometry method and
+    parameters based on the shot number range and filename pattern. It supports
+    multiple experimental configurations that have changed over time.
 
     Args:
-        shot_num (int): Shot number
-        filename (str): Filename to extract frequency information
-        config_path (str, optional): Path to config file. If None, uses default.
+        shot_num (int): Shot number (typically 5-digit integer, e.g., 45821).
+        filename (str): Filename or file path (e.g., "45821_056.csv", "45821_ALL.csv").
+            The filename pattern determines frequency and channel mapping:
+            - "_ALL" → 280 GHz, CDM method
+            - "_0XX" (e.g., "_056", "_789") → 94 GHz, CDM method, reference channel
+            - Other patterns → 94 GHz, CDM method, probe channels
+        config_path (str, optional): Path to configuration file (if_config.ini).
+            If None, uses default path: "ifi/analysis/if_config.ini".
 
     Returns:
-        Dict: Dictionary containing method and frequency information
+        Dict: Dictionary containing interferometry parameters:
+            - method (str): Phase extraction method ("IQ", "FPGA", "CDM", or "unknown").
+            - freq (float): Frequency in Hz (for calculations).
+            - freq_ghz (float): Frequency in GHz (for display).
+            - ref_col (str or None): Reference channel column name (e.g., "CH0").
+            - probe_cols (list): List of probe channel column names (e.g., ["CH1", "CH2"]).
+            - n_path (int): Number of interferometer passes.
+            - amp_ref_col (str, optional): Amplitude reference channel (FPGA method only).
+            - amp_probe_cols (list, optional): Amplitude probe channels (FPGA method only).
+
+    Shot Number Ranges:
+        - 30000-39265: IQ method (94 GHz)
+            - Uses I/Q signal pairs directly
+            - probe_cols: [("CH0", "CH1")] (tuple format for I/Q pairs)
+        - 39302-41398: FPGA method (94 GHz)
+            - Uses pre-processed phase from FPGA (CORDIC algorithm)
+            - Includes amplitude channels (CH16-CH23)
+            - ref_col: "CH0", probe_cols: ["CH1", "CH2", "CH3", "CH4", "CH5"]
+        - 41542+: CDM method (94 GHz or 280 GHz based on filename)
+            - "_ALL" → 280 GHz, ref_col: "CH0", probe_cols: ["CH1"]
+            - "_0XX" → 94 GHz, ref_col: "CH0", probe_cols: ["CH1", "CH2"]
+            - Other → 94 GHz, ref_col: "", probe_cols: ["CH0", "CH1", "CH2"]
+        - Other: Returns "unknown" method with default 94 GHz parameters
+
+    Raises:
+        FileNotFoundError: If config file is not found.
+        configparser.Error: If config file cannot be parsed.
+
+    Notes:
+        - Frequency values are read from config file and can be adjusted there.
+        - The function supports flexible frequency detection (future enhancement for
+          non-standard frequencies like 93-95 GHz range mapping to 94 GHz).
+        - Channel mappings are based on experimental setup and may vary by shot range.
+
+    Examples:
+        ```python
+        # CDM method for recent shots
+        params = get_interferometry_params(45821, "45821_056.csv")
+        # Returns: {"method": "CDM", "freq": 94e9, "freq_ghz": 94.0, ...}
+        
+        # 280 GHz data
+        params = get_interferometry_params(46032, "46032_ALL.csv")
+        # Returns: {"method": "CDM", "freq": 280e9, "freq_ghz": 280.0, ...}
+        
+        # FPGA method for older shots
+        params = get_interferometry_params(40000, "40000.csv")
+        # Returns: {"method": "FPGA", "freq": 94e9, ...}
+        
+        # IQ method for oldest shots
+        params = get_interferometry_params(35000, "35000.csv")
+        # Returns: {"method": "IQ", "freq": 94e9, ...}
+        ```
     """
     # Extract frequency from filename
     basename = Path(filename).name
@@ -315,35 +494,75 @@ def get_interferometry_params(
 
 class PhaseConverter:
     """
-    A class for converting phase to density.
+    Main class for converting interferometer phase measurements to electron density.
+
+    This class provides methods for phase extraction (IQ, CDM, FPGA) and phase-to-density
+    conversion. It uses Numba-optimized core calculations for high performance and supports
+    multiple experimental configurations through automatic parameter detection.
 
     Attributes:
-        config: Config parser for the configuration file.
-        constants: Constants for the calculation.
+        config (configparser.ConfigParser): Configuration parser for interferometry parameters.
+        constants (dict): Physical constants dictionary (c, m_e, eps0, qe) loaded from scipy.constants.
 
     Methods:
-        get_params: Get parameters for a given interferometer frequency.
-        get_analysis_params: Get analysis parameters for a given shot number and filename.
-        phase_to_density: Convert phase to density.
-        calc_phase_iq_atan2: Calculate phase using atan2 method.
-        calc_phase_iq_asin2: Calculate phase using asin2 method.
-        calc_phase_iq: Calculate phase using atan2 method.
-        _create_lpf: Create a low pass filter.
-        _create_bpf: Create a band pass filter.
-        _plot_filter_response: Plot the frequency response of a filter.
-        calc_phase_cdm: Calculate phase using CDM method.
-        calc_phase_fpga: Calculate phase using FPGA method.
-        correct_baseline: Correct the baseline of a density dataframe.
+        Phase Extraction:
+            calc_phase_iq_atan2: Calculate phase from I/Q signals using atan2 method.
+            calc_phase_iq_asin2: Calculate phase from I/Q signals using asin2 (cross-product) method.
+            calc_phase_iq: Convenience method for IQ phase calculation (default: atan2).
+            calc_phase_cdm: Calculate phase using Complex Demodulation (CDM) method.
+            calc_phase_fpga: Calculate phase difference from FPGA-processed data.
+        
+        Phase-to-Density Conversion:
+            phase_to_density: Convert phase (radians) to line-integrated density (m^-2).
+        
+        Parameter Management:
+            get_params: Get interferometry parameters for a specific frequency.
+            get_analysis_params: Get analysis parameters based on shot number and filename.
+        
+        Signal Processing:
+            _create_lpf: Create low-pass FIR filter using remez algorithm.
+            _create_bpf: Create band-pass FIR filter using remez algorithm.
+            _plot_filter_response: Plot frequency response of a filter.
+        
+        Data Correction:
+            correct_baseline: Correct baseline offset in density data using IP or trigger time.
 
-    Example:
+    Examples:
         ```python
-        from .phi2ne import PhaseConverter
+        from ifi.analysis.phi2ne import PhaseConverter
+        import numpy as np
+        
+        # Initialize converter
         converter = PhaseConverter()
-        converter.get_params(94)
-        converter.get_analysis_params(45821, "45821_056.csv")
-        converter.phase_to_density(np.array([0.1, 0.2, 0.3]), 94.0e9, 2)
-        converter.calc_phase_iq_atan2(np.array([0.1, 0.2, 0.3]), np.array([0.1, 0.2, 0.3]))
-        converter.calc_phase_iq_asin2(np.array([0.1, 0.2, 0.3]), np.array([0.1, 0.2, 0.3]))
+        
+        # Get parameters for a shot
+        params = converter.get_analysis_params(45821, "45821_056.csv")
+        print(f"Method: {params['method']}, Frequency: {params['freq_ghz']} GHz")
+        
+        # Calculate phase from I/Q signals (IQ method)
+        i_signal = np.array([1.0, 0.5, -0.5, -1.0])
+        q_signal = np.array([0.0, 0.866, 0.866, 0.0])
+        phase = converter.calc_phase_iq(i_signal, q_signal, iscxprod=False)
+        
+        # Convert phase to density
+        density = converter.phase_to_density(
+            phase,
+            freq_hz=params['freq'],
+            n_path=params['n_path']
+        )
+        
+        # CDM method (requires reference and probe signals)
+        ref_signal = np.sin(2 * np.pi * 15e6 * t)
+        probe_signal = np.sin(2 * np.pi * 15e6 * t + phase)
+        phase_cdm = converter.calc_phase_cdm(
+            ref_signal, probe_signal,
+            fs=50e6, f_center=15e6
+        )
+        
+        # Correct baseline
+        density_corrected = converter.correct_baseline(
+            density_df, time_axis, mode='trig'
+        )
         ```
     """
 
@@ -359,7 +578,30 @@ class PhaseConverter:
                     raise ValueError(f"Constant '{name}' not found in scipy.constants")
 
     def get_params(self, freq_ghz: int) -> Dict[str, Any]:
-        """Gets parameters for a given interferometer frequency."""
+        """
+        Get interferometry parameters for a specific frequency from configuration.
+
+        Args:
+            freq_ghz (int): Interferometer frequency in GHz (e.g., 94 or 280).
+
+        Returns:
+            Dict[str, Any]: Dictionary containing frequency-specific parameters:
+                - freq (float): Frequency in Hz.
+                - n_ch (int): Number of channels.
+                - n_path (int): Number of interferometer passes.
+                - Other parameters from config file section.
+
+        Raises:
+            ValueError: If the frequency configuration section is not found in config file.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            params_94 = converter.get_params(94)
+            params_280 = converter.get_params(280)
+            print(f"94 GHz: {params_94['freq']/1e9} GHz, n_path={params_94['n_path']}")
+            ```
+        """
         section = f"{freq_ghz}GHz"
         if not self.config.has_section(section):
             raise ValueError(
@@ -374,16 +616,38 @@ class PhaseConverter:
 
     def get_analysis_params(self, shot_num: int, filename: str) -> Dict:
         """
-        Returns interferometry analysis parameters based on shot number and filename.
-        This method uses the class's config path and provides better integration
-        with phase_to_density calculations.
+        Get interferometry analysis parameters based on shot number and filename.
+
+        This method wraps the standalone `get_interferometry_params` function and uses
+        the class's configuration path. It provides better integration with other
+        PhaseConverter methods.
 
         Args:
-            shot_num: Shot number
-            filename: Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv")
+            shot_num (int): Shot number (typically 5-digit integer).
+            filename (str): Name of the data file (e.g., "45821_056.csv", "45821_ALL.csv").
+                The filename pattern determines frequency and channel mapping.
 
         Returns:
-            Dictionary containing analysis parameters compatible with phase_to_density
+            Dict: Dictionary containing analysis parameters compatible with phase_to_density:
+                - method (str): Phase extraction method.
+                - freq (float): Frequency in Hz.
+                - freq_ghz (float): Frequency in GHz.
+                - ref_col (str or None): Reference channel name.
+                - probe_cols (list): List of probe channel names.
+                - n_path (int): Number of interferometer passes.
+                - Additional method-specific parameters.
+
+        Notes:
+            - This method uses the class's config_path (default: "ifi/analysis/if_config.ini").
+            - For detailed shot number ranges and filename patterns, see `get_interferometry_params`.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            params = converter.get_analysis_params(45821, "45821_056.csv")
+            # Use params with phase_to_density
+            density = converter.phase_to_density(phase, analysis_params=params)
+            ```
         """
         # Use the standalone function but with our config path
         params = get_interferometry_params(shot_num, filename, config_path=None)
@@ -398,19 +662,59 @@ class PhaseConverter:
         wavelength: float = None,
     ) -> np.ndarray:
         """
-        Converts phase (in radians) to line-integrated density (m^-2).
+        Convert phase (in radians) to line-integrated electron density (m^-2).
 
-        OPTIMIZED: Uses numba JIT compilation for enhanced performance.
+        This method implements the plasma interferometry formula to convert phase measurements
+        to line-integrated electron density. The conversion uses physical constants and
+        Numba-optimized core calculations for performance.
+
+        Formula:
+            ∫n_e dl = (c * n_c / (π * freq)) * phase / n_path
+            where n_c = m_e * eps0 * (2π * freq)² / qe² (critical density)
 
         Args:
-            phase: Phase array in radians
-            freq_hz: Frequency in Hz (takes precedence over analysis_params and wavelength)
-            n_path: Number of interferometer passes (takes precedence over analysis_params)
-            analysis_params: Dictionary from get_analysis_params() containing 'freq' and 'n_path'
-            wavelength: Wavelength in meters (will be converted to frequency using c = λf)
+            phase (np.ndarray): Phase array in radians (1D array).
+            freq_hz (float, optional): Interferometer frequency in Hz.
+                Takes precedence over analysis_params and wavelength if provided.
+            n_path (int, optional): Number of interferometer passes (e.g., 2 for double-pass).
+                Takes precedence over analysis_params if provided.
+            analysis_params (Dict, optional): Dictionary from get_analysis_params() containing:
+                - 'freq' (float): Frequency in Hz.
+                - 'n_path' (int): Number of passes.
+                Used if freq_hz and n_path are not provided.
+            wavelength (float, optional): Wavelength in meters.
+                Will be converted to frequency using c = λf.
+                Only used if freq_hz is not provided.
 
         Returns:
-            Line-integrated density in m^-2
+            np.ndarray: Line-integrated electron density in m^-2 (same length as phase).
+
+        Raises:
+            ValueError: If no valid frequency source is found (freq_hz, analysis_params, or wavelength).
+
+        Notes:
+            - Parameter precedence: freq_hz/n_path > analysis_params > wavelength > default (94 GHz).
+            - Physical constants are loaded from scipy.constants during initialization.
+            - The core calculation uses Numba JIT compilation for performance.
+            - The formula assumes small phase approximation (valid for typical plasma densities).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            phase = np.array([0.1, 0.2, 0.3])  # radians
+            
+            # Direct parameters
+            density = converter.phase_to_density(phase, freq_hz=94e9, n_path=2)
+            
+            # Using analysis parameters
+            params = converter.get_analysis_params(45821, "45821_056.csv")
+            density = converter.phase_to_density(phase, analysis_params=params)
+            
+            # Using wavelength
+            density = converter.phase_to_density(
+                phase, wavelength=3.19e-3  # 94 GHz wavelength in meters
+            )
+            ```
         """
         # Convert wavelength to frequency if provided
         if wavelength is not None:
@@ -456,8 +760,37 @@ class PhaseConverter:
         isflip: bool = False,
     ) -> np.ndarray:
         """
-        Calculates the phase from I and Q signals.
-        Normalizes the I/Q signals to a unit circle and calculates the accumulated phase.
+        Calculate phase from I and Q signals using atan2 method.
+
+        This method normalizes I/Q signals to the unit circle and calculates the phase
+        using arctangent. The phase is unwrapped to handle 2π discontinuities and
+        calibrated to start at zero.
+
+        Args:
+            i_signal (np.ndarray): In-phase signal array (1D).
+            q_signal (np.ndarray): Quadrature signal array (1D), must have same length as i_signal.
+            isnorm (bool, optional): Whether to normalize I/Q signals to unit circle.
+                Default is True. If False, signals are used as-is (must already be normalized).
+            isflip (bool, optional): Whether to flip the sign of the phase.
+                Default is False. Useful for correcting phase convention.
+
+        Returns:
+            np.ndarray: Phase array in radians (same length as input signals).
+                Phase is unwrapped and calibrated to start at 0.
+
+        Notes:
+            - Normalization uses Numba-optimized function for performance.
+            - Phase unwrapping handles 2π jumps automatically.
+            - The first phase value is always 0 (calibrated).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            i = np.array([1.0, 0.5, -0.5, -1.0])
+            q = np.array([0.0, 0.866, 0.866, 0.0])
+            phase = converter.calc_phase_iq_atan2(i, q)
+            # Result: [0, π/3, 2π/3, π] (approximately)
+            ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
         if isnorm:
@@ -481,10 +814,43 @@ class PhaseConverter:
         isflip: bool = False,
     ) -> np.ndarray:
         """
-        Calculates the phase from I and Q signals using a differential cross-product method.
-        This is based on the IQPostprocessing(...).m script.
+        Calculate phase from I and Q signals using asin2 (cross-product) method.
 
-        OPTIMIZED: Uses numba JIT compilation for enhanced performance.
+        This method uses a differential cross-product approach to calculate phase,
+        which is more robust to noise than direct atan2. It computes phase differences
+        between consecutive samples and accumulates them to reconstruct absolute phase.
+
+        The algorithm is based on MATLAB's IQPostprocessing script and uses:
+        1. I/Q normalization to unit circle
+        2. Differential phase calculation: Δφ = 2 * arcsin(cross_product / magnitude_product)
+        3. Phase accumulation via cumulative sum
+
+        Args:
+            i_signal (np.ndarray): In-phase signal array (1D).
+            q_signal (np.ndarray): Quadrature signal array (1D), must have same length as i_signal.
+            isnorm (bool, optional): Whether to normalize I/Q signals to unit circle.
+                Default is True. If False, signals are used as-is (must already be normalized).
+            isflip (bool, optional): Whether to flip the sign of the accumulated phase.
+                Default is False. Useful for correcting phase convention.
+
+        Returns:
+            np.ndarray: Phase array in radians (same length as input signals).
+                Phase is accumulated from differential phase differences.
+
+        Notes:
+            - Uses Numba-optimized functions for normalization, differential calculation, and accumulation.
+            - NaN values in phase differences are replaced with 0.0.
+            - The cross-product method is more robust to amplitude variations than atan2.
+            - The output length matches input length (last differential value is duplicated).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            i = np.array([1.0, 0.5, -0.5, -1.0])
+            q = np.array([0.0, 0.866, 0.866, 0.0])
+            phase = converter.calc_phase_iq_asin2(i, q)
+            # Result: Accumulated phase from differential cross-products
+            ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
         if isnorm:
@@ -517,19 +883,41 @@ class PhaseConverter:
         isflip: bool = False,
     ) -> np.ndarray:
         """
-        Calculates phase from I and Q signals using the default atan2 method.
+        Calculate phase from I and Q signals (convenience method).
 
-        This is a convenience method that calls calc_phase_iq_atan2.
+        This is a convenience method that delegates to either calc_phase_iq_atan2
+        (default) or calc_phase_iq_asin2 (cross-product method) based on the iscxprod flag.
 
         Args:
-            i_signal: In-phase signal array
-            q_signal: Quadrature signal array
-            iscxprod: Whether to use the cross-product method of phase calculation
-            isnorm: Whether to normalize the I and Q signals
-            isflip: Whether to flip the sign of the accumulated phase
+            i_signal (np.ndarray): In-phase signal array (1D).
+            q_signal (np.ndarray): Quadrature signal array (1D), must have same length as i_signal.
+            iscxprod (bool, optional): Whether to use the cross-product (asin2) method.
+                If True, uses calc_phase_iq_asin2. If False (default), uses calc_phase_iq_atan2.
+            isnorm (bool, optional): Whether to normalize the I and Q signals to unit circle.
+                Default is True.
+            isflip (bool, optional): Whether to flip the sign of the phase.
+                Default is False.
 
         Returns:
-            Phase array in radians
+            np.ndarray: Phase array in radians (same length as input signals).
+
+        Notes:
+            - Default method (iscxprod=False) uses atan2, which is faster and simpler.
+            - Cross-product method (iscxprod=True) is more robust to noise but slightly slower.
+            - Both methods normalize signals and handle phase unwrapping/accumulation.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            i = np.array([1.0, 0.5, -0.5])
+            q = np.array([0.0, 0.866, 0.866])
+            
+            # Default: atan2 method
+            phase_atan2 = converter.calc_phase_iq(i, q, iscxprod=False)
+            
+            # Cross-product method
+            phase_asin2 = converter.calc_phase_iq(i, q, iscxprod=True)
+            ```
         """
         if iscxprod:
             return self.calc_phase_iq_asin2(
@@ -541,7 +929,45 @@ class PhaseConverter:
             )
 
     def _create_lpf(self, f_pass, f_stop, fs, approx=False, max_taps=None):
-        """Creates a low-pass FIR filter using the remez algorithm."""
+        """
+        Create a low-pass FIR filter using the remez (Parks-McClellan) algorithm.
+
+        This method designs an optimal FIR filter with specified passband and stopband
+        frequencies. The filter design uses remezord to determine the optimal number
+        of taps and remez to generate the filter coefficients.
+
+        Args:
+            f_pass (float): Passband edge frequency in Hz.
+            f_stop (float): Stopband edge frequency in Hz. Must be > f_pass.
+            fs (float): Sampling frequency in Hz.
+            approx (bool, optional): Whether to use approximate tap count instead of remezord.
+                Default is False. If True, uses rule-of-thumb: N ≈ 4 / (transition_width_normalized).
+            max_taps (int, optional): Maximum number of filter taps to prevent filtfilt issues
+                with short signals. If None, no limit is applied. Default is None.
+
+        Returns:
+            np.ndarray: FIR filter coefficients (taps) for use with scipy.signal.filtfilt.
+
+        Notes:
+            - Filter specifications: ~0.5 dB passband ripple, -80 dB stopband attenuation.
+            - The number of taps is always odd (required by remez).
+            - If approx=True, uses simplified tap count estimation.
+            - Filter coefficients are designed for use with filtfilt (zero-phase filtering).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            # Create LPF: passband up to 0.5 MHz, stopband above 1 MHz
+            lpf_taps = converter._create_lpf(
+                f_pass=0.5e6,
+                f_stop=1e6,
+                fs=50e6
+            )
+            # Apply filter
+            from scipy.signal import filtfilt
+            filtered_signal = filtfilt(lpf_taps, 1, signal)
+            ```
+        """
         nyq = 0.5 * fs
         # dens from matlab is 20, which is the weight.
         # The transition width is f_stop - f_pass.
@@ -607,7 +1033,47 @@ class PhaseConverter:
         return taps
 
     def _create_bpf(self, f_stop1, f_pass1, f_pass2, f_stop2, fs, approx=False):
-        """Creates a band-pass FIR filter using the remez algorithm."""
+        """
+        Create a band-pass FIR filter using the remez (Parks-McClellan) algorithm.
+
+        This method designs an optimal FIR band-pass filter with specified stopband
+        and passband frequencies. The filter design uses remezord to determine the
+        optimal number of taps and remez to generate the filter coefficients.
+
+        Args:
+            f_stop1 (float): Lower stopband edge frequency in Hz (below passband).
+            f_pass1 (float): Lower passband edge frequency in Hz.
+            f_pass2 (float): Upper passband edge frequency in Hz.
+            f_stop2 (float): Upper stopband edge frequency in Hz (above passband).
+            fs (float): Sampling frequency in Hz.
+            approx (bool, optional): Whether to use approximate tap count instead of remezord.
+                Default is False. If True, uses rule-of-thumb estimation.
+
+        Returns:
+            np.ndarray: FIR filter coefficients (taps) for use with scipy.signal.filtfilt.
+
+        Notes:
+            - Filter specifications: ~0.5 dB passband ripple, -80 dB stopband attenuation.
+            - Frequency order must be: f_stop1 < f_pass1 < f_pass2 < f_stop2.
+            - The number of taps is always odd (required by remez).
+            - Filter coefficients are designed for use with filtfilt (zero-phase filtering).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            # Create BPF: passband 7.5-22.5 MHz, stopbands outside
+            bpf_taps = converter._create_bpf(
+                f_stop1=2.5e6,   # Lower stopband
+                f_pass1=7.5e6,   # Lower passband
+                f_pass2=22.5e6,  # Upper passband
+                f_stop2=27.5e6,  # Upper stopband
+                fs=50e6
+            )
+            # Apply filter
+            from scipy.signal import filtfilt
+            filtered_signal = filtfilt(bpf_taps, 1, signal)
+            ```
+        """
         nyq = 0.5 * fs
         numtaps_approx = int(4 / ((f_pass1 - f_stop1) / nyq))  # estimate from one side
         if numtaps_approx % 2 == 0:
@@ -661,7 +1127,31 @@ class PhaseConverter:
         return taps
 
     def _plot_filter_response(self, taps, fs=None, title="Frequency Response"):
-        """Plots the frequency response of the FIR filter."""
+        """
+        Plot the frequency response of an FIR filter.
+
+        This method visualizes the magnitude and phase response of a filter to help
+        verify filter design and characteristics.
+
+        Args:
+            taps (np.ndarray): FIR filter coefficients (from _create_lpf or _create_bpf).
+            fs (float, optional): Sampling frequency in Hz. If None, uses 2π (normalized frequency).
+                Default is None.
+            title (str, optional): Plot title. Default is "Frequency Response".
+
+        Notes:
+            - Uses scipy.signal.freqz to compute frequency response.
+            - If fs is None, frequency axis will be in rad/sample (normalized).
+            - If fs is provided, frequency axis will be in Hz.
+            - Calls plt.show() to display the plot.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            lpf_taps = converter._create_lpf(0.5e6, 1e6, fs=50e6)
+            converter._plot_filter_response(lpf_taps, fs=50e6, title="LPF Response")
+            ```
+        """
         if fs is None:
             fs = 2 * np.pi
             logger.warning(
@@ -685,23 +1175,70 @@ class PhaseConverter:
         plot_filters: bool = False,
     ) -> np.ndarray:
         """
-        Calculates phase using complex demodulation.
-        This involves BPF, Hilbert transform, LPF, and phase extraction.
+        Calculate phase using Complex Demodulation (CDM) method.
+
+        This method implements the CDM algorithm for phase extraction from interferometer
+        signals. The process involves:
+        1. Band-pass filtering (BPF) around the IF frequency
+        2. Complex demodulation using Hilbert transform
+        3. Low-pass filtering (LPF) to extract baseband phase
+        4. Differential phase calculation and accumulation
+
+        The CDM method is robust to amplitude variations and is used for recent experimental
+        configurations (shot numbers >= 41542).
 
         Args:
-            ref_signal (np.ndarray): The reference channel signal.
-            prob_signal (np.ndarray): The probe channel signal.
-            fs (float): The sampling frequency.
-            f_center (float): The center frequency of the IF signal, determined from STFT.
-            isbpf (bool): Whether to apply BPF.
-            isconj (bool): Whether to use conjugate of the reference signal for demodulation.
-            islpf (bool): Whether to apply LPF to the demodulated signal.
-            iszif (bool): Whether to apply zero-IF demodulation to the demodulated signal.
-            isflip (bool): Whether to flip the sign of the accumulated phase.
-            plot_filters (bool): Whether to plot the filter responses.
+            ref_signal (np.ndarray): Reference channel signal (1D array).
+            prob_signal (np.ndarray): Probe channel signal (1D array), must have same length as ref_signal.
+            fs (float): Sampling frequency in Hz.
+            f_center (float): Center frequency of the IF signal in Hz (typically determined from STFT).
+                Used to design BPF. Filter bandwidth depends on f_center:
+                - f_center > 60 MHz: ±12.5 MHz stopband, ±7.5 MHz passband
+                - f_center > 30 MHz: ±10.0 MHz stopband, ±5.0 MHz passband
+                - f_center <= 30 MHz: ±7.0 MHz stopband, ±3.0 MHz passband
+            isbpf (bool, optional): Whether to apply band-pass filter. Default is True.
+            isconj (bool, optional): Whether to use conjugate of reference for demodulation.
+                Default is False. Set to True for specific phase conventions.
+            islpf (bool, optional): Whether to apply low-pass filter to demodulated signal.
+                LPF passband: 0.5 MHz, stopband: 1.0 MHz. Default is True.
+            iszif (bool, optional): Whether to use zero-IF demodulation method.
+                If True, uses different phase extraction (np.angle). Default is False.
+            isflip (bool, optional): Whether to flip the sign of the phase. Default is False.
+            plot_filters (bool, optional): Whether to plot BPF and LPF frequency responses.
+                Default is False.
 
         Returns:
-            np.ndarray: The phase in radians.
+            np.ndarray: Phase array in radians (same length as input signals).
+                Phase is accumulated from differential phase differences and baseline-corrected.
+
+        Notes:
+            - BPF and LPF are designed automatically based on f_center.
+            - Uses scipy.signal.hilbert for complex demodulation (matches MATLAB behavior).
+            - Baseline correction uses first 10000 samples (or 1000 if signal is shorter).
+            - The method uses Numba-optimized functions for differential phase calculation.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            # Determine f_center from STFT analysis
+            f_center = 15e6  # 15 MHz IF frequency
+            
+            # Calculate phase using CDM
+            phase = converter.calc_phase_cdm(
+                ref_signal, probe_signal,
+                fs=50e6,
+                f_center=f_center,
+                isbpf=True,
+                islpf=True
+            )
+            
+            # With filter visualization
+            phase = converter.calc_phase_cdm(
+                ref_signal, probe_signal,
+                fs=50e6, f_center=f_center,
+                plot_filters=True  # Shows BPF and LPF responses
+            )
+            ```
         """
         # 1. Design filters based on f_center.
         # These values are from CDM_VEST_check.m
@@ -799,27 +1336,52 @@ class PhaseConverter:
         isflip: bool = False,
     ) -> np.ndarray:
         """
-        Processes phase from FPGA data.
+        Calculate phase difference from FPGA-processed phase data.
 
-        This is a simplified version of the logic in FPGAreadData_ver2.m.
-        It calculates the phase difference achcived by FPGA chips with COORDIC algorithm 
+        This method processes phase data that has already been extracted by FPGA hardware
+        using the CORDIC algorithm. It simply computes the difference between probe and
+        reference phases and applies baseline correction.
 
-        The full MATLAB script includes more advanced features like:
-        - Moving average filtering of the phase difference.
-        - Dynamic detection of the plasma discharge window.
-        - Masking of the phase during periods of low amplitude (beam diffraction).
-        - More sophisticated pre/post-discharge offset correction.
-
-        These can be implemented here later if needed.
+        This is a simplified version compared to the full MATLAB script (FPGAreadData_ver2.m).
+        Future enhancements may include:
+        - Moving average filtering of phase difference
+        - Dynamic detection of plasma discharge window
+        - Masking during low amplitude periods (beam diffraction)
+        - Advanced pre/post-discharge offset correction
 
         Args:
-            ref_phase: The reference phase signal.
-            probe_phase: The probe phase signal for a specific channel.
-            time: The time array, used for potential windowing in future.
-            amp_signal: The amplitude signal for the probe channel, for future use.
+            ref_phase (np.ndarray): Reference phase signal in radians (1D array).
+            probe_phase (np.ndarray): Probe phase signal in radians (1D array),
+                must have same length as ref_phase.
+            time (np.ndarray): Time array in seconds (1D array). Currently used for logging,
+                reserved for future windowing features.
+            amp_signal (np.ndarray): Amplitude signal for the probe channel (1D array).
+                Currently unused, reserved for future amplitude-based masking.
 
         Returns:
-            The processed phase difference in radians.
+            np.ndarray: Processed phase difference in radians (same length as input signals).
+                Phase difference is baseline-corrected using the first 1000 samples.
+
+        Notes:
+            - Phase difference: Δφ = probe_phase - ref_phase
+            - Baseline correction subtracts the mean of the first 1000 samples.
+            - The FPGA method is used for shots 39302-41398.
+            - Phase data from FPGA is already in radians (CORDIC output).
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            # FPGA data: phases are already extracted
+            ref_phase = df['CH0'].values  # Reference phase from FPGA
+            probe_phase = df['CH1'].values  # Probe phase from FPGA
+            time = df['TIME'].values
+            
+            # Calculate phase difference
+            phase_diff = converter.calc_phase_fpga(
+                ref_phase, probe_phase, time,
+                amp_signal=df['CH17'].values  # Amplitude (for future use)
+            )
+            ```
         """
         phase_diff = probe_phase - ref_phase
 
@@ -844,15 +1406,61 @@ class PhaseConverter:
         ip_column_name: str = None,
     ):
         """
-        Corrects the baseline of the calculated density.
+        Correct baseline offset in density data.
+
+        This method removes baseline offset from density measurements by subtracting
+        the mean value in a specified time window. Two modes are supported:
+        - 'ip' mode: Uses plasma current ramp-up time to define baseline window
+        - 'trig' mode: Uses fixed time window (0.285-0.290 s, typical pre-trigger period)
 
         Args:
-            density_df: DataFrame with density data columns.
-            time_axis: The common time axis for the data.
-            mode: The baseline correction mode ('ip' or 'trig').
-            shot_num: Shot number for VEST data retrieval (required for 'ip' mode).
-            vest_data: DataFrame containing VEST data, required for 'ip' mode.
-            ip_column_name: The name of the plasma current column in vest_data.
+            density_df (pd.DataFrame): DataFrame with density data columns.
+                Each column represents a probe channel's density measurements.
+            time_axis (np.ndarray): Common time axis in seconds (1D array).
+                Must have same length as density_df rows.
+            mode (str): Baseline correction mode. Options:
+                - 'ip': Use plasma current ramp-up to define baseline window (3-8 ms before ramp-up).
+                - 'trig': Use fixed time window (0.285-0.290 s).
+            shot_num (int, optional): Shot number for VEST data retrieval.
+                Required for 'ip' mode. Default is None.
+            vest_data (pd.DataFrame, optional): DataFrame containing VEST database data.
+                Required for 'ip' mode. Must contain plasma current column.
+                Default is None.
+            ip_column_name (str, optional): Name of the plasma current column in vest_data.
+                Required for 'ip' mode. Default is None.
+
+        Returns:
+            pd.DataFrame: Corrected density DataFrame with baseline offset removed.
+                Same structure as input density_df.
+
+        Raises:
+            None (method returns original DataFrame with warnings if conditions not met).
+
+        Notes:
+            - 'ip' mode: Finds first time when Ip > 5 kA (or 5 A if data is in Amperes),
+              then uses window 3-8 ms before ramp-up.
+            - 'trig' mode: Uses fixed window [0.285, 0.290] seconds (typical pre-trigger period).
+            - Baseline correction subtracts the mean value in the window from each column.
+            - If no data is found in the baseline window, returns original DataFrame with warning.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            
+            # Trigger-based baseline correction
+            density_corrected = converter.correct_baseline(
+                density_df, time_axis, mode='trig'
+            )
+            
+            # IP-based baseline correction
+            density_corrected = converter.correct_baseline(
+                density_df, time_axis,
+                mode='ip',
+                shot_num=45821,
+                vest_data=vest_df,
+                ip_column_name='Ip'
+            )
+            ```
         """
         corrected_df = density_df.copy()
 

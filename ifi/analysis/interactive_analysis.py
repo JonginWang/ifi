@@ -42,11 +42,17 @@ Functions:
 import logging
 from argparse import Namespace
 import matplotlib.pyplot as plt
-
-from .main_analysis import run_analysis
-from ..utils.common import LogManager
-from ..db_controller.nas_db import NAS_DB
-from ..db_controller.vest_db import VEST_DB
+try:
+    from .main_analysis import run_analysis
+    from ..utils.common import LogManager
+    from ..db_controller.nas_db import NAS_DB
+    from ..db_controller.vest_db import VEST_DB
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.analysis.main_analysis import run_analysis
+    from ifi.utils.common import LogManager
+    from ifi.db_controller.nas_db import NAS_DB
+    from ifi.db_controller.vest_db import VEST_DB
 
 LogManager(level="DEBUG")
 

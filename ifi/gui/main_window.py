@@ -16,19 +16,23 @@ from enum import Enum, auto
 import queue
 import threading
 import time
-
 from pathlib import Path
-
-from .. import get_project_root
-from ..tek_controller.scope import TekScopeController
-from ..db_controller.vest_db import VEST_DB
-from ..utils.file_io import read_waveform_file, save_waveform_to_csv
-
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from ..analysis.params.params_plot import FontStyle
-
 from pynput import keyboard
+try:
+    from .. import get_project_root
+    from ..tek_controller.scope import TekScopeController
+    from ..db_controller.vest_db import VEST_DB
+    from ..utils.file_io import read_waveform_file, save_waveform_to_csv
+    from ..analysis.params.params_plot import FontStyle
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import get_project_root
+    from ifi.tek_controller.scope import TekScopeController
+    from ifi.db_controller.vest_db import VEST_DB
+    from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
+    from ifi.analysis.params.params_plot import FontStyle
 
 
 class AppState(Enum):

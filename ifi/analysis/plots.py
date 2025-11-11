@@ -44,20 +44,33 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-
-# from ..utils.cache_setup import setup_project_cache
-from ..db_controller.vest_db import VEST_DB
-from .spectrum import SpectrumAnalysis
-from .params.params_plot import set_plot_style, FontStyle
-from ..utils.common import LogManager, ensure_dir_exists, log_tag
-from .functions.power_conversion import (
-    pow2db,
-    db2pow,  # noqa: F401
-    amp2db,  # noqa: F401
-    db2amp,  # noqa: F401
-    mag2db,  # noqa: F401
-    db2mag,  # noqa: F401
-)
+try:
+    from ..db_controller.vest_db import VEST_DB
+    from .spectrum import SpectrumAnalysis
+    from .params.params_plot import set_plot_style, FontStyle
+    from ..utils.common import LogManager, ensure_dir_exists, log_tag
+    from .functions.power_conversion import (
+        pow2db,
+        db2pow,  # noqa: F401
+        amp2db,  # noqa: F401
+        db2amp,  # noqa: F401
+        mag2db,  # noqa: F401
+        db2mag,  # noqa: F401
+    )
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.db_controller.vest_db import VEST_DB
+    from ifi.analysis.spectrum import SpectrumAnalysis
+    from ifi.analysis.params.params_plot import set_plot_style, FontStyle
+    from ifi.utils.common import LogManager, ensure_dir_exists, log_tag
+    from ifi.analysis.functions.power_conversion import (
+        pow2db,
+        db2pow,  # noqa: F401
+        amp2db,  # noqa: F401
+        db2amp,  # noqa: F401
+        mag2db,  # noqa: F401
+        db2mag,  # noqa: F401
+    )
 
 logger = LogManager().get_logger(__name__)
 
@@ -69,7 +82,7 @@ logger = LogManager().get_logger(__name__)
 def _is_jupyter_environment() -> bool:
     """
     Detect if code is running in a Jupyter notebook environment.
-    
+
     Returns:
         bool: True if running in Jupyter notebook, False otherwise
     """
@@ -77,36 +90,39 @@ def _is_jupyter_environment() -> bool:
         # Method 1: Try to import and get IPython instance
         try:
             from IPython import get_ipython
+
             ipython = get_ipython()
             if ipython is not None:
                 # Check if running in Jupyter notebook (not just IPython)
-                if hasattr(ipython, 'kernel'):
+                if hasattr(ipython, "kernel"):
                     return True
-                
+
                 # Check class name (Jupyter uses ZMQInteractiveShell)
                 class_name = ipython.__class__.__name__
-                if 'ZMQ' in class_name or 'Jupyter' in class_name:
+                if "ZMQ" in class_name or "Jupyter" in class_name:
                     return True
         except (ImportError, NameError):
             pass
-        
+
         # Method 2: Check for Jupyter-specific environment variables
         import os
-        if os.environ.get('JPY_PARENT_PID') is not None:
+
+        if os.environ.get("JPY_PARENT_PID") is not None:
             return True
-        
+
         # Method 3: Check if running in IPython/Jupyter by checking __main__
         import sys
-        if hasattr(sys, 'ps1') and sys.ps1:
+
+        if hasattr(sys, "ps1") and sys.ps1:
             # Interactive shell, but not necessarily Jupyter
             pass
-        elif 'ipykernel' in sys.modules:
+        elif "ipykernel" in sys.modules:
             # ipykernel is loaded, likely Jupyter
             return True
-            
+
     except Exception:
         pass
-    
+
     return False
 
 
@@ -144,6 +160,7 @@ def setup_interactive_mode(backend: str = "auto", style: str = "default"):
             # Non-Jupyter environment: try interactive backends
             try:
                 import tkinter  # noqa: F401
+
                 matplotlib.use("TkAgg")
             except ImportError:
                 try:
@@ -223,9 +240,11 @@ def interactive_plotting(
 
                 try:
                     fig.savefig(filepath, dpi=dpi, bbox_inches="tight")
-                    logger.info(f"{log_tag('ION','SAVE')} Saved figure to {filepath}")
+                    logger.info(f"{log_tag('ION', 'SAVE')} Saved figure to {filepath}")
                 except Exception as e:
-                    logger.error(f"{log_tag('ION','ERROR')} Failed to save figure {i}: {e}")
+                    logger.error(
+                        f"{log_tag('ION', 'ERROR')} Failed to save figure {i}: {e}"
+                    )
 
         if show_plots:
             # In Jupyter, inline backend automatically displays plots
@@ -329,12 +348,12 @@ class Plotter:
                     time = data[:, 0]
             else:
                 logger.error(
-                    f"{log_tag('PLTTR','PREPT')} Waveform data must be 1D or 2D numpy array. Got {data.shape}"
+                    f"{log_tag('PLTTR', 'PREPT')} Waveform data must be 1D or 2D numpy array. Got {data.shape}"
                 )
                 raise ValueError("Waveform data must be 1D or 2D numpy array")
         else:
             logger.error(
-                f"{log_tag('PLTTR','PREPT')} Waveform data must be DataFrame, dict, or numpy array. Got {type(data)}"
+                f"{log_tag('PLTTR', 'PREPT')} Waveform data must be DataFrame, dict, or numpy array. Got {type(data)}"
             )
             raise ValueError("Waveform data must be DataFrame, dict, or numpy array")
 
@@ -388,7 +407,7 @@ class Plotter:
         if sci_match:
             exponent = int(sci_match.group(1))
             unit = sci_match.group(2).strip()
-            signal_scale_factor = 10**(-exponent)
+            signal_scale_factor = 10 ** (-exponent)
 
             # Convert superscript notation to LaTeX (without $ delimiters for now)
             def replace_superscript(match):
@@ -625,7 +644,7 @@ class Plotter:
                 signals = {k: v[::downsample] for k, v in signals.items()}
 
             n_signals = len(signals)
-            
+
             # Ensure n_signals is at least 1
             if n_signals == 0:
                 raise ValueError(
@@ -1005,7 +1024,7 @@ def plot_shot_waveforms(
     Returns:
         None
     """
-    logger.info(f"{log_tag('PLOTS','WFDAT')} Generating waveform plots...")
+    logger.info(f"{log_tag('PLOTS', 'WFDAT')} Generating waveform plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -1016,7 +1035,9 @@ def plot_shot_waveforms(
 
     for filename, df in shot_data.items():
         if isinstance(df, pd.DataFrame) and "TIME" in df.columns:
-            logger.info(f"{log_tag('PLOTS','WFDAT')} Plotting waveforms for {filename}")
+            logger.info(
+                f"{log_tag('PLOTS', 'WFDAT')} Plotting waveforms for {filename}"
+            )
 
             try:
                 fig, axes = plotter.plot_waveforms(
@@ -1029,10 +1050,14 @@ def plot_shot_waveforms(
                 output_path = results_dir / f"{filename}_waveforms.png"
                 fig.savefig(output_path, dpi=150, bbox_inches="tight")
                 plt.close(fig)
-                logger.info(f"{log_tag('PLOTS','WFDAT')} Saved waveform plot: {output_path}")
+                logger.info(
+                    f"{log_tag('PLOTS', 'WFDAT')} Saved waveform plot: {output_path}"
+                )
 
             except Exception as e:
-                logger.error(f"{log_tag('PLOTS','WFDAT')} Failed to plot waveforms for {filename}: {e}")
+                logger.error(
+                    f"{log_tag('PLOTS', 'WFDAT')} Failed to plot waveforms for {filename}: {e}"
+                )
 
 
 def plot_shot_spectrograms(
@@ -1049,7 +1074,7 @@ def plot_shot_spectrograms(
     Returns:
         None
     """
-    logger.info(f"{log_tag('PLOTS','SPCTR')} Generating spectrogram plots...")
+    logger.info(f"{log_tag('PLOTS', 'SPCTR')} Generating spectrogram plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -1068,7 +1093,7 @@ def plot_shot_spectrograms(
             fs = 1.0 / time_diff
 
             logger.info(
-                f"{log_tag('PLOTS','SPCTR')} Processing spectrogram for {filename} (fs = {fs / 1e6:.1f} MHz)"
+                f"{log_tag('PLOTS', 'SPCTR')} Processing spectrogram for {filename} (fs = {fs / 1e6:.1f} MHz)"
             )
 
             signal_cols = [col for col in df.columns if col != "TIME"]
@@ -1092,11 +1117,13 @@ def plot_shot_spectrograms(
                     fig.savefig(output_path, dpi=150, bbox_inches="tight")
                     plt.close(fig)
 
-                    logger.info(f"{log_tag('PLOTS','SPCTR')} Saved spectrogram: {output_path}")
+                    logger.info(
+                        f"{log_tag('PLOTS', 'SPCTR')} Saved spectrogram: {output_path}"
+                    )
 
                 except Exception as e:
                     logger.error(
-                        f"{log_tag('PLOTS','SPCTR')} Failed to generate spectrogram for {filename}_{col}: {e}"
+                        f"{log_tag('PLOTS', 'SPCTR')} Failed to generate spectrogram for {filename}_{col}: {e}"
                     )
 
 
@@ -1114,7 +1141,7 @@ def plot_shot_density_evolution(
     Returns:
         None
     """
-    logger.info(f"{log_tag('PLOTS','DENS')} Generating density evolution plots...")
+    logger.info(f"{log_tag('PLOTS', 'DENS')} Generating density evolution plots...")
 
     # Auto-generate results directory if not provided
     if results_dir is None:
@@ -1129,7 +1156,7 @@ def plot_shot_density_evolution(
             density_data[key] = df
 
     if not density_data:
-        logger.warning(f"{log_tag('PLOTS','DENS')} No density data found for plotting")
+        logger.warning(f"{log_tag('PLOTS', 'DENS')} No density data found for plotting")
         return
 
     try:
@@ -1143,10 +1170,14 @@ def plot_shot_density_evolution(
         fig.savefig(output_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-        logger.info(f"{log_tag('PLOTS','DENS')} Saved density evolution plot: {output_path}")
+        logger.info(
+            f"{log_tag('PLOTS', 'DENS')} Saved density evolution plot: {output_path}"
+        )
 
     except Exception as e:
-        logger.error(f"{log_tag('PLOTS','DENS')} Failed to generate density evolution plot: {e}")
+        logger.error(
+            f"{log_tag('PLOTS', 'DENS')} Failed to generate density evolution plot: {e}"
+        )
 
 
 """
@@ -1170,7 +1201,9 @@ def plot_spectrogram(freqs, times, Sxx, **kwargs):
     with interactive_plotting(show_plots=True, block=False):
         plotter = Plotter()
         # Pass pre-computed arrays directly as tuple
-        return plotter.plot_time_frequency((freqs, times, Sxx), method="precomputed", **kwargs)
+        return plotter.plot_time_frequency(
+            (freqs, times, Sxx), method="precomputed", **kwargs
+        )
 
 
 def plot_density_results(density_data, **kwargs):
@@ -1195,7 +1228,11 @@ def plot_spectrograms(stft_results, **kwargs):
         for filename, results_by_col in stft_results.items():
             for col_name, results in results_by_col.items():
                 # Handle STFT results format: {freq_STFT, time_STFT, STFT_matrix}
-                if "STFT_matrix" in results and "freq_STFT" in results and "time_STFT" in results:
+                if (
+                    "STFT_matrix" in results
+                    and "freq_STFT" in results
+                    and "time_STFT" in results
+                ):
                     # Pre-computed STFT: use precomputed method
                     freqs = results["freq_STFT"]
                     times = results["time_STFT"]
@@ -1203,8 +1240,9 @@ def plot_spectrograms(stft_results, **kwargs):
                     plotter.plot_time_frequency(
                         (freqs, times, stft_matrix),
                         method="precomputed",
-                        title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
-                        **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                        title=kwargs.get("title_prefix", "")
+                        + f"{Path(filename).name} - {col_name}",
+                        **{k: v for k, v in kwargs.items() if k != "title_prefix"},
                     )
                 elif "Zxx" in results:
                     # Old format: try to extract freqs and times if available
@@ -1213,14 +1251,19 @@ def plot_spectrograms(stft_results, **kwargs):
                         plotter.plot_time_frequency(
                             (results["freqs"], results["times"], stft_data),
                             method="precomputed",
-                            title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
-                            **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                            title=kwargs.get("title_prefix", "")
+                            + f"{Path(filename).name} - {col_name}",
+                            **{k: v for k, v in kwargs.items() if k != "title_prefix"},
                         )
                     else:
-                        logger.warning(f"STFT data format incomplete for {filename}/{col_name}, skipping")
+                        logger.warning(
+                            f"STFT data format incomplete for {filename}/{col_name}, skipping"
+                        )
                         continue
                 else:
-                    logger.warning(f"Unknown STFT data format for {filename}/{col_name}")
+                    logger.warning(
+                        f"Unknown STFT data format for {filename}/{col_name}"
+                    )
                     continue
 
 
@@ -1231,7 +1274,11 @@ def plot_cwt(cwt_results, **kwargs):
         for filename, analysis in cwt_results.items():
             for col_name, result in analysis.items():
                 # Handle CWT results format: {freq_CWT, time_CWT, CWT_matrix}
-                if "CWT_matrix" in result and "freq_CWT" in result and "time_CWT" in result:
+                if (
+                    "CWT_matrix" in result
+                    and "freq_CWT" in result
+                    and "time_CWT" in result
+                ):
                     # Pre-computed CWT: use precomputed method
                     freqs = result["freq_CWT"]
                     times = result["time_CWT"]
@@ -1239,8 +1286,9 @@ def plot_cwt(cwt_results, **kwargs):
                     plotter.plot_time_frequency(
                         (freqs, times, cwt_matrix),
                         method="precomputed",
-                        title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
-                        **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                        title=kwargs.get("title_prefix", "")
+                        + f"{Path(filename).name} - {col_name}",
+                        **{k: v for k, v in kwargs.items() if k != "title_prefix"},
                     )
                 elif "cwt_matrix" in result:
                     # Old format: try to extract freqs and times if available
@@ -1249,11 +1297,14 @@ def plot_cwt(cwt_results, **kwargs):
                         plotter.plot_time_frequency(
                             (result["freqs"], result["times"], cwt_data),
                             method="precomputed",
-                            title=kwargs.get("title_prefix", "") + f"{Path(filename).name} - {col_name}",
-                            **{k: v for k, v in kwargs.items() if k != "title_prefix"}
+                            title=kwargs.get("title_prefix", "")
+                            + f"{Path(filename).name} - {col_name}",
+                            **{k: v for k, v in kwargs.items() if k != "title_prefix"},
                         )
                     else:
-                        logger.warning(f"CWT data format incomplete for {filename}/{col_name}, skipping")
+                        logger.warning(
+                            f"CWT data format incomplete for {filename}/{col_name}, skipping"
+                        )
                         continue
                 else:
                     logger.warning(f"Unknown CWT data format for {filename}/{col_name}")
@@ -1288,12 +1339,12 @@ def plot_analysis_overview(
 ):
     """
     Plot comprehensive analysis overview for a shot.
-    
+
     This function creates an overview plot showing:
     - Processed signals (waveforms)
     - Density evolution
     - VEST data (if available)
-    
+
     Args:
         shot_num(int): Shot number for plot titles
         signals_dict(Dict[str, pd.DataFrame]): Dictionary of signal DataFrames
@@ -1303,12 +1354,12 @@ def plot_analysis_overview(
         title_prefix(str): Prefix for plot titles
         downsample(int): Downsampling factor for plotting
         **kwargs: Additional arguments passed to plotting functions
-        
+
     Returns:
         None
     """
     plotter = Plotter()
-    
+
     # Plot signals
     for name, df in signals_dict.items():
         if df is not None and not df.empty:
@@ -1319,11 +1370,11 @@ def plot_analysis_overview(
                     trigger_time=trigger_time,
                     downsample=downsample,
                     show_plot=True,
-                    **kwargs
+                    **kwargs,
                 )
             except Exception as e:
-                logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot {name}: {e}")
-    
+                logger.warning(f"{log_tag('PLOTS', 'OVER')} Failed to plot {name}: {e}")
+
     # Plot density
     for name, df in density_dict.items():
         if df is not None and not df.empty:
@@ -1334,17 +1385,19 @@ def plot_analysis_overview(
                     time_data = df.index.values
                 elif "TIME" in df.columns:
                     time_data = df["TIME"].values
-                
+
                 plotter.plot_density(
                     df,
                     time_data=time_data,
                     title=f"{title_prefix}{name}",
                     show_plot=True,
-                    **kwargs
+                    **kwargs,
                 )
             except Exception as e:
-                logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot density {name}: {e}")
-    
+                logger.warning(
+                    f"{log_tag('PLOTS', 'OVER')} Failed to plot density {name}: {e}"
+                )
+
     # Plot VEST data if available
     if vest_data is not None and not vest_data.empty:
         try:
@@ -1354,7 +1407,7 @@ def plot_analysis_overview(
                 if "ip" in col.lower() or "current" in col.lower():
                     ip_col = col
                     break
-            
+
             if ip_col:
                 fig, ax = plt.subplots(figsize=(12, 6))
                 time_vest = vest_data.index.values + trigger_time
@@ -1366,7 +1419,7 @@ def plot_analysis_overview(
                 plt.tight_layout()
                 plt.show(block=False)
         except Exception as e:
-            logger.warning(f"{log_tag('PLOTS','OVER')} Failed to plot VEST data: {e}")
+            logger.warning(f"{log_tag('PLOTS', 'OVER')} Failed to plot VEST data: {e}")
 
 
 ## Main-guard test code removed. See archived copy in `ifi/olds/plots_old_20251030.py`.

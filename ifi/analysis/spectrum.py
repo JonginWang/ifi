@@ -15,14 +15,16 @@ import numpy as np
 from scipy import signal as spsig
 from typing import Tuple, Optional
 from functools import lru_cache
-
-from ..utils.common import LogManager, log_tag
-from ..utils.validation import validate_signal, validate_frequency
-
-# Import external packages for time-frequency transforms
-import ssqueezepy as ssqpy  # noqa: E402
-from ssqueezepy.experimental import scale_to_freq  # noqa: E402
-
+import ssqueezepy as ssqpy
+from ssqueezepy.experimental import scale_to_freq
+try:
+    from ..utils.common import LogManager, log_tag
+    from ..utils.validation import validate_signal, validate_frequency
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.utils.common import LogManager, log_tag
+    from ifi.utils.validation import validate_signal, validate_frequency
+    
 logger = LogManager().get_logger(__name__)
 
 
@@ -56,24 +58,41 @@ class SpectrumAnalysis:
         find_center_frequency_fft: Find center frequency of signal
 
     Examples:
-        '''python
+        ```python
         import numpy as np
-        from .spectrum import SpectrumAnalysis
+        from ifi.analysis.spectrum import SpectrumAnalysis
 
         analyzer = SpectrumAnalysis()
         fs = 50e6
         t = np.arange(0, 1, 1/fs)
-        signal = np.sin(2 * np.pi * 10e6 * t)
-                + np.sin(2 * np.pi * 20e6 * t)
-                + 0.1 * np.random.randn(len(t))
-        f, t, Zxx = analyzer.compute_stft(signal, fs)
+        signal = (np.sin(2 * np.pi * 10e6 * t)
+                  + np.sin(2 * np.pi * 20e6 * t)
+                  + 0.1 * np.random.randn(len(t)))
+        
+        # Compute STFT
+        f, t_stft, Zxx = analyzer.compute_stft(signal, fs)
+        
+        # Find frequency ridge
         ridge = analyzer.find_freq_ridge(Zxx, f, method='stft')
+        
+        # Find center frequency
         f_center = analyzer.find_center_frequency_fft(signal, fs)
+        
         print(f"Center Frequency: {f_center / 1e6:.2f} MHz")
         print(f"Ridge Frequency: {np.mean(ridge) / 1e6:.2f} MHz")
         print(f"STFT Shape: {Zxx.shape}")
-        print(f"STFT Time: {t[0]} to {t[-1]}")
-        '''
+        print(f"STFT Time: {t_stft[0]} to {t_stft[-1]}")
+        
+        # Compute CWT with memory optimization
+        freqs_cwt, Wx = analyzer.compute_cwt(
+            signal, fs, 
+            f_center=15e6, 
+            f_deviation=0.1,
+            decimation_factor=4
+        )
+        print(f"CWT Shape: {Wx.shape}")
+        print(f"CWT Frequency Range: [{freqs_cwt.min()/1e6:.2f}, {freqs_cwt.max()/1e6:.2f}] MHz")
+        ```
     """
 
     def __init__(self):
@@ -172,20 +191,63 @@ class SpectrumAnalysis:
         self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Compute STFT with scipy.
+        Compute Short-Time Fourier Transform (STFT) using scipy.
+
+        This method uses scipy.signal.ShortTimeFFT for STFT computation with automatic
+        parameter selection if not provided. The method dynamically determines optimal
+        window size, overlap, and FFT length based on signal length.
 
         Args:
-            signal (np.ndarray): Input signal
-            fs (float): Sampling frequency
-            t_start (float, optional): Start time. Default is 0.0.
-            **kwargs: Additional arguments for STFT
+            signal (np.ndarray): Input signal array (1D).
+            fs (float): Sampling frequency in Hz.
+            t_start (float, optional): Start time offset in seconds. This value is added
+                to the time axis. Default is 0.0.
+            **kwargs: Additional arguments for STFT:
+                - nperseg (int, optional): Length of each segment. If None, automatically
+                  determined as ~1/64 of signal length, clamped between 512 and 8192,
+                  rounded to nearest power of 2.
+                - noverlap (int, optional): Number of points to overlap between segments.
+                  If None, defaults to nperseg // 2.
+                - mfft (int, optional): Length of FFT. If None, defaults to nperseg.
+                - window (str, tuple, or np.ndarray, optional): Window function.
+                  Default is ("kaiser", 8).
+                - scale_to (str, optional): Scaling mode. Default is "magnitude".
+                - phase_shift (float, optional): Phase shift. Default is 0.
+                - padding (str, optional): Padding mode. Default is "even".
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                Tuple containing the "frequencies", "times", and "STFT matrix"
+                - frequencies (np.ndarray): Array of frequencies in Hz.
+                - times (np.ndarray): Array of time points in seconds (with t_start offset).
+                - STFT_matrix (np.ndarray): Complex STFT matrix with shape (n_freqs, n_times).
 
         Raises:
-            TypeError: If the window type or length is not supported
+            TypeError: If the window type or length is not supported.
+            ValueError: If signal is empty or invalid.
+
+        Notes:
+            - Window size (nperseg) is automatically optimized for signal length if not provided.
+            - Overlap is set to 50% of window size by default for good time-frequency resolution.
+            - FFT length defaults to window size for efficiency.
+
+        Examples:
+            ```python
+            # Basic STFT with automatic parameters
+            freqs, times, Zxx = analyzer.compute_stft(signal, fs=50e6)
+            
+            # STFT with custom window size
+            freqs, times, Zxx = analyzer.compute_stft(
+                signal, fs=50e6,
+                nperseg=4096,
+                noverlap=2048
+            )
+            
+            # STFT with time offset
+            freqs, times, Zxx = analyzer.compute_stft(
+                signal, fs=50e6,
+                t_start=0.290  # Add trigger time offset
+            )
+            ```
         """
         logger.debug(f"{log_tag('SPECR','STFT')} Computing STFT with scipy.")
 
@@ -237,20 +299,57 @@ class SpectrumAnalysis:
         self, signal: np.ndarray, fs: float, t_start: float = 0.0, **kwargs
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Compute STFT with ssqueezepy.
+        Compute Short-Time Fourier Transform (STFT) using ssqueezepy.
+
+        This method uses ssqueezepy.stft for STFT computation with automatic parameter
+        selection if not provided. Similar to compute_stft but uses ssqueezepy library
+        which may provide different performance characteristics.
 
         Args:
-            signal (np.ndarray): Input signal
-            fs (float): Sampling frequency
-            t_start (float, optional): Start time. Default is 0.0.
-            **kwargs: Additional arguments for STFT
+            signal (np.ndarray): Input signal array (1D).
+            fs (float): Sampling frequency in Hz.
+            t_start (float, optional): Start time offset in seconds. This value is added
+                to the time axis. Default is 0.0.
+            **kwargs: Additional arguments for STFT:
+                - nperseg (int, optional): Length of each segment. If None, automatically
+                  determined as ~1/64 of signal length, clamped between 512 and 8192,
+                  rounded to nearest power of 2.
+                - noverlap (int, optional): Number of points to overlap between segments.
+                  If None, defaults to nperseg // 2.
+                - mfft (int, optional): Length of FFT. If None, defaults to nperseg.
+                - window (str, tuple, or np.ndarray, optional): Window function.
+                  Default is ("kaiser", 8).
+                - padtype (str, optional): Padding type. Default is "reflect".
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                Tuple containing the "frequencies", "times", and "STFT matrix"
+                - frequencies (np.ndarray): Array of frequencies in Hz (positive frequencies only).
+                - times (np.ndarray): Array of time points in seconds (with t_start offset).
+                - STFT_matrix (np.ndarray): Complex STFT matrix with shape (n_freqs, n_times).
 
         Raises:
-            ValueError: If the kwargs are not a dictionary
+            ValueError: If the kwargs are not a dictionary or signal is invalid.
+            TypeError: If the window type or length is not supported.
+
+        Notes:
+            - This method returns only positive frequencies (unlike compute_stft which may
+              return full spectrum depending on scipy version).
+            - Window size and overlap are automatically optimized if not provided.
+            - Uses ssqueezepy's STFT implementation which may have different numerical
+              characteristics compared to scipy.
+
+        Examples:
+            ```python
+            # Basic STFT with ssqueezepy
+            freqs, times, Sxx = analyzer.compute_stft_sqpy(signal, fs=50e6)
+            
+            # STFT with custom parameters
+            freqs, times, Sxx = analyzer.compute_stft_sqpy(
+                signal, fs=50e6,
+                nperseg=4096,
+                noverlap=2048
+            )
+            ```
         """
         logger.debug(f"{log_tag('SPECR','SSTFT')} Computing STFT with ssqueezepy.")
 
@@ -319,32 +418,78 @@ class SpectrumAnalysis:
         """
         Compute Continuous Wavelet Transform using ssqueezepy with memory optimization.
 
+        This method computes the CWT of a signal with optional memory optimizations:
+        - Decimation: Reduces time-axis data points by downsampling the signal
+        - Frequency range limiting: Restricts analysis to a specific frequency range
+        - Center frequency mode: Automatically sets frequency range around a center frequency
+
         Args:
-            signal (np.ndarray): Input signal
-            fs (float): Sampling frequency
-            wavelet (str, optional): Wavelet type. Default is "gmw".
-            f_min (float, optional): Minimum frequency (Hz). Default is None.
-            f_max (float, optional): Maximum frequency (Hz). Default is None.
-            f_center (float, optional): Center frequency (Hz). If provided, frequency range
-                will be limited to f_center ± (f_center * f_deviation). Default is None.
+            signal (np.ndarray): Input signal array (1D).
+            fs (float): Sampling frequency in Hz.
+            wavelet (str, optional): Wavelet type. Default is "gmw" (Generalized Morse Wavelet).
+                Other options depend on ssqueezepy support.
+            f_min (float, optional): Minimum frequency in Hz. If None and f_center is None,
+                uses full frequency range. Default is None.
+            f_max (float, optional): Maximum frequency in Hz. If None and f_center is None,
+                uses full frequency range. Default is None.
+            f_center (float, optional): Center frequency in Hz. If provided, frequency range
+                will be automatically set to f_center * (1 ± f_deviation). This overrides
+                f_min and f_max. Default is None.
             f_deviation (float, optional): Frequency deviation factor for f_center mode.
-                Range will be f_center * (1 ± f_deviation). Default is 0.1 (10%).
-            nv (int, optional): Number of voices (wavelets per octave). Default is 32.
-            scales (str, optional): Scale distribution ('log', 'log-piecewise', 'linear' or array). 
-                Default is "log-piecewise".
+                Range will be f_center * (1 ± f_deviation). Default is 0.1 (10% deviation).
+            nv (int, optional): Number of voices (wavelets per octave). Higher values provide
+                better frequency resolution but increase computation time. Default is 32.
+            scales (str, optional): Scale distribution method. Options: 'log', 'log-piecewise',
+                'linear', or a numpy array of scales. Default is "log-piecewise".
             decimation_factor (int, optional): Decimation factor to reduce time axis data points.
-                Signal will be downsampled by this factor before CWT. Default is 1 (no decimation).
-            **kwargs: Additional arguments for ssqueezepy.cwt
+                Signal will be downsampled by this factor using FIR anti-aliasing filter before CWT.
+                This reduces memory usage and computation time. Default is 1 (no decimation).
+                Note: After decimation, fs becomes fs / decimation_factor.
+            **kwargs: Additional arguments passed to ssqueezepy.cwt.
 
         Returns:
-            Tuple[np.ndarray, np.ndarray]: Tuple containing the "frequencies" and "CWT matrix"
-                Note: If decimation_factor > 1, the CWT matrix will have fewer time points.
+            Tuple[np.ndarray, np.ndarray]: 
+                - freqs_cwt (np.ndarray): Array of frequencies in Hz corresponding to each scale.
+                - Wx (np.ndarray): CWT matrix with shape (n_scales, n_times).
+                  If decimation_factor > 1, n_times will be reduced accordingly.
 
         Raises:
-            ValueError: If the wavelet type is not supported
-            ValueError: If the frequency range is not valid
-            ValueError: If the scales are not valid
-            ValueError: If decimation_factor is not a positive integer
+            ValueError: If decimation_factor is not a positive integer.
+            ValueError: If frequency range is invalid (f_min >= f_max or exceeds Nyquist).
+            ValueError: If wavelet type is not supported by ssqueezepy.
+
+        Notes:
+            - When using decimation, the effective sampling frequency becomes fs / decimation_factor.
+            - Frequency ranges are automatically clamped to valid values (0 to Nyquist).
+            - If f_center is provided, it takes precedence over f_min and f_max.
+            - The method uses scipy.signal.decimate for anti-aliasing during decimation.
+
+        Examples:
+            ```python
+            # Basic CWT
+            freqs, Wx = analyzer.compute_cwt(signal, fs=50e6)
+            
+            # CWT with center frequency mode (10% deviation around 15 MHz)
+            freqs, Wx = analyzer.compute_cwt(
+                signal, fs=50e6,
+                f_center=15e6,
+                f_deviation=0.1
+            )
+            
+            # CWT with decimation (reduce time points by factor of 4)
+            freqs, Wx = analyzer.compute_cwt(
+                signal, fs=50e6,
+                decimation_factor=4
+            )
+            
+            # Combined: center frequency + decimation
+            freqs, Wx = analyzer.compute_cwt(
+                signal, fs=50e6,
+                f_center=15e6,
+                f_deviation=0.1,
+                decimation_factor=4
+            )
+            ```
         """
         logger.debug(
             f"{log_tag('SPECR','SCWT')} Computing CWT with ssqueezepy using '{wavelet}' wavelet."
@@ -500,37 +645,81 @@ class SpectrumAnalysis:
         return_idx: bool = False,
     ) -> np.ndarray:
         """
-        Finds the frequency "ridge" in a spectrogram by locating the frequency
-        with the maximum power for each time slice.
+        Find the frequency ridge(s) in a spectrogram using ridge extraction algorithms.
+
+        This method locates the dominant frequency component(s) over time in a time-frequency
+        representation (STFT or CWT). It uses advanced ridge tracking algorithms that consider
+        temporal continuity and penalize sudden frequency jumps.
 
         Args:
-            Zxx (np.ndarray): The complex matrix from the STFT (frequencies x times).
-            f (np.ndarray): The array of sample frequencies or scales.
-            penalty (float, optional): Penalty for ridge extraction, 0.5, 2, 5, 20, 40.
-                Default is 2. (Higher penalty -> reduce odd of a ridge)
-            n_ridges (int, optional): Number of ridges to extract.
-                Default is 1.
-            n_bin (int, optional): Number of bins (> 15 for single, ~4 for multiple).
-                Default is 10.
-            method (str, optional): Method to use for ridge extraction.
-                Default is 'stft'. ('stft' or 'cwt')
+            Zxx (np.ndarray): The complex or magnitude matrix from STFT/CWT with shape
+                (n_frequencies, n_times). Can be complex or real-valued.
+            f (np.ndarray): Array of sample frequencies or scales in Hz (1D array).
+            penalty (float, optional): Penalty factor for ridge extraction. Higher values
+                penalize sudden frequency jumps more strongly. Typical values: 0.5, 2, 5, 20, 40.
+                Default is 2. Higher penalty -> smoother ridges, lower penalty -> more sensitive.
+            n_ridges (int, optional): Number of ridges to extract. Default is 1.
+                For multiple ridges, use smaller n_bin values (~4).
+            n_bin (int, optional): Number of bins for ridge tracking. Larger values provide
+                better frequency resolution but may miss rapid changes. Recommended:
+                - Single ridge: > 15 (default is 15)
+                - Multiple ridges: ~4
+                Default is 15.
+            method (str, optional): Transform method used. Options: 'stft' or 'cwt'.
+                Default is 'stft'.
             library (str, optional): Library to use for ridge extraction.
-                Default is 'MATLAB'. ('ssqueezepy' or 'MATLAB')
-            return_idx (bool, optional): To return the index of the ridges.
-                Default is False. (Return the frequency value only if False)
+                Options: 'ssqueezepy' (uses ssqueezepy.extract_ridges) or 'MATLAB'
+                (uses MATLAB-compatible extract_fridges). Default is 'ssqueezepy'.
+            return_idx (bool, optional): Whether to return frequency indices along with values.
+                If True, returns tuple (freq_ridge, ridge_idxs). If False, returns only
+                freq_ridge. Default is False.
                 
         Returns:
-            np.ndarray | Tuple(np.ndarray, np.ndarray): 
-                A 1D array containing the frequency with the highest power for each time segment.
-                Or, A Tuple of frequency value(s) and index(es) in float64 and int64, respectively.
+            np.ndarray | Tuple[np.ndarray, np.ndarray]: 
+                - If return_idx=False: 1D array of frequencies in Hz for each time point.
+                  Shape: (n_times,) for single ridge, (n_ridges, n_times) for multiple ridges.
+                - If return_idx=True: Tuple of (freq_ridge, ridge_idxs) where:
+                  - freq_ridge: Frequency values in Hz (float64)
+                  - ridge_idxs: Frequency indices (int64)
 
         Raises:
-            ValueError: If the Zxx matrix is not a 2-D array
-            ValueError: If the f array is not a 1-D array
-            ValueError: If the method is not supported
-            ValueError: If the penalty is not a valid number
-            ValueError: If the n_ridges is not a valid number
-            ValueError: If the n_bin is not a valid number
+            ValueError: If Zxx is not a 2-D array.
+            ValueError: If f is not a 1-D array.
+            ValueError: If method is not 'stft' or 'cwt'.
+            ValueError: If library is not 'ssqueezepy' or 'MATLAB'.
+
+        Notes:
+            - The method uses penalty-based ridge tracking to ensure temporal continuity.
+            - For noisy signals, higher penalty values (5-20) work better.
+            - For signals with rapid frequency changes, lower penalty values (0.5-2) are preferred.
+            - Multiple ridges are extracted in order of power/importance.
+
+        Examples:
+            ```python
+            # Find single ridge from STFT
+            freqs, times, Zxx = analyzer.compute_stft(signal, fs)
+            ridge = analyzer.find_freq_ridge(Zxx, freqs, method='stft')
+            
+            # Find multiple ridges with custom parameters
+            ridges = analyzer.find_freq_ridge(
+                Zxx, freqs,
+                n_ridges=3,
+                penalty=5,
+                n_bin=4
+            )
+            
+            # Get ridge with indices
+            ridge, indices = analyzer.find_freq_ridge(
+                Zxx, freqs,
+                return_idx=True
+            )
+            
+            # Use MATLAB-compatible algorithm
+            ridge = analyzer.find_freq_ridge(
+                Zxx, freqs,
+                library='MATLAB'
+            )
+            ```
         """
         logger.debug(f"{log_tag('SPECR','RIDGE')} Finding frequency ridge.")
         if Zxx.ndim != 2:
@@ -562,25 +751,55 @@ class SpectrumAnalysis:
         f_range: Optional[Tuple[float, Optional[float]]] = None
     ) -> float:
         """
-        Finds the center frequency of a signal using FFT.
+        Find the center frequency of a signal using FFT peak detection.
 
-        This method computes the FFT of the signal and identifies the frequency
-        with the highest magnitude, considered as the center frequency. To avoid
-        low-frequency noise, it only searches above a certain threshold.
+        This method computes the FFT of the signal and identifies the frequency with the
+        highest magnitude, which is considered the center (dominant) frequency. To avoid
+        low-frequency noise and DC components, it filters out frequencies below a threshold
+        or uses a custom frequency range.
 
         Args:
-            signal (np.ndarray): The input signal array.
-            fs (float): The sampling frequency of the signal.
-            f_range (Optional[Tuple[float, Optional[float]]]): Optional frequency range 
-                to search (min_f, max_f). If None, uses default threshold 
-                (5% of Nyquist or 5MHz, whichever is smaller). If max_f is None, 
-                uses Nyquist frequency as maximum.
+            signal (np.ndarray): Input signal array (1D).
+            fs (float): Sampling frequency in Hz.
+            f_range (Optional[Tuple[float, Optional[float]]], optional): Custom frequency range
+                to search for the center frequency. Tuple format: (min_f, max_f).
+                - If None: Uses default threshold (5% of Nyquist or 5 MHz, whichever is smaller)
+                  as minimum, and Nyquist frequency as maximum.
+                - If max_f is None: Uses Nyquist frequency as maximum.
+                - If provided: Only searches within the specified range.
+                Default is None.
 
         Returns:
-            float: The estimated center frequency in Hz.
+            float: The estimated center frequency in Hz (frequency with maximum magnitude).
 
         Raises:
-            ValueError: If f_range is invalid or no frequencies found in range.
+            ValueError: If f_range is invalid (min_f >= max_f or out of bounds).
+            ValueError: If no frequencies are found in the specified range.
+            ValueError: If signal is empty or invalid.
+
+        Notes:
+            - The method uses magnitude (not power) for peak detection.
+            - Low frequencies are filtered to avoid DC offset and low-frequency noise.
+            - If multiple peaks exist, returns the one with highest magnitude.
+            - The frequency resolution depends on signal length: df = fs / n_samples.
+
+        Examples:
+            ```python
+            # Find center frequency with default threshold
+            f_center = analyzer.find_center_frequency_fft(signal, fs=50e6)
+            
+            # Find center frequency in specific range (10-20 MHz)
+            f_center = analyzer.find_center_frequency_fft(
+                signal, fs=50e6,
+                f_range=(10e6, 20e6)
+            )
+            
+            # Find center frequency above 5 MHz (up to Nyquist)
+            f_center = analyzer.find_center_frequency_fft(
+                signal, fs=50e6,
+                f_range=(5e6, None)
+            )
+            ```
         """
         logger.debug(f"{log_tag('SPECR','FCENT')} Finding center frequency of signal.")
 
