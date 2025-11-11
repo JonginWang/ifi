@@ -32,13 +32,21 @@ from typing import List, Union
 from collections import defaultdict
 import pandas as pd
 import dask
-
-from ..db_controller.nas_db import NAS_DB
-from ..db_controller.vest_db import VEST_DB
-from . import processing, plots, spectrum, phi2ne
-from ..utils.common import LogManager, FlatShotList, log_tag
-from ..utils import file_io
-from .phi2ne import get_interferometry_params
+try:
+    from ..db_controller.nas_db import NAS_DB
+    from ..db_controller.vest_db import VEST_DB
+    from . import processing, plots, spectrum, phi2ne
+    from ..utils.common import LogManager, FlatShotList, log_tag
+    from ..utils import file_io
+    from .phi2ne import get_interferometry_params
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi.db_controller.nas_db import NAS_DB
+    from ifi.db_controller.vest_db import VEST_DB
+    from ifi.analysis import processing, plots, spectrum, phi2ne
+    from ifi.utils.common import LogManager, FlatShotList, log_tag
+    from ifi.utils import file_io
+    from ifi.analysis.phi2ne import get_interferometry_params
 
 # The LogManager is better to be initialized inside the main() function
 # or at the start of the script logic.
@@ -70,7 +78,7 @@ def load_and_process_file(nas_instance, file_path, args):
 
     # 1. Read single file data
     # Use get_shot_data for better path handling and caching
-    data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
+    data_dict = nas_instance.get_shot_data(str(Path(file_path).name), force_remote=args.force_remote)
     if not data_dict or file_path not in data_dict:
         logging.warning(
             "\n"
