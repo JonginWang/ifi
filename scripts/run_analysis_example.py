@@ -55,6 +55,7 @@ logger = LogManager().get_logger(__name__, level="INFO")
 #   - downsample: Downsample factor for plotting (int, default: 10)
 #   - trigger_time: Trigger time in seconds (float, default: 0.290)
 #   - density: Enable density calculation (bool)
+#   - freq: Filter to specific frequency groups (list of float: [94.0] or [280.0] or [94.0, 280.0])
 #   - vest_fields: VEST DB field IDs to load (list of int)
 #   - baseline: Baseline correction mode ("ip" or "trig")
 #   - color_density_by_amplitude: Color-code density plots by amplitude (bool)
@@ -151,6 +152,26 @@ ANALYSIS_CONFIGS: List[Dict[str, Any]] = [
         "save_data": True,
         "save_plots": True,  # Save plots to see the color-coding
     },
+    {
+        "name": "frequency_filtered_94ghz",
+        "description": "Analysis filtered to 94GHz frequency only",
+        "enabled": False,
+        "query": ["45821"],
+        "stft": True,
+        "density": True,
+        "freq": [94.0],  # Process only 94GHz frequency
+        "save_data": True,
+    },
+    {
+        "name": "frequency_filtered_280ghz",
+        "description": "Analysis filtered to 280GHz frequency only",
+        "enabled": False,
+        "query": ["45821"],
+        "stft": True,
+        "density": True,
+        "freq": [280.0],  # Process only 280GHz frequency
+        "save_data": True,
+    },
 ]
 
 #%%
@@ -218,6 +239,19 @@ def create_analysis_args(config: Dict[str, Any]) -> argparse.Namespace:
 
     # Baseline correction
     args.baseline = config.get("baseline", None)
+
+    # Frequency filtering
+    freq = config.get("freq", None)
+    if freq is not None:
+        # Convert to list if single value
+        if isinstance(freq, (int, float)):
+            args.freq = [float(freq)]
+        elif isinstance(freq, list):
+            args.freq = [float(f) for f in freq]
+        else:
+            args.freq = None
+    else:
+        args.freq = None
 
     # Density plotting options
     args.color_density_by_amplitude = config.get("color_density_by_amplitude", False)

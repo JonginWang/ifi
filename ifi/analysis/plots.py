@@ -817,7 +817,7 @@ class Plotter:
                 Default is False.
             amplitude_colormap (str): Matplotlib colormap name for amplitude coloring.
                 Default is "coolwarm". Options: 'viridis', 'plasma', 'inferno', 'coolwarm',
-                'coolwarm', 'RdYlBu', etc.
+                'RdYlBu', etc.
             amplitude_impedance (float): System impedance in ohms [Ω] for amplitude-to-dB
                 conversion. Default is 50 Ω.
             amplitude_dbm (bool): If True, convert amplitude to dBm [dBm] for color mapping.

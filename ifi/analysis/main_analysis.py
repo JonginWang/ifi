@@ -501,6 +501,24 @@ def run_analysis(
             f"{log_tag('ANALY','RUN')} Frequency groups found: {list(freq_groups.keys())} GHz"
         )
 
+        # Filter frequency groups if --freq option is specified
+        if args.freq is not None:
+            allowed_freqs = set(args.freq)
+            filtered_freq_groups = {
+                freq: info for freq, info in freq_groups.items() 
+                if freq in allowed_freqs
+            }
+            if filtered_freq_groups:
+                freq_groups = filtered_freq_groups
+                logging.info(
+                    f"{log_tag('ANALY','RUN')} Filtered to frequencies: {list(freq_groups.keys())} GHz (requested: {args.freq})"
+                )
+            else:
+                logging.warning(
+                    f"{log_tag('ANALY','RUN')} No files match requested frequencies {args.freq}. "
+                    f"Available frequencies: {list(freq_groups.keys())} GHz. Processing all frequencies."
+                )
+
         # Create frequency-specific combined signals
         freq_combined_signals = {}
         for freq_ghz, group_info in freq_groups.items():
@@ -1193,6 +1211,17 @@ def main():
     # Analysis-specific flags
     parser.add_argument(
         "--density", action="store_true", help="Perform phase and density calculation."
+    )
+    parser.add_argument(
+        "--freq",
+        nargs="+",
+        type=float,
+        choices=[94.0, 280.0],
+        default=None,
+        help="Filter analysis to specific frequency groups. "
+             "Options: 94.0 (for 94GHz), 280.0 (for 280GHz). "
+             "Can specify both: --freq 94.0 280.0. "
+             "If not specified, all frequencies are processed.",
     )
     parser.add_argument(
         "--vest_fields",
