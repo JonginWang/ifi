@@ -57,28 +57,33 @@ if "%~1"=="--freq" (
     shift
     :collect_freq
     if "%~1"=="" goto :parse_args
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :parse_args
     REM Check for frequency values (accept both 94/280 and 94.0/280.0)
-    if "%~1"=="94" (
+    if "!ARG_VAL!"=="94" (
         set "FREQ=!FREQ! 94.0"
         shift
         goto :collect_freq
     )
-    if "%~1"=="280" (
+    if "!ARG_VAL!"=="280" (
         set "FREQ=!FREQ! 280.0"
         shift
         goto :collect_freq
     )
-    if "%~1"=="94.0" (
+    if "!ARG_VAL!"=="94.0" (
         set "FREQ=!FREQ! 94.0"
         shift
         goto :collect_freq
     )
-    if "%~1"=="280.0" (
+    if "!ARG_VAL!"=="280.0" (
         set "FREQ=!FREQ! 280.0"
         shift
         goto :collect_freq
     )
-    REM If not a frequency value, continue parsing
+    REM If not a frequency value, stop collecting and continue parsing
+    set "ARG_VAL="
     goto :parse_args
 )
 if "%~1"=="--scheduler" (
@@ -212,7 +217,11 @@ echo ===========================================================================
 echo Query: !QUERY!
 echo Mode: !MODE!
 if not "!FREQ!"=="" (
-    echo Frequency filter: !FREQ!
+    if not "!FREQ!"=="--freq" (
+        echo Frequency filter: !FREQ!
+    ) else (
+        echo WARNING: --freq specified but no frequency values provided
+    )
 )
 echo Scheduler: !SCHEDULER!
 echo Additional options: !ARGS!
@@ -220,12 +229,20 @@ echo ===========================================================================
 echo.
 
 REM Build command based on mode
+REM Only include --freq if frequency values were collected
+set "FREQ_ARG="
+if not "!FREQ!"=="" (
+    if not "!FREQ!"=="--freq" (
+        set "FREQ_ARG=!FREQ!"
+    )
+)
+
 if "!MODE!"=="signal-only" (
     REM Signal only: STFT analysis, no density, save data
-    python -m ifi.analysis.main_analysis !QUERY! --stft --save_data !FREQ! --scheduler !SCHEDULER! !ARGS!
+    python -m ifi.analysis.main_analysis !QUERY! --stft --save_data !FREQ_ARG! --scheduler !SCHEDULER! !ARGS!
 ) else if "!MODE!"=="density" (
     REM Full analysis: STFT + density, save data
-    python -m ifi.analysis.main_analysis !QUERY! --stft --density --save_data !FREQ! --scheduler !SCHEDULER! !ARGS!
+    python -m ifi.analysis.main_analysis !QUERY! --stft --density --save_data !FREQ_ARG! --scheduler !SCHEDULER! !ARGS!
 ) else (
     echo ERROR: Unknown mode: !MODE!
     exit /b 1

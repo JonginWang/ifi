@@ -171,31 +171,43 @@ if "%~1"=="--amplitude-impedance" (
     goto :parse_args
 )
 if "%~1"=="--freq" (
-    set "ARGS=!ARGS! --freq"
+    set "FREQ_TEMP=--freq"
     shift
     :collect_freq_analysis
-    if "%~1"=="" goto :parse_args
+    if "%~1"=="" goto :add_freq_to_args
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    echo "%~1" | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :add_freq_to_args
+    REM Check for frequency values (accept both 94/280 and 94.0/280.0)
     if "%~1"=="94" (
-        set "ARGS=!ARGS! 94.0"
+        set "FREQ_TEMP=!FREQ_TEMP! 94.0"
         shift
         goto :collect_freq_analysis
     )
     if "%~1"=="280" (
-        set "ARGS=!ARGS! 280.0"
+        set "FREQ_TEMP=!FREQ_TEMP! 280.0"
         shift
         goto :collect_freq_analysis
     )
     if "%~1"=="94.0" (
-        set "ARGS=!ARGS! 94.0"
+        set "FREQ_TEMP=!FREQ_TEMP! 94.0"
         shift
         goto :collect_freq_analysis
     )
     if "%~1"=="280.0" (
-        set "ARGS=!ARGS! 280.0"
+        set "FREQ_TEMP=!FREQ_TEMP! 280.0"
         shift
         goto :collect_freq_analysis
     )
-    REM If not a frequency value, continue parsing
+    REM If not a frequency value, stop collecting
+    :add_freq_to_args
+    REM Only add --freq if frequency values were collected
+    if not "!FREQ_TEMP!"=="" (
+        if not "!FREQ_TEMP!"=="--freq" (
+            set "ARGS=!ARGS! !FREQ_TEMP!"
+        )
+    )
+    set "FREQ_TEMP="
     goto :parse_args
 )
 if "%~1"=="--help" (
