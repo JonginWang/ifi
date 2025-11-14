@@ -32,6 +32,7 @@ from typing import List, Union
 from collections import defaultdict
 import pandas as pd
 import dask
+import numpy as np
 try:
     from ..db_controller.nas_db import NAS_DB
     from ..db_controller.vest_db import VEST_DB
@@ -226,6 +227,69 @@ def load_and_process_file(nas_instance, file_path, args):
 
     # Return a tuple of the processed data and any analysis results
     return file_path, df_processed, stft_result, cwt_result
+
+
+def _extract_probe_amplitudes_from_signals(
+    density_df: pd.DataFrame,
+    signals_df: pd.DataFrame,
+    freq_ghz: float,
+) -> dict[str, np.ndarray]:
+    """
+    Extract probe signal amplitudes from signals DataFrame based on density column names.
+    
+    This function maps density column names (e.g., 'ne_CH1_45821_056') to signal column names
+    (e.g., 'CH1_45821_056') and extracts the corresponding probe signals from the signals DataFrame.
+    This avoids storing probe signals separately, saving memory.
+    
+    Args:
+        density_df: DataFrame with density columns (e.g., 'ne_CH1_45821_056')
+        signals_df: DataFrame with signal columns (e.g., 'CH1_45821_056')
+        freq_ghz: Frequency in GHz (used to determine naming convention)
+    
+    Returns:
+        Dictionary mapping density column names to probe signal amplitude arrays
+    """
+    import numpy as np
+    
+    probe_amplitudes = {}
+    
+    if density_df.empty or signals_df.empty:
+        return probe_amplitudes
+    
+    for density_col in density_df.columns:
+        # Extract probe column name from density column name
+        # Format: ne_{probe_col}_{basename} -> {probe_col}_{file_suffix}
+        if not density_col.startswith("ne_"):
+            continue
+        
+        # Remove 'ne_' prefix
+        remaining = density_col[3:]  # Remove 'ne_'
+        
+        # For 280GHz (single file), signal column is just the probe name (e.g., 'CH1')
+        # For other frequencies, signal column includes file suffix (e.g., 'CH1_45821_056')
+        if freq_ghz == 280.0:
+            # Single file case: ne_CH1_45821_ALL -> CH1
+            # Extract probe name (first part before underscore after 'ne_')
+            probe_col = remaining.split("_")[0]
+            signal_col = probe_col
+        else:
+            # Multi-file case: ne_CH1_45821_056 -> CH1_45821_056
+            # The remaining part after 'ne_' is the signal column name
+            signal_col = remaining
+        
+        # Try to find the signal column in signals_df
+        if signal_col in signals_df.columns:
+            signal_data = signals_df[signal_col].dropna()
+            # Reindex to match density_df index (in case of time alignment issues)
+            if len(signal_data) > 0:
+                # Align signal data with density data by index
+                aligned_signal = signal_data.reindex(
+                    density_df.index, method="nearest", limit=1
+                )
+                # Calculate amplitude (absolute value)
+                probe_amplitudes[density_col] = np.abs(aligned_signal.values)
+    
+    return probe_amplitudes
 
 
 def run_analysis(
@@ -564,9 +628,6 @@ def run_analysis(
         logging.debug(f"{log_tag('ANALY','RUN')} END DEBUG")
 
         if args.density:
-            # Store probe amplitudes for color-coding (organized by frequency group)
-            probe_amplitudes_by_freq = {}  # dict[freq_ghz, dict[density_col_name, amplitude_array]]
-            
             # Process each frequency group separately for density calculation
             # Create frequency-specific density DataFrames
             for freq_ghz, freq_data in freq_combined_signals.items():
@@ -574,9 +635,6 @@ def run_analysis(
 
                 # Initialize density DataFrame for this frequency
                 freq_density_data = pd.DataFrame(index=freq_data.index)
-                
-                # Initialize probe amplitudes dict for this frequency
-                probe_amplitudes = {}
 
                 # Get files for this frequency
                 freq_files = freq_groups[freq_ghz]["files"]
@@ -713,9 +771,8 @@ def run_analysis(
                                             phase, analysis_params=params
                                         )
                                     )
-                                    # Store probe signal amplitude for color-coding
-                                    if args.color_density_by_amplitude:
-                                        probe_amplitudes[density_col_name] = probe_signal
+                                    # Note: probe_signal is not stored separately to save memory
+                                    # It can be retrieved from combined_signals when needed for plotting
                                     logging.info(
                                         f"{log_tag('ANALY','RUN')} CDM: Calculated density for {probe_col} in {basename}"
                                     )
@@ -756,9 +813,8 @@ def run_analysis(
                                                     phase, analysis_params=params
                                                 )
                                             )
-                                            # Store probe signal amplitude for color-coding
-                                            if args.color_density_by_amplitude:
-                                                probe_amplitudes[density_col_name] = probe_signal
+                                            # Note: probe_signal is not stored separately to save memory
+                                            # It can be retrieved from combined_signals when needed for plotting
                                             logging.info(
                                                 f"{log_tag('ANALY','RUN')} FPGA: Calculated density for {probe_col} in {basename}"
                                             )
@@ -853,9 +909,8 @@ def run_analysis(
                     # Store in frequency-keyed dict
                     density_data[str(freq_ghz)] = freq_density_data
                     
-                    # Store probe amplitudes for this frequency (if enabled)
-                    if args.color_density_by_amplitude and probe_amplitudes:
-                        probe_amplitudes_by_freq[str(freq_ghz)] = probe_amplitudes
+                    # Note: probe_amplitudes are not stored separately to save memory
+                    # They can be retrieved from combined_signals when needed for plotting
                     
                     logging.info(
                         f"{log_tag('ANALY','RUN')} Stored density data for {freq_ghz} GHz with {len(freq_density_data.columns)} columns"
@@ -908,16 +963,14 @@ def run_analysis(
                     plot_density = density_data.get(str(main_freq), pd.DataFrame()) if isinstance(density_data, dict) else density_data
                     
                     # Prepare probe amplitudes for color-coding (if enabled)
+                    # Extract probe signals from combined_signals instead of storing separately
                     plot_probe_amplitudes = None
                     if args.color_density_by_amplitude and isinstance(density_data, dict):
-                        # Get probe amplitudes for the main frequency group
-                        main_freq_amplitudes = probe_amplitudes_by_freq.get(str(main_freq), {})
-                        if main_freq_amplitudes and isinstance(plot_density, pd.DataFrame):
-                            # Match density column names to probe amplitudes
-                            plot_probe_amplitudes = {}
-                            for col_name in plot_density.columns:
-                                if col_name in main_freq_amplitudes:
-                                    plot_probe_amplitudes[col_name] = main_freq_amplitudes[col_name]
+                        plot_probe_amplitudes = _extract_probe_amplitudes_from_signals(
+                            plot_density,
+                            combined_signals.get(str(main_freq), pd.DataFrame()),
+                            main_freq
+                        )
                     
                     plots.plot_analysis_overview(
                         shot_num,

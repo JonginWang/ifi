@@ -1525,13 +1525,40 @@ def plot_analysis_overview(
 
                 # Prepare probe amplitudes for this density DataFrame
                 plot_probe_amp = None
-                if color_density_by_amplitude and probe_amplitudes is not None:
-                    # Match density column names to probe amplitudes
-                    if isinstance(df, pd.DataFrame):
-                        plot_probe_amp = {}
-                        for col_name in df.columns:
-                            if col_name in probe_amplitudes:
-                                plot_probe_amp[col_name] = probe_amplitudes[col_name]
+                if color_density_by_amplitude:
+                    # If probe_amplitudes is provided, use it directly
+                    # Otherwise, try to extract from signals_dict
+                    if probe_amplitudes is not None:
+                        # Match density column names to probe amplitudes
+                        if isinstance(df, pd.DataFrame):
+                            plot_probe_amp = {}
+                            for col_name in df.columns:
+                                if col_name in probe_amplitudes:
+                                    plot_probe_amp[col_name] = probe_amplitudes[col_name]
+                    else:
+                        # Try to extract from signals_dict if available
+                        # This allows loading from HDF5 files where probe_amplitudes weren't stored
+                        if signals_dict and isinstance(df, pd.DataFrame):
+                            # Find the corresponding signals DataFrame
+                            # signals_dict format: {name: DataFrame}
+                            for sig_name, sig_df in signals_dict.items():
+                                if sig_df is not None and not sig_df.empty:
+                                    # Import helper function from main_analysis
+                                    try:
+                                        from ifi.analysis.main_analysis import _extract_probe_amplitudes_from_signals
+                                        # Try to infer frequency from density column names
+                                        # Default to 94.0 if can't determine
+                                        freq_ghz = 94.0
+                                        if any("_ALL" in col for col in df.columns):
+                                            freq_ghz = 280.0
+                                        plot_probe_amp = _extract_probe_amplitudes_from_signals(
+                                            df, sig_df, freq_ghz
+                                        )
+                                        if plot_probe_amp:
+                                            break
+                                    except ImportError:
+                                        # If import fails, skip automatic extraction
+                                        pass
 
                 plotter.plot_density(
                     df,
