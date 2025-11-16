@@ -79,12 +79,12 @@ def load_and_process_file(nas_instance, file_path, args):
     # This avoids issues with network paths (e.g., //147.47.31.91/vest/...)
     # by using only the filename as the dictionary key
     file_basename = Path(file_path).name
-    logging.info(f"{log_tag('ANALY','LOAD')} Starting processing for: {file_basename}")
+    logging.info(f"{log_tag('ANALY','LOAD')} Starting processing for: {file_basename} @{file_path}")
 
     # 1. Read single file data
     # Use basename instead of full path to avoid network path issues
     # get_shot_data will use basename as the dictionary key
-    data_dict = nas_instance.get_shot_data(file_basename, force_remote=args.force_remote)
+    data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
     
     # Check with basename (consistent with get_shot_data return keys)
     if not data_dict or file_basename not in data_dict:
@@ -92,7 +92,7 @@ def load_and_process_file(nas_instance, file_path, args):
             "\n"
             + "=" * 80
             + "\n"
-            + f"  Failed to read {file_basename}. Skipping.  ".center(80, "!")
+            + f"  Failed to read {file_basename} at {file_path}. Skipping.  ".center(80, "!")
             + "\n"
             + "=" * 80
             + "\n"
