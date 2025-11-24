@@ -75,7 +75,16 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
 
     # 3. Drop rows with NaN values
     initial_rows = len(refined_df)
-    refined_df.dropna(inplace=True)
+    if refined_df.shape[1] > 4:
+        col_to_drop = []
+        for col in refined_df.columns[4:]:
+            if refined_df[col].isna().sum() > initial_rows//2:
+                col_to_drop.append(col)
+        refined_df.drop(columns=col_to_drop, inplace=True)
+        logger.info(
+            f"{log_tag('PROCS', 'REFIN')} Dropped {col_to_drop} with more than half of its rows are NaN. Shape: {refined_df.shape}."
+        )
+    refined_df.dropna(axis=1,inplace=True)
     final_rows = len(refined_df)
 
     if initial_rows > final_rows:

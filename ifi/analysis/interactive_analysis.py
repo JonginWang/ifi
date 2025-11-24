@@ -68,6 +68,7 @@ def create_mock_args():
     args = Namespace(
         # --- Essential Arguments ---
         query=["45821"],  # Shot number or pattern
+        freq=[94.0, 280.0],
         density=True,
         plot=False,  # Disable interactive plotting for testing (can enable later)
         overview_plot=False,
