@@ -429,15 +429,16 @@ class NAS_DB:
             str(self.nas_mount) if self.access_mode == "local" else str(self.nas_path)
         )
 
-        # --- Handle full paths directly ---
-        if isinstance(query, str) and (os.path.sep in query or "/" in query):
-            # A single full path is passed
-            return [query] if Path(query).exists() else []
-        if isinstance(query, list) and all(
-            isinstance(q, str) and (os.path.sep in q or "/" in q) for q in query
-        ):
-            # A list of full paths is passed
-            return [q for q in query if Path(q).exists()]
+        # --- Handle full paths directly for local access ---
+        if self.access_mode == "local":
+            if isinstance(query, str) and (os.path.sep in query[0] or "/" in query[0]):
+                # A single full path is passed
+                return [query] if Path(query).exists() else []
+            if isinstance(query, list) and all(
+                isinstance(q, str) and (os.path.sep in q[0] or "/" in q[0]) for q in query
+            ):
+                # A list of full paths is passed
+                return [q for q in query if Path(q).exists()]
 
         # --- Build search patterns for shot numbers and wildcards ---
         query_items = query if isinstance(query, list) else [query]
