@@ -583,13 +583,38 @@ class NAS_DB:
             if not self.connect():
                 raise ConnectionError(f"{log_tag('NASDB','QSHOT')} Failed to establish connection to NAS.")
 
-        # --- Find all target files on the NAS ---
-        target_files = self.find_files(
-            query, data_folders, add_path, force_remote, **kwargs
-        )
-        if not target_files:
-            self.logger.warning(f"{log_tag('NASDB','QSHOT')} No files found on NAS for query: {query}")
-            return {}
+        def _looks_like_path(value: str) -> bool:
+            if not isinstance(value, str):
+                return False
+            has_sep = ("\\" in value) or ("/" in value)
+            has_ext = any(value.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS)
+            return has_sep or has_ext
+
+        query_is_path = False
+        if isinstance(query, str) and _looks_like_path(query):
+            query_is_path = True
+        elif isinstance(query, list) and query and all(_looks_like_path(q) for q in query):
+            query_is_path = True
+
+        if query_is_path:
+            if isinstance(query, list):
+                _check_target_files = query
+            else:
+                _check_target_files = [query]
+            target_files = self.find_files(
+                _check_target_files, data_folders, add_path, force_remote, **kwargs
+            )
+            self.logger.info(
+                f"{log_tag('NASDB','QSHOT')} Using provided file path(s) directly: {target_files}"
+            )
+        else:
+            # --- Find all target files on the NAS ---
+            target_files = self.find_files(
+                query, data_folders, add_path, force_remote, **kwargs
+            )
+            if not target_files:
+                self.logger.warning(f"{log_tag('NASDB','QSHOT')} No files found on NAS for query: {query}")
+                return {}
 
         data_dict: Dict[str, pd.DataFrame] = {}
         files_to_fetch = []
