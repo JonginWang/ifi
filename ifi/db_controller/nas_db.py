@@ -297,8 +297,10 @@ class NAS_DB:
         conn_cfg = config["CONNECTION_SETTINGS"]
         self.ssh_max_retries = conn_cfg.getint("ssh_max_retries", 3)
         self.ssh_connect_timeout = conn_cfg.getfloat("ssh_connect_timeout", 10.0)
-        # Maximum number of concurrent SSH commands (default: 3)
-        self.max_concurrent_ssh_commands = conn_cfg.getint("max_concurrent_ssh_commands", 5)
+        # Maximum number of concurrent SSH commands (default: 2)
+        # Lower values reduce SSH channel conflicts but may slow down parallel processing
+        # Recommended: 1-2 for single SFTP channel, 3-5 for multiple channels
+        self.max_concurrent_ssh_commands = conn_cfg.getint("max_concurrent_ssh_commands", 2)
 
         # Local Cache Config
         if config.has_section("LOCAL_CACHE"):
@@ -317,7 +319,12 @@ class NAS_DB:
         self._is_connected = False
         self.ssh_lock = threading.Lock()  # Lock for SSH connection management
         # Semaphore to limit concurrent SSH command executions
+        # When set to 1, acts like a Mutex, ensuring sequential execution
+        # Higher values allow parallelism but may cause SSH channel conflicts
         self.ssh_command_semaphore = threading.Semaphore(self.max_concurrent_ssh_commands)
+        # Optional: Mutex for strict sequential execution when needed
+        # This can be used in addition to semaphore for critical sections
+        self.ssh_operation_lock = threading.Lock() if self.max_concurrent_ssh_commands == 1 else None
 
     def _ensure_remote_dir_exists(self, remote_path: str, use_semaphore: bool = True):
         """
@@ -617,10 +624,6 @@ class NAS_DB:
         ]
         search_paths_str = ";".join(search_paths)
 
-        # Ensure the remote temp directory exists before trying to write to it
-        # Note: use_semaphore=True because this is called before the semaphore block
-        self._ensure_remote_dir_exists(self.remote_temp_dir, use_semaphore=True)
-
         # Generate unique filename to avoid collisions in parallel execution
         script_filename = _generate_unique_script_name(f"list_{int(time.time())}")
         remote_script_path = os.path.join(
@@ -630,24 +633,47 @@ class NAS_DB:
         # Use semaphore to limit concurrent SSH command executions
         # This allows up to max_concurrent_ssh_commands commands to run simultaneously
         # while preventing too many concurrent connections that could cause issues
-        with self.ssh_command_semaphore:
-            try:
-                with self.sftp_client.open(remote_script_path, "w") as f:
-                    f.write(REMOTE_LIST_SCRIPT)
-            except Exception as e:
-                self.logger.error(f"{log_tag('NASDB','QFILE')} Failed to write remote list script: {e}")
-                return []
+        # Optional mutex lock ensures strict sequential execution queue when max_concurrent_ssh_commands == 1
+        # When semaphore value is 1, it acts like a mutex, creating a strict queue
+        mutex_context = self.ssh_operation_lock if self.ssh_operation_lock else nullcontext()
+        with mutex_context:
+            self.logger.debug(
+                f"{log_tag('NASDB','QFILE')} Waiting for SSH operation queue (max concurrent: {self.max_concurrent_ssh_commands})"
+            )
+            with self.ssh_command_semaphore:
+                self.logger.debug(
+                    f"{log_tag('NASDB','QFILE')} SSH semaphore acquired. Starting remote file search for patterns: {patterns}"
+                )
+                # Ensure the remote temp directory exists before trying to write to it
+                # Note: use_semaphore=False because we're already in a semaphore block
+                self._ensure_remote_dir_exists(self.remote_temp_dir, use_semaphore=False)
+                try:
+                    with self.sftp_client.open(remote_script_path, "w") as f:
+                        f.write(REMOTE_LIST_SCRIPT)
+                except Exception as e:
+                    self.logger.error(f"{log_tag('NASDB','QFILE')} Failed to write remote list script: {e}")
+                    return []
 
-            cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
-        
-            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
-            files = stdout.read().decode("utf-8").strip().splitlines()
-            err_output = stderr.read().decode("utf-8", errors="ignore").strip()
+                cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
+                
+                self.logger.debug(
+                    f"{log_tag('NASDB','QFILE')} Executing remote command: python script"
+                )
+                stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+                
+                self.logger.debug(
+                    f"{log_tag('NASDB','QFILE')} Reading command output..."
+                )
+                files = stdout.read().decode("utf-8").strip().splitlines()
+                err_output = stderr.read().decode("utf-8", errors="ignore").strip()
 
-            if err_output:
-                self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
+                if err_output:
+                    self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
 
-            return files
+                self.logger.debug(
+                    f"{log_tag('NASDB','QFILE')} SSH semaphore released. Found {len(files)} files."
+                )
+                return files
 
     def _get_files_total_size(self, file_list: List[str]) -> int:
         """Calculates the total size of a list of files in bytes."""
@@ -1618,10 +1644,6 @@ class NAS_DB:
         """
         self.logger.info(f"{log_tag('NASDB','QTOPR')} Reading top {lines} lines from remote file...")
 
-        # 1. Write the head script to a remote temp file
-        # Note: use_semaphore=False because this method is already called within a semaphore block
-        # when invoked from _read_scope_csv, or will use its own semaphore when called directly
-        self._ensure_remote_dir_exists(self.remote_temp_dir, use_semaphore=use_semaphore)
         # Generate unique filename to avoid collisions in parallel execution
         script_filename = _generate_unique_script_name(f"head_{int(time.time())}")
         remote_script_path = os.path.join(
@@ -1634,6 +1656,10 @@ class NAS_DB:
         # However, if already called within a semaphore block, skip to avoid deadlock
         semaphore_context = self.ssh_command_semaphore if use_semaphore else nullcontext()
         with semaphore_context:
+            # 1. Write the head script to a remote temp file
+            # Ensure the remote temp directory exists before trying to write to it
+            # Note: use_semaphore=False because we're already in a semaphore block
+            self._ensure_remote_dir_exists(self.remote_temp_dir, use_semaphore=False)
 
             try:
                 with self.sftp_client.open(remote_script_path, "w") as f:
