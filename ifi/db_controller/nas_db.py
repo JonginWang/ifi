@@ -32,6 +32,7 @@ Usage Example:
 """
 
 from pathlib import Path
+import logging
 import configparser
 import os
 import time
@@ -100,6 +101,70 @@ if __name__ == "__main__":
     lines_to_read = int(sys.argv[2])
     get_top_lines(file_path, lines_to_read)
 """
+
+
+## Helper functions
+def _is_drive_or_unc_path(path_str: str) -> bool:
+    """Check if a string looks like a drive or UNC path."""
+    if not isinstance(path_str, str):
+        return False
+    # Check for drive path: A:\ or A:/
+    if re.match(r"^[A-Z]:[/\\]", path_str, re.IGNORECASE):
+        return True
+    # Check for UNC path: \\server\share or //server/share
+    if path_str.startswith("\\\\") or path_str.startswith("//"):
+        return True
+    return False
+
+
+def _extract_filename_from_path(path_str: str) -> str:
+    """Extract filename (with pattern) from drive/UNC path."""
+    if not _is_drive_or_unc_path(path_str):
+        return path_str
+    
+    # Normalize path separators
+    normalized = path_str.replace("\\", "/")
+    
+    # Remove drive letter prefix (e.g., "Z:/" or "Z:\")
+    normalized = re.sub(r"^[A-Z]:/", "", normalized, flags=re.IGNORECASE)
+    
+    # Remove UNC prefix (e.g., "//server/share/" or "\\server\share\")
+    # Keep only the relative path after the share name
+    if normalized.startswith("//"):
+        # Find the third slash (after //server/share/)
+        parts = normalized.split("/")
+        if len(parts) >= 4:
+            # Reconstruct from the 4th part onwards (skip //server/share)
+            normalized = "/".join(parts[3:])
+        else:
+            # If no path after share, return basename
+            normalized = os.path.basename(normalized)
+    
+    # Extract just the filename (last component)
+    filename = os.path.basename(normalized)
+    
+    # If filename is empty or just a folder name, return the original
+    if not filename or filename == normalized:
+        return path_str
+    
+    logging.debug(
+        f"{log_tag('NASDB','QFILE')} Extracted filename '{filename}' from path '{path_str}'"
+    )
+    return filename
+
+
+def _looks_like_path(value: str) -> bool:
+    """Check if a value looks like a file path."""
+    if not isinstance(value, str):
+        return False
+    # Check for drive/UNC path
+    if _is_drive_or_unc_path(value):
+        return True
+    # Check for path separators
+    has_sep = ("\\" in value) or ("/" in value)
+    # Check for file extension
+    has_ext = any(value.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS)
+    return has_sep or has_ext
 
 
 class NAS_DB:
@@ -429,53 +494,6 @@ class NAS_DB:
             str(self.nas_mount) if self.access_mode == "local" else str(self.nas_path)
         )
 
-        def _is_drive_or_unc_path(path_str: str) -> bool:
-            """Check if a string looks like a drive or UNC path."""
-            if not isinstance(path_str, str):
-                return False
-            # Check for drive path: A:\ or A:/
-            if re.match(r"^[A-Z]:[/\\]", path_str, re.IGNORECASE):
-                return True
-            # Check for UNC path: \\server\share or //server/share
-            if path_str.startswith("\\\\") or path_str.startswith("//"):
-                return True
-            return False
-
-        def _extract_filename_from_path(path_str: str) -> str:
-            """Extract filename (with pattern) from drive/UNC path."""
-            if not _is_drive_or_unc_path(path_str):
-                return path_str
-            
-            # Normalize path separators
-            normalized = path_str.replace("\\", "/")
-            
-            # Remove drive letter prefix (e.g., "Z:/" or "Z:\")
-            normalized = re.sub(r"^[A-Z]:/", "", normalized, flags=re.IGNORECASE)
-            
-            # Remove UNC prefix (e.g., "//server/share/" or "\\server\share\")
-            # Keep only the relative path after the share name
-            if normalized.startswith("//"):
-                # Find the third slash (after //server/share/)
-                parts = normalized.split("/")
-                if len(parts) >= 4:
-                    # Reconstruct from the 4th part onwards (skip //server/share)
-                    normalized = "/".join(parts[3:])
-                else:
-                    # If no path after share, return basename
-                    normalized = os.path.basename(normalized)
-            
-            # Extract just the filename (last component)
-            filename = os.path.basename(normalized)
-            
-            # If filename is empty or just a folder name, return the original
-            if not filename or filename == normalized:
-                return path_str
-            
-            self.logger.debug(
-                f"{log_tag('NASDB','QFILE')} Extracted filename '{filename}' from path '{path_str}'"
-            )
-            return filename
-
         # --- Handle full paths directly ---
         # Check if query contains drive/UNC paths
         query_items = query if isinstance(query, list) else [query]
@@ -651,31 +669,6 @@ class NAS_DB:
             if not self.connect():
                 raise ConnectionError(f"{log_tag('NASDB','QSHOT')} Failed to establish connection to NAS.")
 
-        def _is_drive_or_unc_path(path_str: str) -> bool:
-            """Check if a string looks like a drive or UNC path."""
-            if not isinstance(path_str, str):
-                return False
-            # Check for drive path: A:\ or A:/
-            if re.match(r"^[A-Z]:[/\\]", path_str, re.IGNORECASE):
-                return True
-            # Check for UNC path: \\server\share or //server/share
-            if path_str.startswith("\\\\") or path_str.startswith("//"):
-                return True
-            return False
-
-        def _looks_like_path(value: str) -> bool:
-            """Check if a value looks like a file path."""
-            if not isinstance(value, str):
-                return False
-            # Check for drive/UNC path
-            if _is_drive_or_unc_path(value):
-                return True
-            # Check for path separators
-            has_sep = ("\\" in value) or ("/" in value)
-            # Check for file extension
-            has_ext = any(value.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS)
-            return has_sep or has_ext
-
         query_is_path = False
         if isinstance(query, str) and _looks_like_path(query):
             query_is_path = True
@@ -713,7 +706,7 @@ class NAS_DB:
         else:
             # --- Check cache for each file individually ---
             for file_path in target_files:
-                basename = Path(file_path).name
+                basename = _extract_filename_from_path(file_path)
                 # Try to extract shot number from filename (e.g., "45821_056.csv" -> "45821")
                 match = re.match(r"(\d+)", basename)
                 shot_num_for_cache = int(match.group(1)) if match else None
