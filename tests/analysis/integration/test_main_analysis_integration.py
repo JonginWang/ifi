@@ -830,7 +830,7 @@ class TestDaskParallelProcessing:
         results_threads = dask.compute(*tasks_threads, scheduler="threads")
         time_threads = time.time() - start_time
         
-        # Test single-threaded scheduler
+        # Test scheduler
         tasks_single = [simulate_post_processing(i, processing_time) for i in range(num_files)]
         start_time = time.time()
         results_single = dask.compute(*tasks_single, scheduler="threads")
@@ -898,7 +898,7 @@ class TestMainAnalysisIntegration:
         mock_args.vest_fields = []
         mock_args.baseline = None
         mock_args.save_data = True
-        mock_args.scheduler = "single-threaded"
+        mock_args.scheduler = "threads"
         
         # Debug: Print directory structure before running analysis
         print(f"\n=== DEBUG: Directory structure before analysis ===")
