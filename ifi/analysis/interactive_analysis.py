@@ -101,7 +101,7 @@ def create_mock_args():
         save_plots=False,
         save_data=True,  # Enable data saving to test HDF5 output
         # --- Performance Arguments ---
-        scheduler="single-threaded",  # Use 'single-threaded' for easier debugging
+        scheduler="threads",  # Use 'single-threaded' for easier debugging
     )
     return args
 
