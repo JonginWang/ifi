@@ -45,6 +45,7 @@ import h5py
 import re
 import tempfile
 import threading
+import uuid
 try:
     from ..utils.common import LogManager, ensure_str_path, log_tag
 except ImportError as e:
@@ -104,6 +105,22 @@ if __name__ == "__main__":
 
 
 ## Helper functions
+def _generate_unique_script_name(prefix: str = "script") -> str:
+    """
+    Generate a unique filename for remote scripts to avoid collisions in parallel execution.
+    
+    Uses UUID to ensure uniqueness across processes and threads.
+    
+    Args:
+        prefix: Prefix for the filename (e.g., "list", "head")
+        
+    Returns:
+        Unique filename string (e.g., "list_a1b2c3d4e5f6.py")
+    """
+    unique_id = uuid.uuid4().hex[:12]  # 12-character hex string
+    return f"{prefix}_{unique_id}.py"
+
+
 def _is_drive_or_unc_path(path_str: str) -> bool:
     """Check if a string looks like a drive or UNC path."""
     if not isinstance(path_str, str):
@@ -590,8 +607,10 @@ class NAS_DB:
         # Ensure the remote temp directory exists before trying to write to it
         self._ensure_remote_dir_exists(self.remote_temp_dir)
 
+        # Generate unique filename to avoid collisions in parallel execution
+        script_filename = _generate_unique_script_name(f"list_{int(time.time())}")
         remote_script_path = os.path.join(
-            self.remote_temp_dir, f"list_{int(time.time())}.py"
+            self.remote_temp_dir, script_filename
         ).replace("\\", "/")
 
         try:
@@ -1574,8 +1593,10 @@ class NAS_DB:
 
         # 1. Write the head script to a remote temp file
         self._ensure_remote_dir_exists(self.remote_temp_dir)
+        # Generate unique filename to avoid collisions in parallel execution
+        script_filename = _generate_unique_script_name(f"head_{int(time.time())}")
         remote_script_path = os.path.join(
-            self.remote_temp_dir, f"head_{int(time.time())}.py"
+            self.remote_temp_dir, script_filename
         ).replace("\\", "/")
         try:
             with self.sftp_client.open(remote_script_path, "w") as f:
