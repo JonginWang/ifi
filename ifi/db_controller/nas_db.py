@@ -429,21 +429,88 @@ class NAS_DB:
             str(self.nas_mount) if self.access_mode == "local" else str(self.nas_path)
         )
 
-        # --- Handle full paths directly for local access ---
-        if self.access_mode == "local":
-            if isinstance(query, str) and (os.path.sep in query[0] or "/" in query[0]):
-                # A single full path is passed
-                return [query] if Path(query).exists() else []
-            if isinstance(query, list) and all(
-                isinstance(q, str) and (os.path.sep in q[0] or "/" in q[0]) for q in query
-            ):
-                # A list of full paths is passed
-                return [q for q in query if Path(q).exists()]
+        def _is_drive_or_unc_path(path_str: str) -> bool:
+            """Check if a string looks like a drive or UNC path."""
+            if not isinstance(path_str, str):
+                return False
+            # Check for drive path: A:\ or A:/
+            if re.match(r"^[A-Z]:[/\\]", path_str, re.IGNORECASE):
+                return True
+            # Check for UNC path: \\server\share or //server/share
+            if path_str.startswith("\\\\") or path_str.startswith("//"):
+                return True
+            return False
+
+        def _extract_filename_from_path(path_str: str) -> str:
+            """Extract filename (with pattern) from drive/UNC path."""
+            if not _is_drive_or_unc_path(path_str):
+                return path_str
+            
+            # Normalize path separators
+            normalized = path_str.replace("\\", "/")
+            
+            # Remove drive letter prefix (e.g., "Z:/" or "Z:\")
+            normalized = re.sub(r"^[A-Z]:/", "", normalized, flags=re.IGNORECASE)
+            
+            # Remove UNC prefix (e.g., "//server/share/" or "\\server\share\")
+            # Keep only the relative path after the share name
+            if normalized.startswith("//"):
+                # Find the third slash (after //server/share/)
+                parts = normalized.split("/")
+                if len(parts) >= 4:
+                    # Reconstruct from the 4th part onwards (skip //server/share)
+                    normalized = "/".join(parts[3:])
+                else:
+                    # If no path after share, return basename
+                    normalized = os.path.basename(normalized)
+            
+            # Extract just the filename (last component)
+            filename = os.path.basename(normalized)
+            
+            # If filename is empty or just a folder name, return the original
+            if not filename or filename == normalized:
+                return path_str
+            
+            self.logger.debug(
+                f"{log_tag('NASDB','QFILE')} Extracted filename '{filename}' from path '{path_str}'"
+            )
+            return filename
+
+        # --- Handle full paths directly ---
+        # Check if query contains drive/UNC paths
+        query_items = query if isinstance(query, list) else [query]
+        has_paths = any(
+            isinstance(item, str) and _is_drive_or_unc_path(item) for item in query_items
+        )
+        
+        if has_paths:
+            # For local access, verify paths exist
+            if self.access_mode == "local":
+                valid_paths = []
+                for item in query_items:
+                    if isinstance(item, str) and _is_drive_or_unc_path(item):
+                        if Path(item).exists():
+                            valid_paths.append(item)
+                        else:
+                            self.logger.warning(
+                                f"{log_tag('NASDB','QFILE')} Path does not exist: {item}"
+                            )
+                    else:
+                        valid_paths.append(item)
+                if valid_paths and all(
+                    isinstance(p, str) and _is_drive_or_unc_path(p) for p in valid_paths
+                ):
+                    return valid_paths
+            # For remote access, extract filenames and use find_files to resolve
+            # This will be handled in the pattern extraction below
 
         # --- Build search patterns for shot numbers and wildcards ---
-        query_items = query if isinstance(query, list) else [query]
         search_patterns = []
         for item in query_items:
+            # If it's a drive/UNC path, extract filename first
+            if isinstance(item, str) and _is_drive_or_unc_path(item):
+                item = _extract_filename_from_path(item)
+            
             # Add wildcards for all extensions if it's just a number or simple string
             if isinstance(item, int) or (
                 isinstance(item, str) and "*" not in item and "." not in item
@@ -584,10 +651,28 @@ class NAS_DB:
             if not self.connect():
                 raise ConnectionError(f"{log_tag('NASDB','QSHOT')} Failed to establish connection to NAS.")
 
+        def _is_drive_or_unc_path(path_str: str) -> bool:
+            """Check if a string looks like a drive or UNC path."""
+            if not isinstance(path_str, str):
+                return False
+            # Check for drive path: A:\ or A:/
+            if re.match(r"^[A-Z]:[/\\]", path_str, re.IGNORECASE):
+                return True
+            # Check for UNC path: \\server\share or //server/share
+            if path_str.startswith("\\\\") or path_str.startswith("//"):
+                return True
+            return False
+
         def _looks_like_path(value: str) -> bool:
+            """Check if a value looks like a file path."""
             if not isinstance(value, str):
                 return False
+            # Check for drive/UNC path
+            if _is_drive_or_unc_path(value):
+                return True
+            # Check for path separators
             has_sep = ("\\" in value) or ("/" in value)
+            # Check for file extension
             has_ext = any(value.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS)
             return has_sep or has_ext
 
@@ -602,6 +687,9 @@ class NAS_DB:
                 _check_target_files = query
             else:
                 _check_target_files = [query]
+            
+            # For drive/UNC paths, use find_files to resolve them properly
+            # This ensures paths are converted to accessible formats for remote access
             target_files = self.find_files(
                 _check_target_files, data_folders, add_path, force_remote, **kwargs
             )
