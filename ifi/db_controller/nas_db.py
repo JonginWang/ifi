@@ -297,7 +297,7 @@ class NAS_DB:
         self.ssh_max_retries = conn_cfg.getint("ssh_max_retries", 3)
         self.ssh_connect_timeout = conn_cfg.getfloat("ssh_connect_timeout", 10.0)
         # Maximum number of concurrent SSH commands (default: 3)
-        self.max_concurrent_ssh_commands = conn_cfg.getint("max_concurrent_ssh_commands", 3)
+        self.max_concurrent_ssh_commands = conn_cfg.getint("max_concurrent_ssh_commands", 5)
 
         # Local Cache Config
         if config.has_section("LOCAL_CACHE"):
