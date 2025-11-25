@@ -55,14 +55,17 @@ except ImportError as e:
 
 
 @dask.delayed
-def load_and_process_file(nas_instance, file_path, args):
+def load_and_process_file(config_path, file_path, args):
     """
-    Loads a single file using the NAS_DB instance, then processes it
+    Loads a single file using a dedicated NAS_DB instance, then processes it
     through refining, offset removal, and STFT/CWT analysis.
     This function is designed to be run in parallel by Dask.
+    
+    Each task creates its own NAS_DB connection to avoid SFTP channel conflicts
+    when multiple tasks run in parallel.
 
     Args:
-        nas_instance (NAS_DB): NAS_DB instance
+        config_path (str): Path to the config file for creating NAS_DB instance
         file_path (str): Path to the file to process
         args (argparse.Namespace): argparse.Namespace object containing the analysis parameters
 
@@ -75,158 +78,168 @@ def load_and_process_file(nas_instance, file_path, args):
     Raises:
         See log file for more details.
     """
+    # Create a dedicated NAS_DB instance for this task
+    # This ensures each parallel task has its own SFTP channel, avoiding conflicts
+    nas_instance = NAS_DB(config_path=config_path)
+    
     # Extract basename for consistent key usage
     # This avoids issues with network paths (e.g., //147.47.31.91/vest/...)
     # by using only the filename as the dictionary key
     file_basename = Path(file_path).name
     logging.info(f"{log_tag('ANALY','LOAD')} Starting processing for: {file_basename} @{file_path}")
 
-    # 1. Read single file data
-    # Use basename instead of full path to avoid network path issues
-    # get_shot_data will use basename as the dictionary key
-    data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
-    
-    # Check with basename (consistent with get_shot_data return keys)
-    if not data_dict or file_basename not in data_dict:
-        logging.warning(
-            "\n"
-            + "=" * 80
-            + "\n"
-            + f"  Failed to read {file_basename} at {file_path}. Skipping.  ".center(80, "!")
-            + "\n"
-            + "=" * 80
-            + "\n"
-        )
-        return None, None, None, None  # Return None for all results
+    try:
+        # 1. Read single file data
+        # Use basename instead of full path to avoid network path issues
+        # get_shot_data will use basename as the dictionary key
+        data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
+        
+        # Check with basename (consistent with get_shot_data return keys)
+        if not data_dict or file_basename not in data_dict:
+            logging.warning(
+                "\n"
+                + "=" * 80
+                + "\n"
+                + f"  Failed to read {file_basename} at {file_path}. Skipping.  ".center(80, "!")
+                + "\n"
+                + "=" * 80
+                + "\n"
+            )
+            return None, None, None, None  # Return None for all results
 
-    # Use basename to get data (consistent key)
-    df_raw = data_dict[file_basename]
+        # Use basename to get data (consistent key)
+        df_raw = data_dict[file_basename]
 
-    # 2. Refine data (Removing nan values)
-    df_refined = processing.refine_data(df_raw)
-    logging.info("\n" + f"  Data refined for {file_path}  ".center(80, "=") + "\n")
+        # 2. Refine data (Removing nan values)
+        df_refined = processing.refine_data(df_raw)
+        logging.info("\n" + f"  Data refined for {file_path}  ".center(80, "=") + "\n")
 
-    # 3. Remove offset
-    if not args.no_offset_removal:
-        df_processed = processing.remove_offset(
-            df_refined, window_size=args.offset_window
-        )
-        logging.info(f"{log_tag('ANALY','LOAD')} Offset removed from {file_path}")
-    else:
-        df_processed = df_refined
+        # 3. Remove offset
+        if not args.no_offset_removal:
+            df_processed = processing.remove_offset(
+                df_refined, window_size=args.offset_window
+            )
+            logging.info(f"{log_tag('ANALY','LOAD')} Offset removed from {file_path}")
+        else:
+            df_processed = df_refined
 
-    # 4. Perform STFT analysis if requested
-    stft_result = None
-    if args.stft:
-        analyzer = spectrum.SpectrumAnalysis()
-        all_data_cols = [col for col in df_processed.columns if col != "TIME"]
+        # 4. Perform STFT analysis if requested
+        stft_result = None
+        if args.stft:
+            analyzer = spectrum.SpectrumAnalysis()
+            all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
-        cols_to_analyze_idxs = range(len(all_data_cols))
-        if args.stft_cols is not None:
-            stft_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.stft_cols))
-            if len(stft_cols_idxs) > 0:
-                logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {stft_cols_idxs} vs input columns: {args.stft_cols}")
-                cols_to_analyze_idxs = list(stft_cols_idxs)
-            else:
-                logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for STFT. Skipping STFT analysis.")
-                cols_to_analyze_idxs = []
+            cols_to_analyze_idxs = range(len(all_data_cols))
+            if args.stft_cols is not None:
+                stft_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.stft_cols))
+                if len(stft_cols_idxs) > 0:
+                    logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {stft_cols_idxs} vs input columns: {args.stft_cols}")
+                    cols_to_analyze_idxs = list(stft_cols_idxs)
+                else:
+                    logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for STFT. Skipping STFT analysis.")
+                    cols_to_analyze_idxs = []
 
-        fs = 1 / df_processed["TIME"].diff().mean()
+            fs = 1 / df_processed["TIME"].diff().mean()
 
-        stft_result_for_file = {}
-        for col_idx in cols_to_analyze_idxs:
-            if col_idx < 0 or col_idx >= len(all_data_cols):
-                continue
-            col_name = all_data_cols[col_idx]
-            signal = df_processed[col_name].to_numpy()
-            freq_STFT, time_STFT, STFT_matrix = analyzer.compute_stft(signal, fs)
-            stft_result_for_file[col_name] = {
-                "time_STFT": time_STFT,
-                "freq_STFT": freq_STFT,
-                "STFT_matrix": STFT_matrix,
-            }
+            stft_result_for_file = {}
+            for col_idx in cols_to_analyze_idxs:
+                if col_idx < 0 or col_idx >= len(all_data_cols):
+                    continue
+                col_name = all_data_cols[col_idx]
+                signal = df_processed[col_name].to_numpy()
+                freq_STFT, time_STFT, STFT_matrix = analyzer.compute_stft(signal, fs)
+                stft_result_for_file[col_name] = {
+                    "time_STFT": time_STFT,
+                    "freq_STFT": freq_STFT,
+                    "STFT_matrix": STFT_matrix,
+                }
 
-        stft_result = {file_path: stft_result_for_file}
-        logging.info(f"{log_tag('ANALY','LOAD')} STFT analysis complete for {file_path}")
+            stft_result = {file_path: stft_result_for_file}
+            logging.info(f"{log_tag('ANALY','LOAD')} STFT analysis complete for {file_path}")
 
-    # 5. Perform CWT analysis if requested
-    cwt_result = None
-    if args.cwt:
-        analyzer = spectrum.SpectrumAnalysis()
-        all_data_cols = [col for col in df_processed.columns if col != "TIME"]
+        # 5. Perform CWT analysis if requested
+        cwt_result = None
+        if args.cwt:
+            analyzer = spectrum.SpectrumAnalysis()
+            analyzer = spectrum.SpectrumAnalysis()
+            all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
-        cols_to_analyze_idxs = range(len(all_data_cols))
-        if args.cwt_cols is not None:
-            cwt_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.cwt_cols))
-            if len(cwt_cols_idxs) > 0:
-                logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {cwt_cols_idxs} vs input columns: {args.cwt_cols}")
-                cols_to_analyze_idxs = list(cwt_cols_idxs)
-            else:
-                logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for CWT. Skipping CWT analysis.")
-                cols_to_analyze_idxs = []
+            cols_to_analyze_idxs = range(len(all_data_cols))
+            if args.cwt_cols is not None:
+                cwt_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.cwt_cols))
+                if len(cwt_cols_idxs) > 0:
+                    logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {cwt_cols_idxs} vs input columns: {args.cwt_cols}")
+                    cols_to_analyze_idxs = list(cwt_cols_idxs)
+                else:
+                    logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for CWT. Skipping CWT analysis.")
+                    cols_to_analyze_idxs = []
 
-        fs = 1 / df_processed["TIME"].diff().mean()
+            fs = 1 / df_processed["TIME"].diff().mean()
 
-        cwt_result_for_file = {}
-        for col_idx in cols_to_analyze_idxs:
-            if col_idx < 0 or col_idx >= len(all_data_cols):
-                continue
-            col_name = all_data_cols[col_idx]
-            signal = df_processed[col_name].to_numpy()
-            
-            # Find center frequency for memory optimization
-            f_center = analyzer.find_center_frequency_fft(signal, fs)
-            
-            # Memory optimization parameters
-            # Use decimation if signal is very long (> 100k samples)
-            decimation_factor = 1
-            if len(signal) > 100000:
-                # Calculate decimation factor to reduce to ~50k samples
-                decimation_factor = max(1, len(signal) // 10000)
-                logging.info(
-                    f"{log_tag('ANALY','LOAD')} Large signal detected ({len(signal)} samples). "
-                    f"Using decimation factor {decimation_factor} for CWT."
-                )
-            
-            # Compute CWT with memory optimization
-            if f_center > 0:
-                # Use f_center mode: only compute ±10% around center frequency
-                freq_CWT, CWT_matrix = analyzer.compute_cwt(
-                    signal, 
-                    fs, 
-                    f_center=f_center,
-                    f_deviation=0.1,  # ±10% deviation
-                    decimation_factor=decimation_factor
-                )
-            else:
-                # Fallback: use default CWT if center frequency detection failed
-                logging.warning(
-                    f"{log_tag('ANALY','LOAD')} Center frequency detection failed for {col_name}. "
-                    f"Using default CWT (may use more memory)."
-                )
-                freq_CWT, CWT_matrix = analyzer.compute_cwt(
-                    signal, 
-                    fs,
-                    decimation_factor=decimation_factor
-                )
-            
-            # Adjust time axis if decimation was applied
-            if decimation_factor > 1:
-                time_CWT = df_processed["TIME"].iloc[::decimation_factor].values
-            else:
-                time_CWT = df_processed["TIME"].values
-            
-            cwt_result_for_file[col_name] = {
-                "time_CWT": time_CWT,
-                "freq_CWT": freq_CWT,
-                "CWT_matrix": CWT_matrix,
-            }
+            cwt_result_for_file = {}
+            for col_idx in cols_to_analyze_idxs:
+                if col_idx < 0 or col_idx >= len(all_data_cols):
+                    continue
+                col_name = all_data_cols[col_idx]
+                signal = df_processed[col_name].to_numpy()
+                
+                # Find center frequency for memory optimization
+                f_center = analyzer.find_center_frequency_fft(signal, fs)
+                
+                # Memory optimization parameters
+                # Use decimation if signal is very long (> 100k samples)
+                decimation_factor = 1
+                if len(signal) > 100000:
+                    # Calculate decimation factor to reduce to ~50k samples
+                    decimation_factor = max(1, len(signal) // 10000)
+                    logging.info(
+                        f"{log_tag('ANALY','LOAD')} Large signal detected ({len(signal)} samples). "
+                        f"Using decimation factor {decimation_factor} for CWT."
+                    )
+                
+                # Compute CWT with memory optimization
+                if f_center > 0:
+                    # Use f_center mode: only compute ±10% around center frequency
+                    freq_CWT, CWT_matrix = analyzer.compute_cwt(
+                        signal, 
+                        fs, 
+                        f_center=f_center,
+                        f_deviation=0.1,  # ±10% deviation
+                        decimation_factor=decimation_factor
+                    )
+                else:
+                    # Fallback: use default CWT if center frequency detection failed
+                    logging.warning(
+                        f"{log_tag('ANALY','LOAD')} Center frequency detection failed for {col_name}. "
+                        f"Using default CWT (may use more memory)."
+                    )
+                    freq_CWT, CWT_matrix = analyzer.compute_cwt(
+                        signal, 
+                        fs,
+                        decimation_factor=decimation_factor
+                    )
+                
+                # Adjust time axis if decimation was applied
+                if decimation_factor > 1:
+                    time_CWT = df_processed["TIME"].iloc[::decimation_factor].values
+                else:
+                    time_CWT = df_processed["TIME"].values
+                
+                cwt_result_for_file[col_name] = {
+                    "time_CWT": time_CWT,
+                    "freq_CWT": freq_CWT,
+                    "CWT_matrix": CWT_matrix,
+                }
 
-        cwt_result = {file_path: cwt_result_for_file}
-        logging.info(f"{log_tag('ANALY','LOAD')} CWT analysis complete for {file_path}")
+            cwt_result = {file_path: cwt_result_for_file}
+            logging.info(f"{log_tag('ANALY','LOAD')} CWT analysis complete for {file_path}")
 
-    # Return a tuple of the processed data and any analysis results
-    return file_path, df_processed, stft_result, cwt_result
+        # Return a tuple of the processed data and any analysis results
+        return file_path, df_processed, stft_result, cwt_result
+    finally:
+        # Always disconnect the NAS_DB instance to free up resources
+        # This is important when multiple tasks run in parallel
+        nas_instance.disconnect()
 
 
 def _extract_probe_amplitudes_from_signals(
@@ -387,24 +400,31 @@ def run_analysis(
             )
 
     # --- Dask Task Creation with Progress Tracking ---
-    tasks = [dask.delayed(load_and_process_file)(nas_db, f, args) for f in target_files]
+    # Each task gets its own NAS_DB connection to avoid SFTP channel conflicts
+    # This is critical for parallel execution: one SFTP channel per task
+    config_path = "ifi/config.ini"  # Use the same config path as the main instance
+    tasks = [dask.delayed(load_and_process_file)(config_path, f, args) for f in target_files]
 
     logging.info(
         f"{log_tag('ANALY','RUN')} Starting Dask computation for {len(tasks)} tasks..."
         + "\n"
     )
-    logging.info(f"{log_tag('ANALY','RUN')} Using scheduler: {args.scheduler}")
+    logging.info(f"{log_tag('ANALY','RUN')} Requested scheduler: {args.scheduler}")
     logging.info(f"{log_tag('ANALY','RUN')} Target files: {len(target_files)}")
 
-    # Execute with progress tracking and optimized scheduler
+    # Execute with progress tracking
     start_time = time.time()
 
     # Use optimal scheduler based on task count and system resources
-    if len(tasks) <= 4:
-        scheduler = "threads"  # Better for I/O bound tasks
-    else:
-        scheduler = args.scheduler if args.scheduler else "threads"
+    # if len(tasks) <= 4:
+    #     scheduler = "threads"  # Better for I/O bound tasks
+    # else:
+    #     scheduler = args.scheduler if args.scheduler else "threads"
 
+    # Use the scheduler specified by the user
+    # Note: For remote NAS access, consider using "single-threaded" or lower
+    # max_concurrent_ssh_commands to avoid SSH channel conflicts
+    scheduler = args.scheduler if args.scheduler else "threads"
     logging.info(f"{log_tag('ANALY','RUN')} Using scheduler: {scheduler}")
     results = dask.compute(*tasks, scheduler=scheduler)
     end_time = time.time()
