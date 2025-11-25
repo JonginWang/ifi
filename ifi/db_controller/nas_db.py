@@ -296,6 +296,8 @@ class NAS_DB:
         conn_cfg = config["CONNECTION_SETTINGS"]
         self.ssh_max_retries = conn_cfg.getint("ssh_max_retries", 3)
         self.ssh_connect_timeout = conn_cfg.getfloat("ssh_connect_timeout", 10.0)
+        # Maximum number of concurrent SSH commands (default: 3)
+        self.max_concurrent_ssh_commands = conn_cfg.getint("max_concurrent_ssh_commands", 3)
 
         # Local Cache Config
         if config.has_section("LOCAL_CACHE"):
@@ -312,7 +314,9 @@ class NAS_DB:
         self._file_cache = {}  # Cache for file paths for find_files method
 
         self._is_connected = False
-        self.ssh_lock = threading.Lock()
+        self.ssh_lock = threading.Lock()  # Lock for SSH connection management
+        # Semaphore to limit concurrent SSH command executions
+        self.ssh_command_semaphore = threading.Semaphore(self.max_concurrent_ssh_commands)
 
     def _ensure_remote_dir_exists(self, remote_path: str):
         """
@@ -622,8 +626,10 @@ class NAS_DB:
 
         cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
         
-        # Use lock to ensure thread-safe execution of SSH commands
-        with self.ssh_lock:
+        # Use semaphore to limit concurrent SSH command executions
+        # This allows up to max_concurrent_ssh_commands commands to run simultaneously
+        # while preventing too many concurrent connections that could cause issues
+        with self.ssh_command_semaphore:
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
             files = stdout.read().decode("utf-8").strip().splitlines()
             err_output = stderr.read().decode("utf-8", errors="ignore").strip()
@@ -1612,8 +1618,10 @@ class NAS_DB:
 
         self.logger.info(f"{log_tag('NASDB','QTOPR')} Executing remote command...")
         
-        # Use lock to ensure thread-safe execution of SSH commands
-        with self.ssh_lock:
+        # Use semaphore to limit concurrent SSH command executions
+        # This allows up to max_concurrent_ssh_commands commands to run simultaneously
+        # while preventing too many concurrent connections that could cause issues
+        with self.ssh_command_semaphore:
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
             # 3. Get output and check for errors
             output = stdout.read().decode("utf-8", errors="ignore")
