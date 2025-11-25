@@ -45,7 +45,7 @@ This directory contains tests for IFI database controllers (NAS_DB and VEST_DB).
 ### Parallel Processing Tests
 
 - **`test_dask_integration.ipynb`**: Jupyter notebook for Dask integration tests:
-  - Different Dask schedulers (threads, processes, single-threaded)
+  - Different Dask schedulers (threads, processes)
   - DB controller compatibility with Dask
   - Simulated file processing parallelization
   - Simulated DB operations parallelization

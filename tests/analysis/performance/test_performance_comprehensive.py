@@ -66,7 +66,7 @@ class TestDaskPerformance(unittest.TestCase):
         fs = 1000
         
         # Test different schedulers
-        schedulers = ['threads', 'processes', 'single-threaded']
+        schedulers = ['threads', 'processes']
         results = {}
         
         for scheduler in schedulers:

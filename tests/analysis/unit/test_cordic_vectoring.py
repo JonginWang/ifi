@@ -36,8 +36,8 @@ class TestCORDICVectoringMode:
         ]
 
         for x, y, expected_phase, desc in test_cases:
-            mag, phase, _ = cordic_processor.cordic_vectoring_vectorized(
-                np.array([x]), np.array([y])
+            mag, phase, _ = cordic_processor.cordic(
+                np.array([x]), np.array([y]), method="vectoring"
             )
             expected_mag = np.sqrt(x * x + y * y)
             atan2_phase = np.arctan2(y, x)
@@ -59,7 +59,7 @@ class TestCORDICVectoringMode:
         x = np.array([1.0, -1.0, 0.0, 1.0, -1.0, np.sqrt(3), 1.0])
         y = np.array([0.0, 0.0, 1.0, 1.0, -1.0, 1.0, -1.0])
 
-        mags, phases, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags, phases, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # Compare with atan2
         expected_phases = np.arctan2(y, x)
@@ -80,7 +80,7 @@ class TestCORDICVectoringMode:
         x = np.cos(angles)
         y = np.sin(angles)
 
-        mags, phases, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags, phases, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # All phases should be in [-π, π]
         assert np.all(phases >= -np.pi - 1e-10), "Phase below -π"
@@ -96,7 +96,7 @@ class TestCORDICVectoringMode:
         x = np.array([0.0, 0.0, 1.0])
         y = np.array([0.0, 1.0, 0.0])
 
-        mags, phases, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags, phases, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # Zero input should result in zero phase
         assert phases[0] == 0.0, "Zero input should produce zero phase"
@@ -116,14 +116,10 @@ class TestCORDICVectoringMode:
         y = np.sin(angles)
 
         # Vectoring mode
-        mags_vectoring, phases_vectoring, _ = cordic_processor.cordic_vectoring_vectorized(
-            x, y
-        )
+        mags_vectoring, phases_vectoring, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # Rotation mode (old method with target_angle=0)
-        mags_rotation, phases_rotation, _ = cordic_processor.cordic_rotation_vectorized(
-            x, y, np.zeros(n)
-        )
+        mags_rotation, phases_rotation, _ = cordic_processor.cordic(x, y, np.zeros(n), method="rotation")
 
         # Expected values
         expected_phases = np.arctan2(y, x)
@@ -165,7 +161,7 @@ class TestCORDICVectoringMode:
 
         # Time vectoring mode
         start = time.time()
-        mags, phases, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags, phases, _ = cordic_processor.cordic(x, y, method="vectoring")
         vectoring_time = time.time() - start
 
         # Verify results
@@ -213,7 +209,7 @@ class TestCORDICVectoringMode:
         x = np.array([1.0, -1.0, 0.0, 1.0])
         y = np.array([0.0, 0.0, 1.0, 1.0])
 
-        mags, phases, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags, phases, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # Should still produce correct results
         expected_phases = np.arctan2(y, x)

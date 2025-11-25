@@ -24,7 +24,7 @@ class TestCORDICRotationMode:
         x, y = 1.0, 0.0
         target_angle = np.pi / 4
 
-        magnitude, phase, _ = cordic_processor.cordic_rotation(x, y, target_angle)
+        magnitude, phase, _ = cordic_processor.cordic(x, y, target_angle, method="rotation")
 
         # After rotation, phase should be close to target_angle
         assert abs(phase - target_angle) < 1e-4, f"Phase {phase:.6f} should be close to target {target_angle:.6f}"
@@ -38,11 +38,11 @@ class TestCORDICRotationMode:
         x, y = 1.0, 1.0
 
         # Rotation mode with target_angle=0
-        mag_rot, phase_rot, _ = cordic_processor.cordic_rotation(x, y, 0.0)
+        mag_rot, phase_rot, _ = cordic_processor.cordic(x, y, 0.0, method="rotation")
 
         # Vectoring mode (should give same result)
-        mag_vec, phase_vec, _ = cordic_processor.cordic_vectoring_vectorized(
-            np.array([x]), np.array([y])
+        mag_vec, phase_vec, _ = cordic_processor.cordic(
+            x, y, method="vectoring"
         )
 
         # Phase should match arctan2
@@ -71,9 +71,7 @@ class TestCORDICRotationMode:
         # Use actual angles as targets (not zeros)
         target_angles = angles.copy()
 
-        magnitudes, phases, _ = cordic_processor.cordic_rotation_vectorized(
-            x, y, target_angles
-        )
+        magnitudes, phases, _ = cordic_processor.cordic(x, y, target_angles, method="rotation")
 
         # After rotation to target angle, accumulated phase should be close to target
         for i in range(n):
@@ -92,12 +90,10 @@ class TestCORDICRotationMode:
         target_angles = np.zeros(n)
 
         # Rotation mode
-        mags_rot, phases_rot, _ = cordic_processor.cordic_rotation_vectorized(
-            x, y, target_angles
-        )
+        mags_rot, phases_rot, _ = cordic_processor.cordic(x, y, target_angles, method="rotation")
 
         # Vectoring mode
-        mags_vec, phases_vec, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags_vec, phases_vec, _ = cordic_processor.cordic(x, y, method="vectoring")
 
         # Expected phases
         expected_phases = np.arctan2(y, x)
@@ -128,7 +124,7 @@ class TestCORDICRotationMode:
         x, y = 1.0, 0.0
         target_angle = -np.pi / 4
 
-        magnitude, phase, _ = cordic_processor.cordic_rotation(x, y, target_angle)
+        magnitude, phase, _ = cordic_processor.cordic(x, y, target_angle, method="rotation")
 
         # Phase should be close to target (wrapped)
         phase_diff = abs(phase - target_angle)
@@ -142,8 +138,8 @@ class TestCORDICRotationMode:
         y = np.array([0.0, 1.0])
         target_angles = np.array([0.0])  # Wrong length
 
-        with pytest.raises(ValueError, match="All input arrays must have the same length"):
-            cordic_processor.cordic_rotation_vectorized(x, y, target_angles)
+        with pytest.raises(ValueError, match="target_angle array must have the same length"):
+            cordic_processor.cordic(x, y, target_angles, method="rotation")
 
     def test_cordic_rotation_vs_vectoring_efficiency(self, cordic_processor):
         """Compare rotation mode (target_angle=0) vs vectoring mode efficiency."""
@@ -157,14 +153,12 @@ class TestCORDICRotationMode:
 
         # Time rotation mode
         start = time.time()
-        mags_rot, phases_rot, _ = cordic_processor.cordic_rotation_vectorized(
-            x, y, target_angles
-        )
+        mags_rot, phases_rot, _ = cordic_processor.cordic(x, y, target_angles, method="rotation")
         rotation_time = time.time() - start
 
         # Time vectoring mode
         start = time.time()
-        mags_vec, phases_vec, _ = cordic_processor.cordic_vectoring_vectorized(x, y)
+        mags_vec, phases_vec, _ = cordic_processor.cordic(x, y, method="vectoring")
         vectoring_time = time.time() - start
 
         # Vectoring mode should be faster for target_angle=0 case

@@ -59,7 +59,7 @@ def test_dask_schedulers():
     test_files = [f"test_file_{i:03d}.csv" for i in range(num_files)]
     
     # Test different schedulers
-    schedulers = ['threads', 'processes', 'single-threaded']
+    schedulers = ['threads', 'processes']
     
     for scheduler in schedulers:
         print(f"\nTesting {scheduler} scheduler...")

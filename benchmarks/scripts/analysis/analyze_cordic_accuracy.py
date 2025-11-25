@@ -70,7 +70,7 @@ def analyze_cordic_accuracy(processor, scenarios):
         mag_individual = []
         phase_individual = []
         for i in range(len(x)):
-            mag, phase, _ = processor.cordic_rotation(x[i], y[i], target_angles[i])
+            mag, phase, _ = processor.cordic(x[i], y[i], target_angles[i], method="rotation")
             mag_individual.append(mag)
             phase_individual.append(phase)
         
@@ -78,7 +78,7 @@ def analyze_cordic_accuracy(processor, scenarios):
         phase_individual = np.array(phase_individual)
         
         # Vectorized CORDIC
-        mag_vectorized, phase_vectorized, _ = processor.cordic_rotation_vectorized(x, y, target_angles)
+        mag_vectorized, phase_vectorized, _ = processor.cordic(x, y, target_angles, method="rotation")
         
         # Calculate differences
         mag_diff = np.abs(mag_individual - mag_vectorized)

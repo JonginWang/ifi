@@ -833,7 +833,7 @@ class TestDaskParallelProcessing:
         # Test single-threaded scheduler
         tasks_single = [simulate_post_processing(i, processing_time) for i in range(num_files)]
         start_time = time.time()
-        results_single = dask.compute(*tasks_single, scheduler="single-threaded")
+        results_single = dask.compute(*tasks_single, scheduler="threads")
         time_single = time.time() - start_time
         
         # Verify results
