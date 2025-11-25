@@ -634,10 +634,10 @@ class NAS_DB:
             files = stdout.read().decode("utf-8").strip().splitlines()
             err_output = stderr.read().decode("utf-8", errors="ignore").strip()
 
-        if err_output:
-            self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
+            if err_output:
+                self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
 
-        return files
+            return files
 
     def _get_files_total_size(self, file_list: List[str]) -> int:
         """Calculates the total size of a list of files in bytes."""
@@ -1632,11 +1632,10 @@ class NAS_DB:
             output = stdout.read().decode("utf-8", errors="ignore")
             err_output = stderr.read().decode("utf-8", errors="ignore").strip()
 
-        if err_output:
-            self.logger.error(f"{log_tag('NASDB','QTOPR')} Remote script error: {err_output}")
+            if err_output:
+                self.logger.error(f"{log_tag('NASDB','QTOPR')} Remote script error: {err_output}")
 
-        # 4. Cleanup remote script
-        with self.ssh_command_semaphore:
+            # 4. Cleanup remote script (always execute, regardless of errors)
             try:
                 self.sftp_client.remove(remote_script_path)
             except Exception as e:
@@ -1644,11 +1643,11 @@ class NAS_DB:
                     f"{log_tag('NASDB','QTOPR')} Failed to remove remote script {remote_script_path}: {e}"
                 )
 
-        if output:
-            return output
-        else:
-            self.logger.warning(f"{log_tag('NASDB','QTOPR')} No data returned from remote script for get_data_top.")
-            return None
+            if output:
+                return output
+            else:
+                self.logger.warning(f"{log_tag('NASDB','QTOPR')} No data returned from remote script for get_data_top.")
+                return None
 
     def disconnect(self):
         if self.sftp_client:
