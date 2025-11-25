@@ -621,11 +621,13 @@ class NAS_DB:
             return []
 
         cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
-        stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+        
+        # Use lock to ensure thread-safe execution of SSH commands
+        with self.ssh_lock:
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+            files = stdout.read().decode("utf-8").strip().splitlines()
+            err_output = stderr.read().decode("utf-8", errors="ignore").strip()
 
-        files = stdout.read().decode("utf-8").strip().splitlines()
-
-        err_output = stderr.read().decode("utf-8", errors="ignore").strip()
         if err_output:
             self.logger.error(f"{log_tag('NASDB','QFILE')} Remote list script error: {err_output}")
 
@@ -1609,11 +1611,14 @@ class NAS_DB:
         cmd = f'python "{remote_script_path}" "{file_path}" "{lines}"'
 
         self.logger.info(f"{log_tag('NASDB','QTOPR')} Executing remote command...")
-        stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+        
+        # Use lock to ensure thread-safe execution of SSH commands
+        with self.ssh_lock:
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+            # 3. Get output and check for errors
+            output = stdout.read().decode("utf-8", errors="ignore")
+            err_output = stderr.read().decode("utf-8", errors="ignore").strip()
 
-        # 3. Get output and check for errors
-        output = stdout.read().decode("utf-8", errors="ignore")
-        err_output = stderr.read().decode("utf-8", errors="ignore").strip()
         if err_output:
             self.logger.error(f"{log_tag('NASDB','QTOPR')} Remote script error: {err_output}")
 
