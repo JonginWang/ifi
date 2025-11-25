@@ -617,19 +617,19 @@ class NAS_DB:
             self.remote_temp_dir, script_filename
         ).replace("\\", "/")
 
-        try:
-            with self.sftp_client.open(remote_script_path, "w") as f:
-                f.write(REMOTE_LIST_SCRIPT)
-        except Exception as e:
-            self.logger.error(f"{log_tag('NASDB','QFILE')} Failed to write remote list script: {e}")
-            return []
-
-        cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
-        
         # Use semaphore to limit concurrent SSH command executions
         # This allows up to max_concurrent_ssh_commands commands to run simultaneously
         # while preventing too many concurrent connections that could cause issues
         with self.ssh_command_semaphore:
+            try:
+                with self.sftp_client.open(remote_script_path, "w") as f:
+                    f.write(REMOTE_LIST_SCRIPT)
+            except Exception as e:
+                self.logger.error(f"{log_tag('NASDB','QFILE')} Failed to write remote list script: {e}")
+                return []
+
+            cmd = f'python "{remote_script_path}" "{search_paths_str}" "{patterns_str}"'
+        
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
             files = stdout.read().decode("utf-8").strip().splitlines()
             err_output = stderr.read().decode("utf-8", errors="ignore").strip()
@@ -1609,22 +1609,24 @@ class NAS_DB:
         remote_script_path = os.path.join(
             self.remote_temp_dir, script_filename
         ).replace("\\", "/")
-        try:
-            with self.sftp_client.open(remote_script_path, "w") as f:
-                f.write(REMOTE_HEAD_SCRIPT)
-        except Exception as e:
-            self.logger.error(f"{log_tag('NASDB','QTOPR')} Failed to write remote script: {e}")
-            return None
-
-        # 2. Execute the script
-        cmd = f'python "{remote_script_path}" "{file_path}" "{lines}"'
-
-        self.logger.info(f"{log_tag('NASDB','QTOPR')} Executing remote command...")
         
         # Use semaphore to limit concurrent SSH command executions
         # This allows up to max_concurrent_ssh_commands commands to run simultaneously
         # while preventing too many concurrent connections that could cause issues
         with self.ssh_command_semaphore:
+
+            try:
+                with self.sftp_client.open(remote_script_path, "w") as f:
+                    f.write(REMOTE_HEAD_SCRIPT)
+            except Exception as e:
+                self.logger.error(f"{log_tag('NASDB','QTOPR')} Failed to write remote script: {e}")
+                return None
+
+            # 2. Execute the script
+            cmd = f'python "{remote_script_path}" "{file_path}" "{lines}"'
+
+            self.logger.info(f"{log_tag('NASDB','QTOPR')} Executing remote command...")
+        
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
             # 3. Get output and check for errors
             output = stdout.read().decode("utf-8", errors="ignore")
@@ -1634,12 +1636,13 @@ class NAS_DB:
             self.logger.error(f"{log_tag('NASDB','QTOPR')} Remote script error: {err_output}")
 
         # 4. Cleanup remote script
-        try:
-            self.sftp_client.remove(remote_script_path)
-        except Exception as e:
-            self.logger.warning(
-                f"{log_tag('NASDB','QTOPR')} Failed to remove remote script {remote_script_path}: {e}"
-            )
+        with self.ssh_command_semaphore:
+            try:
+                self.sftp_client.remove(remote_script_path)
+            except Exception as e:
+                self.logger.warning(
+                    f"{log_tag('NASDB','QTOPR')} Failed to remove remote script {remote_script_path}: {e}"
+                )
 
         if output:
             return output
