@@ -655,7 +655,10 @@ class NAS_DB:
             else:  # remote
                 for file_path in file_list:
                     try:
-                        total_size += self.sftp_client.stat(file_path).st_size
+                        # Use semaphore to limit concurrent SFTP operations
+                        # This prevents too many simultaneous stat() calls that could cause issues
+                        with self.ssh_command_semaphore:
+                            total_size += self.sftp_client.stat(file_path).st_size
                     except FileNotFoundError:
                         self.logger.warning(
                             f"{log_tag('NASDB','QBYTE')} Remote file not found during size calculation: {file_path}"
