@@ -418,6 +418,18 @@ class Application(tk.Frame):
                         )
                         continue
 
+                    if not self.scope_controller.is_idle():
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Manual save request ignored: scope controller is busy.",
+                                },
+                            )
+                        )
+                        continue
+
                     self.gui_queue.put(
                         (
                             "log",

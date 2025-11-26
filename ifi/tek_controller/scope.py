@@ -108,6 +108,38 @@ class TekScopeController:
         # Internal controller state for higher-level orchestration
         self.state: ScopeState = ScopeState.IDLE
 
+    def is_idle(self) -> bool:
+        """
+        Check whether the controller is currently idle.
+
+        Returns:
+            bool: True if the controller state is IDLE, False otherwise.
+        """
+        return self.state == ScopeState.IDLE
+
+    def is_busy(self) -> bool:
+        """
+        Check whether the controller is currently performing a blocking operation.
+
+        Returns:
+            bool: True if the controller is in CONNECTING, ACQUIRING or SAVING
+            state, False otherwise.
+        """
+        return self.state in {
+            ScopeState.CONNECTING,
+            ScopeState.ACQUIRING,
+            ScopeState.SAVING,
+        }
+
+    def set_error(self) -> None:
+        """
+        Set the controller state to ERROR.
+
+        This helper can be used by higher-level workflows when they detect
+        unrecoverable failures outside of the low-level controller methods.
+        """
+        self.state = ScopeState.ERROR
+
     def list_devices(self) -> list[str]:
         """
         Return a list of all discovered device strings.
