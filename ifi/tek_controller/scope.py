@@ -22,6 +22,7 @@ Functions:
 """
 
 import numpy as np
+from enum import Enum, auto
 from typing import Optional, Union
 from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
@@ -35,6 +36,26 @@ except ImportError as e:
 # Get logger instance
 LogManager()
 logger = LogManager().get_logger(__name__)
+
+
+class ScopeState(Enum):
+    """
+    Enum class representing the internal state of the TekScopeController.
+
+    Attributes:
+        IDLE: No active operation is in progress.
+        CONNECTING: A connection attempt to the scope is in progress.
+        ACQUIRING: Waveform acquisition from the scope is in progress.
+        SAVING: Data saving is in progress (reserved for higher-level workflows).
+        ERROR: An error has occurred; controller should be inspected or reset.
+    """
+
+    IDLE = auto()
+    CONNECTING = auto()
+    ACQUIRING = auto()
+    SAVING = auto()
+    ERROR = auto()
+
 
 # By creating a type alias for the supported scope models,
 # it is easy to refer to the collection of Tektronix scope device classes.
@@ -65,10 +86,15 @@ class TekScopeController:
         get_waveform_data: Function to acquire waveform data from the specified channel.
     """
 
-    def __init__(self):
-        """Initializes the TekScopeController."""
+    def __init__(self) -> None:
+        """
+        Initialize the TekScopeController.
+
+        The controller starts in the IDLE state with no connected scope but with
+        a ready-to-use DeviceManager based on the tm-devices library.
+        """
         with DeviceManager(verbose=True) as device_manager:
-            self.dm = device_manager
+            self.dm: DeviceManager = device_manager
 
         # Enable resetting the devices when connecting and closing
         self.dm.setup_cleanup_enabled = True
@@ -76,7 +102,11 @@ class TekScopeController:
         # Use the PyVISA-py backend
         self.dm.visa_library = PYVISA_PY_BACKEND
 
-        # self.scope: Optional[ ] = None
+        # Currently connected scope instance (if any)
+        self.scope: Optional[scope] = None
+
+        # Internal controller state for higher-level orchestration
+        self.state: ScopeState = ScopeState.IDLE
 
     def list_devices(self) -> list[str]:
         """
@@ -109,6 +139,7 @@ class TekScopeController:
             Exception: If an error occurs while connecting to the scope.
         """
         # The identifier is in "MODEL - SERIAL" format. We need the serial.
+        self.state = ScopeState.CONNECTING
         try:
             serial = device_identifier.split(" - ")[1]
             self.scope = self.dm.get_device(serial=serial)
@@ -130,19 +161,22 @@ class TekScopeController:
             logger.info(
                 f"{log_tag('TEKSC', 'CONN ')} Successfully connected to: {self.scope.idn_string}"
             )
+            self.state = ScopeState.IDLE
             return True
         except (IndexError, KeyError, TypeError) as e:
             logger.error(
                 f"{log_tag('TEKSC', 'CONN ')} Failed to connect to {device_identifier}: {e}"
             )
             self.scope = None
+            self.state = ScopeState.ERROR
             return False
 
-    def disconnect(self):
-        """Disconnects from the currently connected scope.
+    def disconnect(self) -> None:
+        """
+        Disconnects from the currently connected scope.
 
-        Returns:
-            None
+        The controller state is reset to IDLE regardless of whether a scope was
+        previously connected.
         """
         if self.scope:
             logger.info(
@@ -150,6 +184,9 @@ class TekScopeController:
             )
             self.scope.close()
             self.scope = None
+
+        # When no scope is connected, the controller is conceptually idle.
+        self.state = ScopeState.IDLE
         # self.dm.close_all_devices() # Use this for a full cleanup
 
     def get_idn(self) -> str:
@@ -188,8 +225,10 @@ class TekScopeController:
             logger.error(
                 f"{log_tag('TEKSC', 'GETWF')} Cannot get waveform, no scope connected."
             )
+            self.state = ScopeState.ERROR
             return None
 
+        self.state = ScopeState.ACQUIRING
         try:
             # Use high-level methods to configure the data source and retrieve the waveform.
             # This is a more realistic representation of how tm-devices works.
@@ -201,10 +240,12 @@ class TekScopeController:
             time_values = waveform.x
             voltage_values = waveform.y
 
+            self.state = ScopeState.IDLE
             return time_values, voltage_values
 
         except Exception as e:
             logger.error(
                 f"{log_tag('TEKSC', 'GETWF')} An unexpected error occurred while getting waveform for {channel}: {e}"
             )
+            self.state = ScopeState.ERROR
             return None
