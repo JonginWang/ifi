@@ -24,6 +24,11 @@ try:
     from .. import get_project_root
     from ..tek_controller.scope import TekScopeController
     from ..db_controller.vest_db import VEST_DB
+    from ..gui.suffix_config import (
+        MachineSuffixConfig,
+        build_data_dict_from_channels,
+        load_suffix_config,
+    )
     from ..gui.workers.vest_db_worker import VestDbPollingWorker
     from ..utils.file_io import read_waveform_file, save_waveform_to_csv
     from ..analysis.params.params_plot import FontStyle
@@ -32,6 +37,11 @@ except ImportError as e:
     from ifi.utils.common import get_project_root
     from ifi.tek_controller.scope import TekScopeController
     from ifi.db_controller.vest_db import VEST_DB
+    from ifi.gui.suffix_config import (
+        MachineSuffixConfig,
+        build_data_dict_from_channels,
+        load_suffix_config,
+    )
     from ifi.gui.workers.vest_db_worker import VestDbPollingWorker
     from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
     from ifi.analysis.params.params_plot import FontStyle
@@ -146,6 +156,14 @@ class Application(tk.Frame):
 
         config_file = Path(get_project_root()) / "ifi" / "config.ini"
         self.vest_db = VEST_DB(config_path=config_file)
+
+        # --- Suffix / Channel Configuration ---
+        suffix_ini = Path(get_project_root()) / "ifi" / "gui" / "suffix.ini"
+        # For now, assume the first tab ("IF 94G") corresponds to machine key "94G".
+        self.suffix_config: MachineSuffixConfig | None = load_suffix_config(
+            suffix_ini, machine_key="94G"
+        )
+
         self.vest_db_poller: VestDbPollingWorker | None = None
 
         self.create_widgets()
@@ -527,10 +545,21 @@ class Application(tk.Frame):
                         )
                     )
 
-                    # For now we acquire a single reference channel; this can be
-                    # extended in later tasks when suffix/channel configuration
-                    # is introduced.
-                    channels = ["CH1"]
+                    # Determine channels based on suffix configuration. If no
+                    # configuration is available, fall back to a single CH1
+                    # acquisition.
+                    if self.suffix_config is not None:
+                        configured_channels = [
+                            name
+                            for name in self.suffix_config.profile.channels
+                            if name.upper() != "TIME"
+                        ]
+                        channels = configured_channels or ["CH1"]
+                        suffix = self.suffix_config.profile.suffix
+                    else:
+                        channels = ["CH1"]
+                        suffix = "_AUTO"
+
                     acquired = self.scope_controller.acquire_data(channels)
                     if not acquired:
                         self.gui_queue.put(
@@ -544,12 +573,20 @@ class Application(tk.Frame):
                         )
                         continue
 
+                    # Use the first successfully acquired channel as the time
+                    # reference for building the data dictionary.
                     first_channel = channels[0]
                     time_data, voltage_data = acquired[first_channel]
-                    save_data = {"TIME": time_data, first_channel: voltage_data}
+                    # Build data dict according to configured channel ordering.
+                    save_data = build_data_dict_from_channels(
+                        self.suffix_config.profile.channels
+                        if self.suffix_config is not None
+                        else ["TIME", first_channel],
+                        time_array=time_data,
+                        channel_arrays={ch: acquired[ch][1] for ch in acquired},
+                    )
 
                     save_dir = Path("data")
-                    suffix = "_AUTO"
                     filepath = self.scope_controller.save_data(
                         directory=save_dir,
                         shot_code=shot_code,
