@@ -502,10 +502,17 @@ class Application(tk.Frame):
                             if name.upper() != "TIME"
                         ]
                         channels = configured_channels or ["CH1"]
-                        suffix = self.suffix_config.profile.suffix
+                        base_suffix = self.suffix_config.profile.suffix
                     else:
                         channels = ["CH1"]
-                        suffix = "_MANUAL"
+                        base_suffix = "_MANUAL"
+
+                    # Allow the controller to override the suffix based on the
+                    # currently connected physical scope (e.g. 94G1 → _056,
+                    # 94G2 → _789).
+                    suffix = self.scope_controller.get_suffix_for_connected_scope(
+                        base_suffix
+                    )
 
                     acquired = self.scope_controller.acquire_data(channels)
                     if not acquired:
@@ -620,10 +627,14 @@ class Application(tk.Frame):
                             if name.upper() != "TIME"
                         ]
                         channels = configured_channels or ["CH1"]
-                        suffix = self.suffix_config.profile.suffix
+                        base_suffix = self.suffix_config.profile.suffix
                     else:
                         channels = ["CH1"]
-                        suffix = "_AUTO"
+                        base_suffix = "_AUTO"
+
+                    suffix = self.scope_controller.get_suffix_for_connected_scope(
+                        base_suffix
+                    )
 
                     acquired = self.scope_controller.acquire_data(channels)
                     if not acquired:

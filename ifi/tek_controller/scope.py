@@ -21,20 +21,23 @@ Functions:
     get_waveform_data: Function to acquire waveform data from the specified channel.
 """
 
-import numpy as np
-import pandas as pd
+import configparser
 from enum import Enum, auto
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, Optional, Union
+
+import numpy as np
+import pandas as pd
 from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
+
 try:
-    from ..utils.common import LogManager, log_tag
+    from ..utils.common import LogManager, get_project_root, log_tag
     from ..utils.file_io import convert_to_hdf5
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
-    from ifi.utils.common import LogManager, log_tag
+    from ifi.utils.common import LogManager, get_project_root, log_tag
     from ifi.utils.file_io import convert_to_hdf5
 
 # Get logger instance
@@ -112,6 +115,87 @@ class TekScopeController:
         # Internal controller state for higher-level orchestration
         self.state: ScopeState = ScopeState.IDLE
 
+        # Mapping from known Tektronix serial numbers to VISA addresses,
+        # loaded from ifi/config.ini, and an optional suffix override map
+        # used for filename suffix selection per physical scope.
+        self._serial_to_visa: Dict[str, str] = self._load_known_serial_to_visa()
+        self._serial_to_suffix: Dict[str, str] = self._build_serial_to_suffix_map()
+
+    def _load_known_serial_to_visa(self) -> Dict[str, str]:
+        """
+        Load known Tektronix VISA addresses from the project config.
+
+        Returns:
+            dict: Mapping from scope serial number to VISA address string.
+        """
+        mapping: Dict[str, str] = {}
+        try:
+            config_path = Path(get_project_root()) / "ifi" / "config.ini"
+            if not config_path.exists():
+                return mapping
+
+            parser = configparser.ConfigParser()
+            parser.read(config_path)
+
+            if "Tektronix" not in parser:
+                return mapping
+
+            tek_section = parser["Tektronix"]
+            for key, visa in tek_section.items():
+                if not key.startswith("visa_address_"):
+                    continue
+                parts = visa.split("::")
+                # Typical VISA format: USB0::0x0699::0x0408::SERIAL::0::INSTR
+                if len(parts) >= 4:
+                    serial = parts[3]
+                    mapping[serial] = visa
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'CONF ')} Failed to load Tektronix VISA addresses: {exc}"
+            )
+        return mapping
+
+    def _build_serial_to_suffix_map(self) -> Dict[str, str]:
+        """
+        Build a mapping from serial numbers to filename suffixes.
+
+        For now this derives suffixes from the specific config keys used for
+        the IF 94G setup:
+            - visa_address_94G1 → suffix \"_056\"
+            - visa_address_94G2 → suffix \"_789\"
+
+        Any other scopes fall back to the suffix provided by higher-level
+        configuration (e.g. suffix.ini).
+        """
+        mapping: Dict[str, str] = {}
+        try:
+            config_path = Path(get_project_root()) / "ifi" / "config.ini"
+            if not config_path.exists():
+                return mapping
+
+            parser = configparser.ConfigParser()
+            parser.read(config_path)
+
+            if "Tektronix" not in parser:
+                return mapping
+
+            tek_section = parser["Tektronix"]
+            for key, visa in tek_section.items():
+                parts = visa.split("::")
+                if len(parts) < 4:
+                    continue
+                serial = parts[3]
+                lowered_key = key.lower()
+                if lowered_key == "visa_address_94g1":
+                    mapping[serial] = "_056"
+                elif lowered_key == "visa_address_94g2":
+                    mapping[serial] = "_789"
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'CONF ')} Failed to build serial-to-suffix map: {exc}"
+            )
+        return mapping
+
     def is_idle(self) -> bool:
         """
         Check whether the controller is currently idle.
@@ -152,14 +236,44 @@ class TekScopeController:
         suitable for display in a GUI.
 
         Returns:
-            list[str]: A list of all discovered device strings.
+            list[str]: A list of all discovered device strings, optionally
+            annotated with VISA addresses and a star for known/configured
+            scopes.
 
         Raises:
             Exception: If an error occurs while listing devices.
         """
-        # The DeviceManager's __str__ representation is a good summary.
-        # Here we create a list of identifiers for each device.
-        return [f"{dev.model} - {dev.serial}" for dev in self.dm.devices]
+        devices: list[str] = []
+        for dev in self.dm.devices:
+            base = f"{dev.model} - {dev.serial}"
+            visa = self._serial_to_visa.get(dev.serial)
+            if visa:
+                # Mark devices that have a configured VISA address with a star.
+                label = f"{base} [{visa}]*"
+            else:
+                label = base
+            devices.append(label)
+        return devices
+
+    def get_suffix_for_connected_scope(self, default_suffix: str) -> str:
+        """
+        Return the preferred filename suffix for the currently connected scope.
+
+        Args:
+            default_suffix: Suffix provided by higher-level configuration
+                (e.g. suffix.ini) to fall back to.
+
+        Returns:
+            str: A scope-specific suffix if configured, otherwise default_suffix.
+        """
+        if not self.scope:
+            return default_suffix
+
+        serial = getattr(self.scope, "serial", None)
+        if not isinstance(serial, str):
+            return default_suffix
+
+        return self._serial_to_suffix.get(serial, default_suffix)
 
     def connect(self, device_identifier: str) -> bool:
         """
