@@ -223,7 +223,7 @@ def test_save_data_creates_csv_and_resets_state(tmp_path) -> None:
     shot_code = 45821
     suffix = "_056"
 
-    filepath = controller.save_data(tmp_path, shot_code, suffix, data)
+    filepath = controller.save_data(tmp_path, shot_code, suffix, data, file_format="CSV")
 
     assert controller.state == ScopeState.IDLE
     assert filepath is not None
@@ -233,5 +233,24 @@ def test_save_data_creates_csv_and_resets_state(tmp_path) -> None:
     df = pd.read_csv(filepath)
     assert list(df.columns) == ["TIME", "CH1"]
     assert len(df) == 2
+
+
+def test_save_data_hdf5_format_uses_h5_extension(tmp_path) -> None:
+    """save_data with file_format='HDF5' should create an .h5 file."""
+    controller = TekScopeController()
+
+    data = {
+        "TIME": np.array([0.0, 1.0], dtype=float),
+        "CH1": np.array([0.1, 0.2], dtype=float),
+    }
+
+    shot_code = 45821
+    suffix = "_ALL"
+
+    filepath = controller.save_data(tmp_path, shot_code, suffix, data, file_format="HDF5")
+
+    assert controller.state == ScopeState.IDLE
+    assert filepath is not None
+    assert filepath.suffix.lower() == ".h5"
 
 

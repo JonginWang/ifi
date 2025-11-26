@@ -107,6 +107,48 @@ def read_waveform_file(filepath: str) -> Tuple[np.ndarray, np.ndarray] | None:
         return None
 
 
+def convert_to_hdf5(source_path: Path | str, destination_path: Path | str) -> None:
+    """
+    Convert a CSV waveform file to a simple HDF5 representation.
+
+    The CSV file is expected to contain a header row and numeric columns such
+    as TIME, CH1, CH2, etc. The resulting HDF5 file will contain a single
+    group ``/waveform`` with one dataset per column.
+
+    Args:
+        source_path: Path to the source CSV (or, in the future, WFM) file.
+        destination_path: Path where the resulting HDF5 file will be written.
+    """
+    src = Path(source_path)
+    dst = Path(destination_path)
+
+    if not src.exists():
+        raise FileNotFoundError(f"Source file does not exist: {src}")
+
+    if src.suffix.lower() == ".csv":
+        _convert_csv_to_hdf5(src, dst)
+    else:
+        # Placeholder for future WFM support or other formats.
+        raise ValueError(f"Unsupported source format for HDF5 conversion: {src.suffix}")
+
+
+def _convert_csv_to_hdf5(source_csv: Path, destination_h5: Path) -> None:
+    """
+    Internal helper to convert a CSV file to HDF5.
+
+    Args:
+        source_csv: Source CSV file path.
+        destination_h5: Output HDF5 file path.
+    """
+    df = pd.read_csv(source_csv)
+
+    with h5py.File(destination_h5, "w") as h5f:
+        group = h5f.create_group("waveform")
+        for col in df.columns:
+            data = df[col].to_numpy(dtype=np.float64)
+            group.create_dataset(col, data=data)
+
+
 def read_csv_chunked(filepath: str, chunksize: int = 1_000_000):
     """
     Reads a large CSV file in chunks and yields each chunk as a DataFrame.

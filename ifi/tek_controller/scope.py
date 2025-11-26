@@ -31,9 +31,11 @@ from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
 try:
     from ..utils.common import LogManager, log_tag
+    from ..utils.file_io import convert_to_hdf5
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     from ifi.utils.common import LogManager, log_tag
+    from ifi.utils.file_io import convert_to_hdf5
 
 # Get logger instance
 LogManager()
@@ -347,11 +349,12 @@ class TekScopeController:
         shot_code: int,
         suffix: str,
         data: dict[str, np.ndarray],
+        file_format: str = "CSV",
     ) -> Optional[Path]:
         """
         Save acquired waveform data to a CSV file using a standard naming scheme.
 
-        The output filename is formatted as ``{shot_code}{suffix}.csv`` and
+        The output filename is formatted as ``{shot_code}{suffix}.<ext>`` and
         written into the provided directory. The input ``data`` dictionary is
         converted into a pandas DataFrame before being written.
 
@@ -362,6 +365,8 @@ class TekScopeController:
                 ``\"_056\"`` or ``\"_ALL\"``).
             data: Mapping from column name to NumPy array. All arrays should
                 have the same length (e.g. ``{\"TIME\": ..., \"CH1\": ...}``).
+            file_format: Output format. Currently supported values are
+                ``\"CSV\"`` and ``\"HDF5\"``. CSV is the default.
 
         Returns:
             pathlib.Path | None: The full path to the saved CSV file on
@@ -376,7 +381,17 @@ class TekScopeController:
               failures.
         """
         directory_path = Path(directory)
-        filename = f"{shot_code}{suffix}.csv"
+        file_format_upper = file_format.upper()
+        if file_format_upper == "CSV":
+            filename = f"{shot_code}{suffix}.csv"
+        elif file_format_upper == "HDF5":
+            filename = f"{shot_code}{suffix}.h5"
+        else:
+            logger.error(
+                f"{log_tag('TEKSC', 'SAVE ')} Unsupported file format: {file_format}"
+            )
+            return None
+
         filepath = directory_path / filename
 
         logger.info(
@@ -387,8 +402,18 @@ class TekScopeController:
         self.state = ScopeState.SAVING
         try:
             directory_path.mkdir(parents=True, exist_ok=True)
-            df = pd.DataFrame(data)
-            df.to_csv(filepath, index=False)
+
+            if file_format_upper == "CSV":
+                df = pd.DataFrame(data)
+                df.to_csv(filepath, index=False)
+            elif file_format_upper == "HDF5":
+                # First write a temporary CSV in memory via pandas, then
+                # convert it into HDF5 using the shared utility.
+                temp_csv = directory_path / f"{shot_code}{suffix}.csv"
+                df = pd.DataFrame(data)
+                df.to_csv(temp_csv, index=False)
+                convert_to_hdf5(temp_csv, filepath)
+
             return filepath
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error(
