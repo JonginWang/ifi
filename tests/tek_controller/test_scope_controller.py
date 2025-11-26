@@ -189,3 +189,21 @@ def test_is_idle_and_is_busy_helpers() -> None:
     assert controller.is_busy() is True
 
 
+def test_acquire_data_returns_dict_for_multiple_channels() -> None:
+    """acquire_data should return a mapping from channel names to (time, voltage)."""
+    controller = TekScopeController()
+    assert controller.connect("MDO3 - 1234")
+
+    channels = ["CH1", "CH2"]
+    result = controller.acquire_data(channels)
+
+    assert controller.state == ScopeState.IDLE
+    assert set(result.keys()) == set(channels)
+    for ch in channels:
+        t, v = result[ch]
+        assert isinstance(t, np.ndarray)
+        assert isinstance(v, np.ndarray)
+        assert t.shape == v.shape
+        assert t.size > 0
+
+

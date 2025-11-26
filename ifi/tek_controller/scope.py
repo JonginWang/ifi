@@ -281,3 +281,60 @@ class TekScopeController:
             )
             self.state = ScopeState.ERROR
             return None
+
+    def acquire_data(
+        self, channels: list[str]
+    ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """
+        Acquire waveform data for a list of channels.
+
+        This method calls :meth:`get_waveform_data` for each requested channel
+        and aggregates the results into a dictionary.
+
+        Args:
+            channels(list[str]): Channel names to acquire (e.g. ``['CH1', 'CH2']``).
+
+        Returns:
+            dict[str, tuple[np.ndarray, np.ndarray]]: Mapping from channel name
+                to ``(time, voltage)`` arrays. Channels that fail to acquire
+                are omitted from the dictionary.
+
+        Notes:
+            - The controller state is set to ``ACQUIRING`` at the beginning of
+              the multi-channel acquisition and restored to ``IDLE`` once all
+              requested channels have been processed, unless a fatal error
+              occurs.
+            - Individual channel acquisition errors are logged and skipped,
+              allowing partial results to be returned.
+        """
+        if not self.scope:
+            logger.error(
+                f"{log_tag('TEKSC', 'ACQ  ')} Cannot acquire data, no scope connected."
+            )
+            self.state = ScopeState.ERROR
+            return {}
+
+        results: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self.state = ScopeState.ACQUIRING
+
+        for ch in channels:
+            try:
+                data = self.get_waveform_data(channel=ch)
+                if data is not None:
+                    results[ch] = data
+                else:
+                    logger.warning(
+                        f"{log_tag('TEKSC', 'ACQ  ')} Skipping channel {ch}: no data returned."
+                    )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error(
+                    f"{log_tag('TEKSC', 'ACQ  ')} Error acquiring data for {ch}: {exc}"
+                )
+
+        # If at least one channel succeeded, return to IDLE, otherwise mark ERROR.
+        if results:
+            self.state = ScopeState.IDLE
+        else:
+            self.state = ScopeState.ERROR
+
+        return results
