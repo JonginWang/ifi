@@ -47,6 +47,7 @@ Documentation Contents
    
    getting_started
    tutorial
+   data_schema
    
 .. toctree::
    :maxdepth: 2
