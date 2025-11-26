@@ -10,50 +10,91 @@ This test suite covers:
 5. Dask-based parallel processing workflow
 """
 
-import pytest
-import numpy as np
-import pandas as pd
-import h5py
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-# from ifi.utils.cache_setup import setup_project_cache
+import dask
+import h5py
+import numpy as np
+import pandas as pd
+import pytest
 
-# # Setup cache before imports
-# cache_config = setup_project_cache()
-
-from ifi.analysis.main_analysis import load_and_process_file, run_analysis
-from ifi.utils import file_io
 from ifi.analysis import plots
+from ifi.analysis.main_analysis import load_and_process_file, run_analysis
 from ifi.db_controller.nas_db import NAS_DB
 from ifi.db_controller.vest_db import VEST_DB
+from ifi.utils import file_io
 
 
 @pytest.fixture
 def tmp_h5_dir(tmp_path):
-    """Create a temporary directory for H5 files."""
+    """
+    Create a temporary directory for H5 files.
+    
+    Args:
+        tmp_path: Pytest temporary path fixture
+        
+    Returns:
+        Path: Temporary directory path for H5 files
+    """
     h5_dir = tmp_path / "results" / "45821"
     h5_dir.mkdir(parents=True)
     return h5_dir
 
 
 @pytest.fixture
+def tmp_config_file(tmp_path):
+    """
+    Create a temporary config file for testing.
+    
+    Args:
+        tmp_path: Pytest temporary path fixture
+        
+    Returns:
+        Path: Path to temporary config file
+    """
+    config_file = tmp_path / "test_config.ini"
+    # Create minimal config file for testing
+    config_content = """[CONNECTION_SETTINGS]
+max_concurrent_ssh_commands = 2
+"""
+    config_file.write_text(config_content)
+    return str(config_file)
+
+
+@pytest.fixture
 def mock_nas_db():
-    """Create a mock NAS_DB instance."""
+    """
+    Create a mock NAS_DB instance.
+    
+    Returns:
+        Mock: Mock NAS_DB instance
+    """
     mock_db = Mock(spec=NAS_DB)
     return mock_db
 
 
 @pytest.fixture
 def mock_vest_db():
-    """Create a mock VEST_DB instance."""
+    """
+    Create a mock VEST_DB instance.
+    
+    Returns:
+        Mock: Mock VEST_DB instance
+    """
     mock_db = Mock(spec=VEST_DB)
     return mock_db
 
 
 @pytest.fixture
 def sample_dataframe():
-    """Create a sample DataFrame with metadata."""
+    """
+    Create a sample DataFrame with metadata.
+    
+    Returns:
+        pd.DataFrame: Sample DataFrame with TIME, CH0, CH1, CH2 columns and metadata
+    """
     fs = 50e6
     duration = 0.01
     n_samples = int(fs * duration)
@@ -80,7 +121,12 @@ def sample_dataframe():
 
 @pytest.fixture
 def sample_dataframe_with_nan():
-    """Create a sample DataFrame with NaN values."""
+    """
+    Create a sample DataFrame with NaN values.
+    
+    Returns:
+        pd.DataFrame: Sample DataFrame with NaN values at specific positions
+    """
     fs = 50e6
     duration = 0.01
     n_samples = int(fs * duration)
@@ -90,11 +136,13 @@ def sample_dataframe_with_nan():
         "TIME": t,
         "CH0": np.sin(2 * np.pi * 8e6 * t),
         "CH1": np.cos(2 * np.pi * 8e6 * t),
+        "CH2": np.sin(2 * np.pi * 8e6 * t + np.pi / 4),  # Keep CH2 without NaN
     })
     
-    # Introduce NaN values at specific positions
+    # Introduce NaN values at specific positions (but keep CH2 clean)
     df.loc[100:200, "CH0"] = np.nan
     df.loc[300:350, "CH1"] = np.nan
+    # CH2 has no NaN, so it will remain after refinement
     
     df.attrs["source_file_type"] = "csv"
     df.attrs["metadata"] = {"record_length": n_samples}
@@ -104,7 +152,12 @@ def sample_dataframe_with_nan():
 
 @pytest.fixture
 def sample_dataframe_with_korean():
-    """Create a sample DataFrame with Korean characters in column names (should be sanitized)."""
+    """
+    Create a sample DataFrame with Korean characters in column names (should be sanitized).
+    
+    Returns:
+        pd.DataFrame: Sample DataFrame with Korean column names
+    """
     fs = 50e6
     duration = 0.01
     n_samples = int(fs * duration)
@@ -643,7 +696,12 @@ class TestNaNHandling:
     """Test NaN data handling and propagation in mathematical operations."""
     
     def test_refine_data_nan_removal(self, sample_dataframe_with_nan):
-        """Test that refine_data removes NaN values."""
+        """
+        Test that refine_data removes NaN values.
+        
+        Args:
+            sample_dataframe_with_nan: Sample DataFrame with NaN values fixture
+        """
         from ifi.analysis import processing
         
         initial_nan_count = sample_dataframe_with_nan.isna().sum().sum()
@@ -652,11 +710,13 @@ class TestNaNHandling:
         refined_df = processing.refine_data(sample_dataframe_with_nan)
         
         # After refinement, there should be no NaN values
+        # refine_data uses dropna(axis=1) which removes columns with NaN
         final_nan_count = refined_df.isna().sum().sum()
         assert final_nan_count == 0, "Refined data should not contain NaN values"
         
-        # Data length should be reduced
-        assert len(refined_df) < len(sample_dataframe_with_nan)
+        # refine_data removes columns with NaN, so column count may be reduced
+        # but row count should remain the same (TIME column is preserved)
+        assert "TIME" in refined_df.columns, "TIME column should be preserved"
     
     def test_nan_propagation_in_math_operations(self):
         """Test that NaN values propagate correctly in mathematical operations."""
@@ -697,17 +757,31 @@ class TestNaNHandling:
         assert not np.any(np.isnan(phase)), "Phase should not contain NaN after processing"
     
     def test_stft_with_nan_data(self, sample_dataframe_with_nan):
-        """Test STFT analysis with NaN data."""
+        """
+        Test STFT analysis with NaN data.
+        
+        Args:
+            sample_dataframe_with_nan: Sample DataFrame with NaN values fixture
+        """
         from ifi.analysis import processing
         from ifi.analysis.spectrum import SpectrumAnalysis
         
         # Refine data to remove NaN
+        # Note: refine_data uses dropna(axis=1) which removes columns with NaN
         refined_df = processing.refine_data(sample_dataframe_with_nan)
+        
+        # After refinement, columns with NaN are removed
+        # Check if any signal columns remain (CH2 should remain as it has no NaN)
+        signal_columns = [col for col in refined_df.columns if col != "TIME"]
+        assert len(signal_columns) > 0, "At least one signal column should remain after refinement"
+        
+        # Use the first available signal column
+        signal_col = signal_columns[0]
         
         # Calculate STFT
         analyzer = SpectrumAnalysis()
         fs = 1 / refined_df["TIME"].diff().mean()
-        signal = refined_df["CH0"].to_numpy()
+        signal = refined_df[signal_col].to_numpy()
         
         # STFT should work without NaN
         freq_stft, time_stft, stft_matrix = analyzer.compute_stft(signal, fs)
@@ -724,40 +798,69 @@ class TestDaskParallelProcessing:
     Validates that data loading and post-processing work correctly in parallel.
     """
     
-    def test_dask_task_creation(self, mock_nas_db):
-        """Test that Dask tasks are created correctly."""
-        import dask
+    @patch("ifi.analysis.main_analysis.NAS_DB")
+    def test_dask_task_creation(self, mock_nas_class, tmp_config_file):
+        """
+        Test that Dask tasks are created correctly.
         
+        Args:
+            mock_nas_class: Mock NAS_DB class
+            tmp_config_file: Temporary config file path
+        """
         target_files = ["file1.csv", "file2.csv", "file3.csv"]
         mock_args = Mock()
         
-        # Create delayed tasks
-        tasks = [dask.delayed(load_and_process_file)(mock_nas_db, f, mock_args) for f in target_files]
+        # Create delayed tasks with config_path
+        tasks = [
+            dask.delayed(load_and_process_file)(tmp_config_file, f, mock_args)
+            for f in target_files
+        ]
         
         assert len(tasks) == 3
         # Check if tasks are dask delayed objects (has 'dask' attribute or is delayed type)
-        assert all(hasattr(task, 'dask') or 'delayed' in str(type(task)).lower() for task in tasks), \
-            "All tasks should be dask delayed objects"
+        assert all(
+            hasattr(task, "dask") or "delayed" in str(type(task)).lower() for task in tasks
+        ), "All tasks should be dask delayed objects"
     
-    def test_dask_parallel_post_processing(self, sample_dataframe, tmp_h5_dir):
-        """Test that post-processing works correctly with Dask parallel execution.
+    @patch("ifi.analysis.main_analysis.NAS_DB")
+    def test_dask_parallel_post_processing(
+        self, mock_nas_class, sample_dataframe, tmp_h5_dir, tmp_config_file
+    ):
+        """
+        Test that post-processing works correctly with Dask parallel execution.
         
         This test validates that:
         1. Multiple files can be processed in parallel using Dask
         2. Post-processing (density calculation, signal combination) works correctly
         3. Results are correctly aggregated after parallel execution
-        """
-        import dask
-        import time
-        from ifi.analysis.main_analysis import load_and_process_file
+        4. Each task creates its own NAS_DB instance
         
+        Args:
+            mock_nas_class: Mock NAS_DB class
+            sample_dataframe: Sample DataFrame fixture
+            tmp_h5_dir: Temporary H5 directory fixture
+            tmp_config_file: Temporary config file path
+        """
         # Create multiple test dataframes
         test_files = ["test_file_1.csv", "test_file_2.csv", "test_file_3.csv"]
-        mock_nas_db = Mock(spec=NAS_DB)
+        
+        # Mock NAS_DB instance
+        mock_nas_instance = Mock(spec=NAS_DB)
+        mock_nas_class.return_value = mock_nas_instance
         
         # Mock get_shot_data to return different dataframes for each file
         def mock_get_shot_data(query, **kwargs):
-            file_name = query if isinstance(query, str) else str(query)
+            """
+            Mock get_shot_data to return different dataframes for each file.
+            
+            Args:
+                query: File path or basename
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                dict: Dictionary mapping basename to DataFrame
+            """
+            file_name = Path(query).name if isinstance(query, (str, Path)) else str(query)
             df = sample_dataframe.copy()
             # Add slight variation to each file's data
             if "1" in file_name:
@@ -766,7 +869,8 @@ class TestDaskParallelProcessing:
                 df["CH0"] = df["CH0"] * 0.9
             return {file_name: df}
         
-        mock_nas_db.get_shot_data.side_effect = mock_get_shot_data
+        mock_nas_instance.get_shot_data.side_effect = mock_get_shot_data
+        mock_nas_instance.disconnect.return_value = None
         
         # Create mock args
         mock_args = Mock()
@@ -778,8 +882,11 @@ class TestDaskParallelProcessing:
         mock_args.cwt = False
         mock_args.cwt_cols = None
 
-        # Create Dask delayed tasks
-        tasks = [dask.delayed(load_and_process_file)(mock_nas_db, f, mock_args) for f in test_files]
+        # Create Dask delayed tasks with config_path
+        tasks = [
+            dask.delayed(load_and_process_file)(tmp_config_file, f, mock_args)
+            for f in test_files
+        ]
         
         # Execute in parallel
         start_time = time.time()
@@ -795,30 +902,44 @@ class TestDaskParallelProcessing:
             assert "TIME" in df.columns or df.index.name == "TIME", "Time axis should be present"
             assert len(df) > 0, "DataFrame should not be empty"
         
+        # Verify that NAS_DB was instantiated for each task
+        assert mock_nas_class.call_count == len(test_files), "Each task should create its own NAS_DB instance"
+        
+        # Verify that disconnect was called for each instance
+        assert mock_nas_instance.disconnect.call_count == len(test_files), "Each instance should be disconnected"
+        
         # Verify parallel execution (should be faster than sequential)
         # Note: This is a basic check; actual speedup depends on system resources
         processing_time = end_time - start_time
         assert processing_time < 10.0, "Parallel processing should complete in reasonable time"
     
-    def test_dask_scheduler_comparison(self, sample_dataframe):
-        """Test different Dask schedulers for post-processing tasks.
+    def test_dask_scheduler_comparison(self):
+        """
+        Test different Dask schedulers for post-processing tasks.
         
         Based on tests/db_controller/test_dask_integration.py patterns.
+        Validates that different schedulers work correctly.
         """
-        import dask
-        import time
-        
         @dask.delayed
         def simulate_post_processing(file_id: int, processing_time: float = 0.1) -> dict:
-            """Simulate post-processing operation."""
+            """
+            Simulate post-processing operation.
+            
+            Args:
+                file_id: File identifier
+                processing_time: Time to simulate processing
+                
+            Returns:
+                dict: Processing results dictionary
+            """
             time.sleep(processing_time)
             # Simulate data processing
             processed_data = np.random.randn(1000)
             return {
-                'file_id': file_id,
-                'data_size': len(processed_data),
-                'mean_value': np.mean(processed_data),
-                'std_value': np.std(processed_data)
+                "file_id": file_id,
+                "data_size": len(processed_data),
+                "mean_value": np.mean(processed_data),
+                "std_value": np.std(processed_data),
             }
         
         num_files = 4
@@ -830,20 +951,19 @@ class TestDaskParallelProcessing:
         results_threads = dask.compute(*tasks_threads, scheduler="threads")
         time_threads = time.time() - start_time
         
-        # Test scheduler
+        # Test single-threaded scheduler
         tasks_single = [simulate_post_processing(i, processing_time) for i in range(num_files)]
         start_time = time.time()
-        results_single = dask.compute(*tasks_single, scheduler="threads")
+        results_single = dask.compute(*tasks_single, scheduler="single-threaded")
         time_single = time.time() - start_time
         
         # Verify results
-        assert len(results_threads) == num_files
-        assert len(results_single) == num_files
+        assert len(results_threads) == num_files, "Threads scheduler should process all files"
+        assert len(results_single) == num_files, "Single-threaded scheduler should process all files"
         
-        # Threads should generally be faster for I/O-bound tasks
-        # (but this is not guaranteed, so we just verify both work)
-        assert time_threads > 0
-        assert time_single > 0
+        # Verify execution times are positive
+        assert time_threads > 0, "Threads scheduler execution time should be positive"
+        assert time_single > 0, "Single-threaded scheduler execution time should be positive"
 
 
 class TestMainAnalysisIntegration:
@@ -899,9 +1019,13 @@ class TestMainAnalysisIntegration:
         mock_args.baseline = None
         mock_args.save_data = True
         mock_args.scheduler = "threads"
+        mock_args.freq = None  # Frequency filter (None = all frequencies)
+        mock_args.color_density_by_amplitude = False
+        mock_args.amplitude_colormap = "coolwarm"
+        mock_args.amplitude_impedance = 50.0
         
         # Debug: Print directory structure before running analysis
-        print(f"\n=== DEBUG: Directory structure before analysis ===")
+        print("\n=== DEBUG: Directory structure before analysis ===")
         print(f"tmp_h5_dir: {tmp_h5_dir}")
         print(f"tmp_h5_dir.parent: {tmp_h5_dir.parent}")
         print(f"tmp_h5_dir.parent.parent: {tmp_h5_dir.parent.parent}")
@@ -921,7 +1045,7 @@ class TestMainAnalysisIntegration:
         )
         
         # Debug: Check all possible locations for H5 files
-        print(f"\n=== DEBUG: Searching for H5 files ===")
+        print("\n=== DEBUG: Searching for H5 files ===")
         expected_output_dir = Path(mock_args.results_dir) / "45821"
         print(f"Expected output_dir: {expected_output_dir}")
         print(f"Expected output_dir exists: {expected_output_dir.exists()}")
@@ -953,7 +1077,7 @@ class TestMainAnalysisIntegration:
         
         # Verify H5 file structure
         h5_file = h5_files[0]
-        print(f"\n=== DEBUG: Verifying H5 file structure ===")
+        print("\n=== DEBUG: Verifying H5 file structure ===")
         print(f"H5 file path: {h5_file}")
         
         import h5py
