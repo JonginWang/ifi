@@ -24,6 +24,7 @@ try:
     from .. import get_project_root
     from ..tek_controller.scope import TekScopeController
     from ..db_controller.vest_db import VEST_DB
+    from ..gui.workers.vest_db_worker import VestDbPollingWorker
     from ..utils.file_io import read_waveform_file, save_waveform_to_csv
     from ..analysis.params.params_plot import FontStyle
 except ImportError as e:
@@ -31,6 +32,7 @@ except ImportError as e:
     from ifi.utils.common import get_project_root
     from ifi.tek_controller.scope import TekScopeController
     from ifi.db_controller.vest_db import VEST_DB
+    from ifi.gui.workers.vest_db_worker import VestDbPollingWorker
     from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
     from ifi.analysis.params.params_plot import FontStyle
 
@@ -144,6 +146,7 @@ class Application(tk.Frame):
 
         config_file = Path(get_project_root()) / "ifi" / "config.ini"
         self.vest_db = VEST_DB(config_path=config_file)
+        self.vest_db_poller: VestDbPollingWorker | None = None
 
         self.create_widgets()
 
@@ -563,6 +566,22 @@ class Application(tk.Frame):
         # Try to get the DB shot number immediately when the button is pressed.
         self.task_queue.put(("get_shot_num", {}))
 
+        # Start VEST DB polling worker after a successful manual connection attempt.
+        if self.vest_db_poller is None:
+            # The callback enqueues a GUI-safe update
+            def _on_new_shot_code(shot_code: int) -> None:
+                self.gui_queue.put(
+                    ("shot_num_update", {"shot_num": str(shot_code)})
+                )
+
+            self.vest_db_poller = VestDbPollingWorker(
+                vest_db=self.vest_db,
+                on_new_shot_code=_on_new_shot_code,
+                poll_interval=30.0,
+            )
+
+        self.vest_db_poller.start_polling()
+
     def manual_save_action(self):
         """Action for the manual 'Save' button."""
         save_name = self.manual_save_name.get()
@@ -571,6 +590,8 @@ class Application(tk.Frame):
     def __del__(self):
         """Ensure listener thread is stopped when the app closes."""
         self.keyboard_listener.stop()
+        if self.vest_db_poller is not None:
+            self.vest_db_poller.stop_polling()
 
     def log_message(self, msg, level="INFO"):
         """
