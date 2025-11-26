@@ -491,6 +491,99 @@ class Application(tk.Frame):
                             )
                         )
 
+                elif task_name == "auto_trigger":
+                    shot_code = kwargs.get("shot_code")
+                    if not isinstance(shot_code, int):
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Auto trigger ignored: invalid shot code.",
+                                },
+                            )
+                        )
+                        continue
+
+                    if not self.scope_controller.is_idle():
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Auto trigger ignored: scope controller is busy.",
+                                },
+                            )
+                        )
+                        continue
+
+                    self.gui_queue.put(
+                        (
+                            "log",
+                            {
+                                "level": "INFO",
+                                "msg": f"Auto trigger for shot {shot_code}: starting acquisition and save.",
+                            },
+                        )
+                    )
+
+                    # For now we acquire a single reference channel; this can be
+                    # extended in later tasks when suffix/channel configuration
+                    # is introduced.
+                    channels = ["CH1"]
+                    acquired = self.scope_controller.acquire_data(channels)
+                    if not acquired:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "ERROR",
+                                    "msg": f"Auto trigger for shot {shot_code} failed: no data acquired.",
+                                },
+                            )
+                        )
+                        continue
+
+                    first_channel = channels[0]
+                    time_data, voltage_data = acquired[first_channel]
+                    save_data = {"TIME": time_data, first_channel: voltage_data}
+
+                    save_dir = Path("data")
+                    suffix = "_AUTO"
+                    filepath = self.scope_controller.save_data(
+                        directory=save_dir,
+                        shot_code=shot_code,
+                        suffix=suffix,
+                        data=save_data,
+                    )
+
+                    if filepath is not None:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "INFO",
+                                    "msg": f"Auto trigger: saved shot {shot_code} to {filepath}",
+                                },
+                            )
+                        )
+                        self.gui_queue.put(
+                            (
+                                "plot_update",
+                                {"time": time_data, "voltage": voltage_data},
+                            )
+                        )
+                    else:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "ERROR",
+                                    "msg": f"Auto trigger for shot {shot_code} failed: save_data returned None.",
+                                },
+                            )
+                        )
+
                 elif task_name == "read_and_plot_file":
                     filepath = kwargs.get("filepath")
                     self.gui_queue.put(
