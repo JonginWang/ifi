@@ -492,6 +492,10 @@ class Application(tk.Frame):
                             },
                         )
                     )
+                    # Indicate that the controller is about to acquire data.
+                    self.gui_queue.put(
+                        ("save_status", {"state": "ACQUIRING"})
+                    )
 
                     # Determine channels and suffix from configuration. If
                     # unavailable, fall back to a single CH1 acquisition.
@@ -525,6 +529,8 @@ class Application(tk.Frame):
                                 },
                             )
                         )
+                        # Back to idle if acquisition failed.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
                         continue
 
                     first_channel = channels[0]
@@ -536,6 +542,9 @@ class Application(tk.Frame):
                         time_array=time_data,
                         channel_arrays={ch: acquired[ch][1] for ch in acquired},
                     )
+
+                    # Acquisition succeeded; now indicate that saving will begin.
+                    self.gui_queue.put(("save_status", {"state": "SAVING"}))
 
                     save_dir = Path("data")
                     filepath = self.scope_controller.save_data(
@@ -570,6 +579,8 @@ class Application(tk.Frame):
                                     },
                                 )
                             )
+                        # Saving finished successfully; back to idle.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
                     else:
                         self.gui_queue.put(
                             (
@@ -580,6 +591,8 @@ class Application(tk.Frame):
                                 },
                             )
                         )
+                        # Saving failed; treat as idle from the GUI perspective.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
 
                 elif task_name == "auto_trigger":
                     shot_code = kwargs.get("shot_code")
@@ -616,6 +629,7 @@ class Application(tk.Frame):
                             },
                         )
                     )
+                    self.gui_queue.put(("save_status", {"state": "ACQUIRING"}))
 
                     # Determine channels based on suffix configuration. If no
                     # configuration is available, fall back to a single CH1
@@ -647,6 +661,7 @@ class Application(tk.Frame):
                                 },
                             )
                         )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
                         continue
 
                     # Use the first successfully acquired channel as the time
@@ -661,6 +676,8 @@ class Application(tk.Frame):
                         time_array=time_data,
                         channel_arrays={ch: acquired[ch][1] for ch in acquired},
                     )
+
+                    self.gui_queue.put(("save_status", {"state": "SAVING"}))
 
                     save_dir = Path("data")
                     filepath = self.scope_controller.save_data(
@@ -686,6 +703,7 @@ class Application(tk.Frame):
                                 {"time": time_data, "voltage": voltage_data},
                             )
                         )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
                     else:
                         self.gui_queue.put(
                             (
@@ -696,6 +714,7 @@ class Application(tk.Frame):
                                 },
                             )
                         )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
 
                 elif task_name == "read_and_plot_file":
                     filepath = kwargs.get("filepath")
@@ -766,6 +785,23 @@ class Application(tk.Frame):
                     path_str = kwargs.get("path")
                     if path_str:
                         self.last_saved_file = Path(path_str)
+
+                elif task_name == "save_status":
+                    state = kwargs.get("state", "IDLE")
+                    # Simple colour coding for save/acquisition status.
+                    # IDLE      -> gray
+                    # ACQUIRING -> orange
+                    # SAVING    -> green
+                    # ERROR     -> red
+                    if state == "ACQUIRING":
+                        color = "orange"
+                    elif state == "SAVING":
+                        color = "green"
+                    elif state == "ERROR":
+                        color = "red"
+                    else:
+                        color = "gray"
+                    self.save_status_light.config(fg=color)
 
         except queue.Empty:
             pass
