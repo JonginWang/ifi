@@ -22,7 +22,9 @@ Functions:
 """
 
 import numpy as np
+import pandas as pd
 from enum import Enum, auto
+from pathlib import Path
 from typing import Optional, Union
 from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
@@ -338,3 +340,61 @@ class TekScopeController:
             self.state = ScopeState.ERROR
 
         return results
+
+    def save_data(
+        self,
+        directory: Path | str,
+        shot_code: int,
+        suffix: str,
+        data: dict[str, np.ndarray],
+    ) -> Optional[Path]:
+        """
+        Save acquired waveform data to a CSV file using a standard naming scheme.
+
+        The output filename is formatted as ``{shot_code}{suffix}.csv`` and
+        written into the provided directory. The input ``data`` dictionary is
+        converted into a pandas DataFrame before being written.
+
+        Args:
+            directory: Target directory where the CSV file will be saved.
+            shot_code: Shot number used as the filename prefix.
+            suffix: Suffix string appended to the filename (for example,
+                ``\"_056\"`` or ``\"_ALL\"``).
+            data: Mapping from column name to NumPy array. All arrays should
+                have the same length (e.g. ``{\"TIME\": ..., \"CH1\": ...}``).
+
+        Returns:
+            pathlib.Path | None: The full path to the saved CSV file on
+            success, or None if saving failed.
+
+        Notes:
+            - The controller state is set to ``SAVING`` at the beginning of
+              this method and guaranteed to be restored to ``IDLE`` in a
+              ``finally`` block, even if an exception is raised.
+            - File-system errors are logged and result in ``None`` being
+              returned; callers can inspect the return value to detect
+              failures.
+        """
+        directory_path = Path(directory)
+        filename = f"{shot_code}{suffix}.csv"
+        filepath = directory_path / filename
+
+        logger.info(
+            f"{log_tag('TEKSC', 'SAVE ')} Saving data to {filepath} "
+            f"with columns: {list(data.keys())}"
+        )
+
+        self.state = ScopeState.SAVING
+        try:
+            directory_path.mkdir(parents=True, exist_ok=True)
+            df = pd.DataFrame(data)
+            df.to_csv(filepath, index=False)
+            return filepath
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'SAVE ')} Failed to save data to {filepath}: {exc}"
+            )
+            return None
+        finally:
+            # Always return to IDLE regardless of success or failure.
+            self.state = ScopeState.IDLE

@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import ifi.tek_controller.scope as scope_mod
@@ -205,5 +206,32 @@ def test_acquire_data_returns_dict_for_multiple_channels() -> None:
         assert isinstance(v, np.ndarray)
         assert t.shape == v.shape
         assert t.size > 0
+
+
+def test_save_data_creates_csv_and_resets_state(tmp_path) -> None:
+    """
+    save_data should create a CSV file with expected columns and return to IDLE.
+    """
+    controller = TekScopeController()
+    # Simulate an already-connected scope; save_data does not require it directly.
+
+    data = {
+        "TIME": np.array([0.0, 1.0], dtype=float),
+        "CH1": np.array([0.1, 0.2], dtype=float),
+    }
+
+    shot_code = 45821
+    suffix = "_056"
+
+    filepath = controller.save_data(tmp_path, shot_code, suffix, data)
+
+    assert controller.state == ScopeState.IDLE
+    assert filepath is not None
+    assert filepath.exists()
+
+    # Verify file contents via pandas
+    df = pd.read_csv(filepath)
+    assert list(df.columns) == ["TIME", "CH1"]
+    assert len(df) == 2
 
 
