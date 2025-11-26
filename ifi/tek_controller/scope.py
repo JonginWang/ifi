@@ -33,11 +33,13 @@ from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
 
 try:
-    from ..utils.common import LogManager, get_project_root, log_tag
+    from .. import get_project_root
+    from ..utils.common import LogManager, log_tag
     from ..utils.file_io import convert_to_hdf5
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
-    from ifi.utils.common import LogManager, get_project_root, log_tag
+    from ifi import get_project_root
+    from ifi.utils.common import LogManager, log_tag
     from ifi.utils.file_io import convert_to_hdf5
 
 # Get logger instance

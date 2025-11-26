@@ -34,7 +34,7 @@ try:
     from ..analysis.params.params_plot import FontStyle
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
-    from ifi.utils.common import get_project_root
+    from ifi import get_project_root
     from ifi.tek_controller.scope import TekScopeController
     from ifi.db_controller.vest_db import VEST_DB
     from ifi.gui.suffix_config import (
