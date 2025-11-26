@@ -34,7 +34,7 @@ if exist ".venv\Scripts\activate.bat" (
 REM Default values
 set "SCHEDULER=threads"
 set "MODE="
-set "FREQ="
+set "FREQ_DISPLAY="
 set "ARGS="
 
 REM Parse command line arguments
@@ -53,7 +53,9 @@ if "%~1"=="--density" (
     goto :parse_args
 )
 if "%~1"=="--freq" (
-    set "FREQ=--freq"
+    REM Start collecting frequency values for --freq
+    set "FREQ_DISPLAY="
+    set "ARGS=!ARGS! --freq"
     shift
     :collect_freq
     if "%~1"=="" goto :parse_args
@@ -61,30 +63,16 @@ if "%~1"=="--freq" (
     set "ARG_VAL=%~1"
     echo !ARG_VAL! | findstr /R "^--" >nul
     if !ERRORLEVEL! EQU 0 goto :parse_args
-    REM Check for frequency values (accept both 94/280 and 94.0/280.0)
-    if "!ARG_VAL!"=="94" (
-        set "FREQ=!FREQ! 94.0"
-        shift
-        goto :collect_freq
+    REM Treat any non-option arguments after --freq as frequency values.
+    REM Validation of allowed values (94.0, 280.0) is handled by Python argparse.
+    set "ARGS=!ARGS! !ARG_VAL!"
+    if "!FREQ_DISPLAY!"=="" (
+        set "FREQ_DISPLAY=!ARG_VAL!"
+    ) else (
+        set "FREQ_DISPLAY=!FREQ_DISPLAY!, !ARG_VAL!"
     )
-    if "!ARG_VAL!"=="280" (
-        set "FREQ=!FREQ! 280.0"
-        shift
-        goto :collect_freq
-    )
-    if "!ARG_VAL!"=="94.0" (
-        set "FREQ=!FREQ! 94.0"
-        shift
-        goto :collect_freq
-    )
-    if "!ARG_VAL!"=="280.0" (
-        set "FREQ=!FREQ! 280.0"
-        shift
-        goto :collect_freq
-    )
-    REM If not a frequency value, stop collecting and continue parsing
-    set "ARG_VAL="
-    goto :parse_args
+    shift
+    goto :collect_freq
 )
 if "%~1"=="--scheduler" (
     set "ARGS=!ARGS! --scheduler %~2"
@@ -194,7 +182,8 @@ if "%~1"=="--help" (
 if "!QUERY!"=="" (
     set "QUERY=%~1"
 ) else (
-    set "QUERY=!QUERY! %~1"
+    REM After the first positional argument (QUERY), treat all others as passthrough args.
+    set "ARGS=!ARGS! %~1"
 )
 shift
 goto :parse_args
@@ -216,33 +205,20 @@ echo Running IFI Data Save
 echo ============================================================================
 echo Query: !QUERY!
 echo Mode: !MODE!
-if not "!FREQ!"=="" (
-    if not "!FREQ!"=="--freq" (
-        echo Frequency filter: !FREQ!
-    ) else (
-        echo WARNING: --freq specified but no frequency values provided
-    )
+if not "!FREQ_DISPLAY!"=="" (
+    echo Frequency filter: !FREQ_DISPLAY!
 )
 echo Scheduler: !SCHEDULER!
 echo Additional options: !ARGS!
 echo ============================================================================
 echo.
 
-REM Build command based on mode
-REM Only include --freq if frequency values were collected
-set "FREQ_ARG="
-if not "!FREQ!"=="" (
-    if not "!FREQ!"=="--freq" (
-        set "FREQ_ARG=!FREQ!"
-    )
-)
-
 if "!MODE!"=="signal-only" (
     REM Signal only: STFT analysis, no density, save data
-    python -m ifi.analysis.main_analysis !QUERY! --stft --save_data !FREQ_ARG! --scheduler !SCHEDULER! !ARGS!
+    python -m ifi.analysis.main_analysis !QUERY! --stft --save_data --scheduler !SCHEDULER! !ARGS!
 ) else if "!MODE!"=="density" (
     REM Full analysis: STFT + density, save data
-    python -m ifi.analysis.main_analysis !QUERY! --stft --density --save_data !FREQ_ARG! --scheduler !SCHEDULER! !ARGS!
+    python -m ifi.analysis.main_analysis !QUERY! --stft --density --save_data --scheduler !SCHEDULER! !ARGS!
 ) else (
     echo ERROR: Unknown mode: !MODE!
     exit /b 1

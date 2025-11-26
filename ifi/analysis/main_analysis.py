@@ -130,13 +130,18 @@ def load_and_process_file(config_path, file_path, args):
             all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
             cols_to_analyze_idxs = range(len(all_data_cols))
-            if args.stft_cols is not None:
+            # Treat None or empty list as "analyze all columns"
+            if args.stft_cols:
                 stft_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.stft_cols))
                 if len(stft_cols_idxs) > 0:
-                    logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {stft_cols_idxs} vs input columns: {args.stft_cols}")
+                    logging.info(
+                        f"{log_tag('ANALY','LOAD')} Analyzing columns: {stft_cols_idxs} vs input columns: {args.stft_cols}"
+                    )
                     cols_to_analyze_idxs = list(stft_cols_idxs)
                 else:
-                    logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for STFT. Skipping STFT analysis.")
+                    logging.warning(
+                        f"{log_tag('ANALY','LOAD')} No columns to analyze for STFT. Skipping STFT analysis."
+                    )
                     cols_to_analyze_idxs = []
 
             fs = 1 / df_processed["TIME"].diff().mean()
@@ -165,13 +170,18 @@ def load_and_process_file(config_path, file_path, args):
             all_data_cols = [col for col in df_processed.columns if col != "TIME"]
 
             cols_to_analyze_idxs = range(len(all_data_cols))
-            if args.cwt_cols is not None:
+            # Treat None or empty list as "analyze all columns"
+            if args.cwt_cols:
                 cwt_cols_idxs = set(cols_to_analyze_idxs).intersection(set(args.cwt_cols))
                 if len(cwt_cols_idxs) > 0:
-                    logging.info(f"{log_tag('ANALY','LOAD')} Analyzing columns: {cwt_cols_idxs} vs input columns: {args.cwt_cols}")
+                    logging.info(
+                        f"{log_tag('ANALY','LOAD')} Analyzing columns: {cwt_cols_idxs} vs input columns: {args.cwt_cols}"
+                    )
                     cols_to_analyze_idxs = list(cwt_cols_idxs)
                 else:
-                    logging.warning(f"{log_tag('ANALY','LOAD')} No columns to analyze for CWT. Skipping CWT analysis.")
+                    logging.warning(
+                        f"{log_tag('ANALY','LOAD')} No columns to analyze for CWT. Skipping CWT analysis."
+                    )
                     cols_to_analyze_idxs = []
 
             fs = 1 / df_processed["TIME"].diff().mean()
