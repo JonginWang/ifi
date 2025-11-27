@@ -24,13 +24,25 @@ try:
     from .. import get_project_root
     from ..tek_controller.scope import TekScopeController
     from ..db_controller.vest_db import VEST_DB
+    from ..gui.suffix_config import (
+        MachineSuffixConfig,
+        build_data_dict_from_channels,
+        load_suffix_config,
+    )
+    from ..gui.workers.vest_db_worker import VestDbPollingWorker
     from ..utils.file_io import read_waveform_file, save_waveform_to_csv
     from ..analysis.params.params_plot import FontStyle
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
-    from ifi.utils.common import get_project_root
+    from ifi import get_project_root
     from ifi.tek_controller.scope import TekScopeController
     from ifi.db_controller.vest_db import VEST_DB
+    from ifi.gui.suffix_config import (
+        MachineSuffixConfig,
+        build_data_dict_from_channels,
+        load_suffix_config,
+    )
+    from ifi.gui.workers.vest_db_worker import VestDbPollingWorker
     from ifi.utils.file_io import read_waveform_file, save_waveform_to_csv
     from ifi.analysis.params.params_plot import FontStyle
 
@@ -145,6 +157,20 @@ class Application(tk.Frame):
         config_file = Path(get_project_root()) / "ifi" / "config.ini"
         self.vest_db = VEST_DB(config_path=config_file)
 
+        # --- Suffix / Channel Configuration ---
+        suffix_ini = Path(get_project_root()) / "ifi" / "gui" / "suffix.ini"
+        # For now, assume the first tab ("IF 94G") corresponds to machine key "94G".
+        self.suffix_config: MachineSuffixConfig | None = load_suffix_config(
+            suffix_ini, machine_key="94G"
+        )
+
+        # Manual/automatic save options
+        self.file_format_var = tk.StringVar(value="CSV")
+        self.enable_plotting_var = tk.BooleanVar(value=True)
+        self.last_saved_file: Path | None = None
+
+        self.vest_db_poller: VestDbPollingWorker | None = None
+
         self.create_widgets()
 
         # --- Worker Thread ---
@@ -241,6 +267,32 @@ class Application(tk.Frame):
             save_frame, text="Save", command=self.manual_save_action
         )
         self.manual_save_button.pack(side="left", padx=5, pady=5)
+
+        # Manual operations: format selection and plotting controls
+        options_frame = ttk.Frame(parent)
+        options_frame.pack(padx=10, pady=5, fill="x")
+
+        ttk.Label(options_frame, text="Format:").pack(side="left", padx=5, pady=5)
+        format_dropdown = ttk.Combobox(
+            options_frame,
+            textvariable=self.file_format_var,
+            values=["CSV", "HDF5"],
+            state="readonly",
+            width=8,
+        )
+        format_dropdown.pack(side="left", padx=5, pady=5)
+
+        enable_plot_check = ttk.Checkbutton(
+            options_frame,
+            text="Enable Plotting",
+            variable=self.enable_plotting_var,
+        )
+        enable_plot_check.pack(side="left", padx=5, pady=5)
+
+        plot_last_button = ttk.Button(
+            options_frame, text="Plot Last Shot", command=self.plot_last_shot_action
+        )
+        plot_last_button.pack(side="left", padx=5, pady=5)
 
         # Log Section
         log_frame = ttk.LabelFrame(parent, text="Log")
@@ -406,6 +458,7 @@ class Application(tk.Frame):
 
                 elif task_name == "manual_save":
                     save_name = kwargs.get("save_name")
+                    file_format = kwargs.get("file_format", "CSV")
                     if not save_name:
                         self.gui_queue.put(
                             (
@@ -413,6 +466,18 @@ class Application(tk.Frame):
                                 {
                                     "level": "WARN",
                                     "msg": "Manual save failed: Save name cannot be empty.",
+                                },
+                            )
+                        )
+                        continue
+
+                    if not self.scope_controller.is_idle():
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Manual save request ignored: scope controller is busy.",
                                 },
                             )
                         )
@@ -427,28 +492,70 @@ class Application(tk.Frame):
                             },
                         )
                     )
-
-                    # For simplicity, we save CH1. This could be configurable in the GUI.
-                    channel_to_save = "CH1"
-                    waveform_data = self.scope_controller.get_waveform_data(
-                        channel=channel_to_save
+                    # Indicate that the controller is about to acquire data.
+                    self.gui_queue.put(
+                        ("save_status", {"state": "ACQUIRING"})
                     )
 
-                    if waveform_data:
-                        time_data, voltage_data = waveform_data
-                        # Define a save directory
-                        save_dir = "data"  # Or get this from a config file/GUI
-                        filename = f"{save_name}_{channel_to_save}.csv"
-                        filepath = Path(save_dir) / filename
+                    # Determine channels and suffix from configuration. If
+                    # unavailable, fall back to a single CH1 acquisition.
+                    if self.suffix_config is not None:
+                        configured_channels = [
+                            name
+                            for name in self.suffix_config.profile.channels
+                            if name.upper() != "TIME"
+                        ]
+                        channels = configured_channels or ["CH1"]
+                        base_suffix = self.suffix_config.profile.suffix
+                    else:
+                        channels = ["CH1"]
+                        base_suffix = "_MANUAL"
 
-                        # Use the new file_io function
-                        save_waveform_to_csv(
-                            filepath,
-                            time_data,
-                            voltage_data,
-                            channel_name=channel_to_save,
+                    # Allow the controller to override the suffix based on the
+                    # currently connected physical scope (e.g. 94G1 → _056,
+                    # 94G2 → _789).
+                    suffix = self.scope_controller.get_suffix_for_connected_scope(
+                        base_suffix
+                    )
+
+                    acquired = self.scope_controller.acquire_data(channels)
+                    if not acquired:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "ERROR",
+                                    "msg": "Manual save failed: no data acquired.",
+                                },
+                            )
                         )
+                        # Back to idle if acquisition failed.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
+                        continue
 
+                    first_channel = channels[0]
+                    time_data, _ = acquired[first_channel]
+                    save_data = build_data_dict_from_channels(
+                        self.suffix_config.profile.channels
+                        if self.suffix_config is not None
+                        else ["TIME", first_channel],
+                        time_array=time_data,
+                        channel_arrays={ch: acquired[ch][1] for ch in acquired},
+                    )
+
+                    # Acquisition succeeded; now indicate that saving will begin.
+                    self.gui_queue.put(("save_status", {"state": "SAVING"}))
+
+                    save_dir = Path("data")
+                    filepath = self.scope_controller.save_data(
+                        directory=save_dir,
+                        shot_code=save_name,
+                        suffix=suffix,
+                        data=save_data,
+                        file_format=file_format,
+                    )
+
+                    if filepath is not None:
                         self.gui_queue.put(
                             (
                                 "log",
@@ -458,23 +565,156 @@ class Application(tk.Frame):
                                 },
                             )
                         )
-                        # Also plot the newly saved data
+                        # Remember last saved file and optionally plot.
                         self.gui_queue.put(
-                            (
-                                "plot_update",
-                                {"time": time_data, "voltage": voltage_data},
-                            )
+                            ("last_saved_file", {"path": str(filepath)})
                         )
+                        if self.enable_plotting_var.get():
+                            self.gui_queue.put(
+                                (
+                                    "plot_update",
+                                    {
+                                        "time": time_data,
+                                        "voltage": acquired[first_channel][1],
+                                    },
+                                )
+                            )
+                        # Saving finished successfully; back to idle.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
                     else:
                         self.gui_queue.put(
                             (
                                 "log",
                                 {
                                     "level": "ERROR",
-                                    "msg": "Failed to get waveform data for manual save.",
+                                    "msg": "Manual save failed: save_data returned None.",
                                 },
                             )
                         )
+                        # Saving failed; treat as idle from the GUI perspective.
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
+
+                elif task_name == "auto_trigger":
+                    shot_code = kwargs.get("shot_code")
+                    if not isinstance(shot_code, int):
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Auto trigger ignored: invalid shot code.",
+                                },
+                            )
+                        )
+                        continue
+
+                    if not self.scope_controller.is_idle():
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "WARN",
+                                    "msg": "Auto trigger ignored: scope controller is busy.",
+                                },
+                            )
+                        )
+                        continue
+
+                    self.gui_queue.put(
+                        (
+                            "log",
+                            {
+                                "level": "INFO",
+                                "msg": f"Auto trigger for shot {shot_code}: starting acquisition and save.",
+                            },
+                        )
+                    )
+                    self.gui_queue.put(("save_status", {"state": "ACQUIRING"}))
+
+                    # Determine channels based on suffix configuration. If no
+                    # configuration is available, fall back to a single CH1
+                    # acquisition.
+                    if self.suffix_config is not None:
+                        configured_channels = [
+                            name
+                            for name in self.suffix_config.profile.channels
+                            if name.upper() != "TIME"
+                        ]
+                        channels = configured_channels or ["CH1"]
+                        base_suffix = self.suffix_config.profile.suffix
+                    else:
+                        channels = ["CH1"]
+                        base_suffix = "_AUTO"
+
+                    suffix = self.scope_controller.get_suffix_for_connected_scope(
+                        base_suffix
+                    )
+
+                    acquired = self.scope_controller.acquire_data(channels)
+                    if not acquired:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "ERROR",
+                                    "msg": f"Auto trigger for shot {shot_code} failed: no data acquired.",
+                                },
+                            )
+                        )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
+                        continue
+
+                    # Use the first successfully acquired channel as the time
+                    # reference for building the data dictionary.
+                    first_channel = channels[0]
+                    time_data, voltage_data = acquired[first_channel]
+                    # Build data dict according to configured channel ordering.
+                    save_data = build_data_dict_from_channels(
+                        self.suffix_config.profile.channels
+                        if self.suffix_config is not None
+                        else ["TIME", first_channel],
+                        time_array=time_data,
+                        channel_arrays={ch: acquired[ch][1] for ch in acquired},
+                    )
+
+                    self.gui_queue.put(("save_status", {"state": "SAVING"}))
+
+                    save_dir = Path("data")
+                    filepath = self.scope_controller.save_data(
+                        directory=save_dir,
+                        shot_code=shot_code,
+                        suffix=suffix,
+                        data=save_data,
+                    )
+
+                    if filepath is not None:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "INFO",
+                                    "msg": f"Auto trigger: saved shot {shot_code} to {filepath}",
+                                },
+                            )
+                        )
+                        self.gui_queue.put(
+                            (
+                                "plot_update",
+                                {"time": time_data, "voltage": voltage_data},
+                            )
+                        )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
+                    else:
+                        self.gui_queue.put(
+                            (
+                                "log",
+                                {
+                                    "level": "ERROR",
+                                    "msg": f"Auto trigger for shot {shot_code} failed: save_data returned None.",
+                                },
+                            )
+                        )
+                        self.gui_queue.put(("save_status", {"state": "IDLE"}))
 
                 elif task_name == "read_and_plot_file":
                     filepath = kwargs.get("filepath")
@@ -538,7 +778,30 @@ class Application(tk.Frame):
                 elif task_name == "plot_update":
                     t = kwargs.get("time")
                     v = kwargs.get("voltage")
-                    self.plot_data(t, v)
+                    if self.enable_plotting_var.get():
+                        self.plot_data(t, v)
+
+                elif task_name == "last_saved_file":
+                    path_str = kwargs.get("path")
+                    if path_str:
+                        self.last_saved_file = Path(path_str)
+
+                elif task_name == "save_status":
+                    state = kwargs.get("state", "IDLE")
+                    # Simple colour coding for save/acquisition status.
+                    # IDLE      -> gray
+                    # ACQUIRING -> orange
+                    # SAVING    -> green
+                    # ERROR     -> red
+                    if state == "ACQUIRING":
+                        color = "orange"
+                    elif state == "SAVING":
+                        color = "green"
+                    elif state == "ERROR":
+                        color = "red"
+                    else:
+                        color = "gray"
+                    self.save_status_light.config(fg=color)
 
         except queue.Empty:
             pass
@@ -551,14 +814,35 @@ class Application(tk.Frame):
         # Try to get the DB shot number immediately when the button is pressed.
         self.task_queue.put(("get_shot_num", {}))
 
+        # Start VEST DB polling worker after a successful manual connection attempt.
+        if self.vest_db_poller is None:
+            # The callback enqueues a GUI-safe update
+            def _on_new_shot_code(shot_code: int) -> None:
+                self.gui_queue.put(
+                    ("shot_num_update", {"shot_num": str(shot_code)})
+                )
+
+            self.vest_db_poller = VestDbPollingWorker(
+                vest_db=self.vest_db,
+                on_new_shot_code=_on_new_shot_code,
+                poll_interval=30.0,
+            )
+
+        self.vest_db_poller.start_polling()
+
     def manual_save_action(self):
         """Action for the manual 'Save' button."""
         save_name = self.manual_save_name.get()
-        self.task_queue.put(("manual_save", {"save_name": save_name}))
+        file_format = self.file_format_var.get()
+        self.task_queue.put(
+            ("manual_save", {"save_name": save_name, "file_format": file_format})
+        )
 
     def __del__(self):
         """Ensure listener thread is stopped when the app closes."""
         self.keyboard_listener.stop()
+        if self.vest_db_poller is not None:
+            self.vest_db_poller.stop_polling()
 
     def log_message(self, msg, level="INFO"):
         """
@@ -617,6 +901,29 @@ class Application(tk.Frame):
                     )
         except Exception as e:
             self.log_message(f"Error loading waveform: {e}", "ERROR")
+
+    def plot_last_shot_action(self):
+        """Plot the most recently saved shot from disk."""
+        if not self.enable_plotting_var.get():
+            self.log_message("Plotting is disabled. Enable it to plot last shot.", "INFO")
+            return
+
+        if self.last_saved_file is None:
+            self.log_message("No previously saved file to plot.", "WARN")
+            return
+
+        try:
+            result = read_waveform_file(str(self.last_saved_file))
+            if result:
+                time_data, voltage_data = result
+                self.plot_data(time_data, voltage_data)
+                self.log_message(f"Plotted waveform from {self.last_saved_file.name}")
+            else:
+                self.log_message(
+                    f"Failed to read waveform from {self.last_saved_file.name}", "ERROR"
+                )
+        except Exception as e:
+            self.log_message(f"Error plotting last shot: {e}", "ERROR")
 
     def connect_scope1_action(self, event):
         """

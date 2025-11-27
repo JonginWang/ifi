@@ -21,20 +21,50 @@ Functions:
     get_waveform_data: Function to acquire waveform data from the specified channel.
 """
 
+import configparser
+from enum import Enum, auto
+from pathlib import Path
+from typing import Dict, Optional, Union
+
 import numpy as np
-from typing import Optional, Union
+import pandas as pd
 from tm_devices import DeviceManager
 from tm_devices.drivers import MDO3, MSO5
 from tm_devices.helpers import PYVISA_PY_BACKEND
+
 try:
+    from .. import get_project_root
     from ..utils.common import LogManager, log_tag
+    from ..utils.file_io import convert_to_hdf5
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    from ifi import get_project_root
     from ifi.utils.common import LogManager, log_tag
+    from ifi.utils.file_io import convert_to_hdf5
 
 # Get logger instance
 LogManager()
 logger = LogManager().get_logger(__name__)
+
+
+class ScopeState(Enum):
+    """
+    Enum class representing the internal state of the TekScopeController.
+
+    Attributes:
+        IDLE: No active operation is in progress.
+        CONNECTING: A connection attempt to the scope is in progress.
+        ACQUIRING: Waveform acquisition from the scope is in progress.
+        SAVING: Data saving is in progress (reserved for higher-level workflows).
+        ERROR: An error has occurred; controller should be inspected or reset.
+    """
+
+    IDLE = auto()
+    CONNECTING = auto()
+    ACQUIRING = auto()
+    SAVING = auto()
+    ERROR = auto()
+
 
 # By creating a type alias for the supported scope models,
 # it is easy to refer to the collection of Tektronix scope device classes.
@@ -65,10 +95,15 @@ class TekScopeController:
         get_waveform_data: Function to acquire waveform data from the specified channel.
     """
 
-    def __init__(self):
-        """Initializes the TekScopeController."""
+    def __init__(self) -> None:
+        """
+        Initialize the TekScopeController.
+
+        The controller starts in the IDLE state with no connected scope but with
+        a ready-to-use DeviceManager based on the tm-devices library.
+        """
         with DeviceManager(verbose=True) as device_manager:
-            self.dm = device_manager
+            self.dm: DeviceManager = device_manager
 
         # Enable resetting the devices when connecting and closing
         self.dm.setup_cleanup_enabled = True
@@ -76,7 +111,124 @@ class TekScopeController:
         # Use the PyVISA-py backend
         self.dm.visa_library = PYVISA_PY_BACKEND
 
-        # self.scope: Optional[ ] = None
+        # Currently connected scope instance (if any)
+        self.scope: Optional[scope] = None
+
+        # Internal controller state for higher-level orchestration
+        self.state: ScopeState = ScopeState.IDLE
+
+        # Mapping from known Tektronix serial numbers to VISA addresses,
+        # loaded from ifi/config.ini, and an optional suffix override map
+        # used for filename suffix selection per physical scope.
+        self._serial_to_visa: Dict[str, str] = self._load_known_serial_to_visa()
+        self._serial_to_suffix: Dict[str, str] = self._build_serial_to_suffix_map()
+
+    def _load_known_serial_to_visa(self) -> Dict[str, str]:
+        """
+        Load known Tektronix VISA addresses from the project config.
+
+        Returns:
+            dict: Mapping from scope serial number to VISA address string.
+        """
+        mapping: Dict[str, str] = {}
+        try:
+            config_path = Path(get_project_root()) / "ifi" / "config.ini"
+            if not config_path.exists():
+                return mapping
+
+            parser = configparser.ConfigParser()
+            parser.read(config_path)
+
+            if "Tektronix" not in parser:
+                return mapping
+
+            tek_section = parser["Tektronix"]
+            for key, visa in tek_section.items():
+                if not key.startswith("visa_address_"):
+                    continue
+                parts = visa.split("::")
+                # Typical VISA format: USB0::0x0699::0x0408::SERIAL::0::INSTR
+                if len(parts) >= 4:
+                    serial = parts[3]
+                    mapping[serial] = visa
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'CONF ')} Failed to load Tektronix VISA addresses: {exc}"
+            )
+        return mapping
+
+    def _build_serial_to_suffix_map(self) -> Dict[str, str]:
+        """
+        Build a mapping from serial numbers to filename suffixes.
+
+        For now this derives suffixes from the specific config keys used for
+        the IF 94G setup:
+            - visa_address_94G1 → suffix \"_056\"
+            - visa_address_94G2 → suffix \"_789\"
+
+        Any other scopes fall back to the suffix provided by higher-level
+        configuration (e.g. suffix.ini).
+        """
+        mapping: Dict[str, str] = {}
+        try:
+            config_path = Path(get_project_root()) / "ifi" / "config.ini"
+            if not config_path.exists():
+                return mapping
+
+            parser = configparser.ConfigParser()
+            parser.read(config_path)
+
+            if "Tektronix" not in parser:
+                return mapping
+
+            tek_section = parser["Tektronix"]
+            for key, visa in tek_section.items():
+                parts = visa.split("::")
+                if len(parts) < 4:
+                    continue
+                serial = parts[3]
+                lowered_key = key.lower()
+                if lowered_key == "visa_address_94g1":
+                    mapping[serial] = "_056"
+                elif lowered_key == "visa_address_94g2":
+                    mapping[serial] = "_789"
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'CONF ')} Failed to build serial-to-suffix map: {exc}"
+            )
+        return mapping
+
+    def is_idle(self) -> bool:
+        """
+        Check whether the controller is currently idle.
+
+        Returns:
+            bool: True if the controller state is IDLE, False otherwise.
+        """
+        return self.state == ScopeState.IDLE
+
+    def is_busy(self) -> bool:
+        """
+        Check whether the controller is currently performing a blocking operation.
+
+        Returns:
+            bool: True if the controller is in CONNECTING, ACQUIRING or SAVING
+            state, False otherwise.
+        """
+        return self.state in {
+            ScopeState.CONNECTING,
+            ScopeState.ACQUIRING,
+            ScopeState.SAVING,
+        }
+
+    def set_error(self) -> None:
+        """
+        Set the controller state to ERROR.
+
+        This helper can be used by higher-level workflows when they detect
+        unrecoverable failures outside of the low-level controller methods.
+        """
+        self.state = ScopeState.ERROR
 
     def list_devices(self) -> list[str]:
         """
@@ -86,14 +238,44 @@ class TekScopeController:
         suitable for display in a GUI.
 
         Returns:
-            list[str]: A list of all discovered device strings.
+            list[str]: A list of all discovered device strings, optionally
+            annotated with VISA addresses and a star for known/configured
+            scopes.
 
         Raises:
             Exception: If an error occurs while listing devices.
         """
-        # The DeviceManager's __str__ representation is a good summary.
-        # Here we create a list of identifiers for each device.
-        return [f"{dev.model} - {dev.serial}" for dev in self.dm.devices]
+        devices: list[str] = []
+        for dev in self.dm.devices:
+            base = f"{dev.model} - {dev.serial}"
+            visa = self._serial_to_visa.get(dev.serial)
+            if visa:
+                # Mark devices that have a configured VISA address with a star.
+                label = f"{base} [{visa}]*"
+            else:
+                label = base
+            devices.append(label)
+        return devices
+
+    def get_suffix_for_connected_scope(self, default_suffix: str) -> str:
+        """
+        Return the preferred filename suffix for the currently connected scope.
+
+        Args:
+            default_suffix: Suffix provided by higher-level configuration
+                (e.g. suffix.ini) to fall back to.
+
+        Returns:
+            str: A scope-specific suffix if configured, otherwise default_suffix.
+        """
+        if not self.scope:
+            return default_suffix
+
+        serial = getattr(self.scope, "serial", None)
+        if not isinstance(serial, str):
+            return default_suffix
+
+        return self._serial_to_suffix.get(serial, default_suffix)
 
     def connect(self, device_identifier: str) -> bool:
         """
@@ -109,6 +291,7 @@ class TekScopeController:
             Exception: If an error occurs while connecting to the scope.
         """
         # The identifier is in "MODEL - SERIAL" format. We need the serial.
+        self.state = ScopeState.CONNECTING
         try:
             serial = device_identifier.split(" - ")[1]
             self.scope = self.dm.get_device(serial=serial)
@@ -130,19 +313,22 @@ class TekScopeController:
             logger.info(
                 f"{log_tag('TEKSC', 'CONN ')} Successfully connected to: {self.scope.idn_string}"
             )
+            self.state = ScopeState.IDLE
             return True
         except (IndexError, KeyError, TypeError) as e:
             logger.error(
                 f"{log_tag('TEKSC', 'CONN ')} Failed to connect to {device_identifier}: {e}"
             )
             self.scope = None
+            self.state = ScopeState.ERROR
             return False
 
-    def disconnect(self):
-        """Disconnects from the currently connected scope.
+    def disconnect(self) -> None:
+        """
+        Disconnects from the currently connected scope.
 
-        Returns:
-            None
+        The controller state is reset to IDLE regardless of whether a scope was
+        previously connected.
         """
         if self.scope:
             logger.info(
@@ -150,6 +336,9 @@ class TekScopeController:
             )
             self.scope.close()
             self.scope = None
+
+        # When no scope is connected, the controller is conceptually idle.
+        self.state = ScopeState.IDLE
         # self.dm.close_all_devices() # Use this for a full cleanup
 
     def get_idn(self) -> str:
@@ -188,8 +377,10 @@ class TekScopeController:
             logger.error(
                 f"{log_tag('TEKSC', 'GETWF')} Cannot get waveform, no scope connected."
             )
+            self.state = ScopeState.ERROR
             return None
 
+        self.state = ScopeState.ACQUIRING
         try:
             # Use high-level methods to configure the data source and retrieve the waveform.
             # This is a more realistic representation of how tm-devices works.
@@ -201,10 +392,150 @@ class TekScopeController:
             time_values = waveform.x
             voltage_values = waveform.y
 
+            self.state = ScopeState.IDLE
             return time_values, voltage_values
 
         except Exception as e:
             logger.error(
                 f"{log_tag('TEKSC', 'GETWF')} An unexpected error occurred while getting waveform for {channel}: {e}"
             )
+            self.state = ScopeState.ERROR
             return None
+
+    def acquire_data(
+        self, channels: list[str]
+    ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        """
+        Acquire waveform data for a list of channels.
+
+        This method calls :meth:`get_waveform_data` for each requested channel
+        and aggregates the results into a dictionary.
+
+        Args:
+            channels(list[str]): Channel names to acquire (e.g. ``['CH1', 'CH2']``).
+
+        Returns:
+            dict[str, tuple[np.ndarray, np.ndarray]]: Mapping from channel name
+                to ``(time, voltage)`` arrays. Channels that fail to acquire
+                are omitted from the dictionary.
+
+        Notes:
+            - The controller state is set to ``ACQUIRING`` at the beginning of
+              the multi-channel acquisition and restored to ``IDLE`` once all
+              requested channels have been processed, unless a fatal error
+              occurs.
+            - Individual channel acquisition errors are logged and skipped,
+              allowing partial results to be returned.
+        """
+        if not self.scope:
+            logger.error(
+                f"{log_tag('TEKSC', 'ACQ  ')} Cannot acquire data, no scope connected."
+            )
+            self.state = ScopeState.ERROR
+            return {}
+
+        results: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+        self.state = ScopeState.ACQUIRING
+
+        for ch in channels:
+            try:
+                data = self.get_waveform_data(channel=ch)
+                if data is not None:
+                    results[ch] = data
+                else:
+                    logger.warning(
+                        f"{log_tag('TEKSC', 'ACQ  ')} Skipping channel {ch}: no data returned."
+                    )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.error(
+                    f"{log_tag('TEKSC', 'ACQ  ')} Error acquiring data for {ch}: {exc}"
+                )
+
+        # If at least one channel succeeded, return to IDLE, otherwise mark ERROR.
+        if results:
+            self.state = ScopeState.IDLE
+        else:
+            self.state = ScopeState.ERROR
+
+        return results
+
+    def save_data(
+        self,
+        directory: Path | str,
+        shot_code: int,
+        suffix: str,
+        data: dict[str, np.ndarray],
+        file_format: str = "CSV",
+    ) -> Optional[Path]:
+        """
+        Save acquired waveform data to a CSV file using a standard naming scheme.
+
+        The output filename is formatted as ``{shot_code}{suffix}.<ext>`` and
+        written into the provided directory. The input ``data`` dictionary is
+        converted into a pandas DataFrame before being written.
+
+        Args:
+            directory: Target directory where the CSV file will be saved.
+            shot_code: Shot number used as the filename prefix.
+            suffix: Suffix string appended to the filename (for example,
+                ``\"_056\"`` or ``\"_ALL\"``).
+            data: Mapping from column name to NumPy array. All arrays should
+                have the same length (e.g. ``{\"TIME\": ..., \"CH1\": ...}``).
+            file_format: Output format. Currently supported values are
+                ``\"CSV\"`` and ``\"HDF5\"``. CSV is the default.
+
+        Returns:
+            pathlib.Path | None: The full path to the saved CSV file on
+            success, or None if saving failed.
+
+        Notes:
+            - The controller state is set to ``SAVING`` at the beginning of
+              this method and guaranteed to be restored to ``IDLE`` in a
+              ``finally`` block, even if an exception is raised.
+            - File-system errors are logged and result in ``None`` being
+              returned; callers can inspect the return value to detect
+              failures.
+        """
+        directory_path = Path(directory)
+        file_format_upper = file_format.upper()
+        if file_format_upper == "CSV":
+            filename = f"{shot_code}{suffix}.csv"
+        elif file_format_upper == "HDF5":
+            filename = f"{shot_code}{suffix}.h5"
+        else:
+            logger.error(
+                f"{log_tag('TEKSC', 'SAVE ')} Unsupported file format: {file_format}"
+            )
+            return None
+
+        filepath = directory_path / filename
+
+        logger.info(
+            f"{log_tag('TEKSC', 'SAVE ')} Saving data to {filepath} "
+            f"with columns: {list(data.keys())}"
+        )
+
+        self.state = ScopeState.SAVING
+        try:
+            directory_path.mkdir(parents=True, exist_ok=True)
+
+            if file_format_upper == "CSV":
+                df = pd.DataFrame(data)
+                df.to_csv(filepath, index=False)
+            elif file_format_upper == "HDF5":
+                # First write a temporary CSV in memory via pandas, then
+                # convert it into HDF5 using the shared utility.
+                temp_csv = directory_path / f"{shot_code}{suffix}.csv"
+                df = pd.DataFrame(data)
+                df.to_csv(temp_csv, index=False)
+                convert_to_hdf5(temp_csv, filepath)
+
+            return filepath
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error(
+                f"{log_tag('TEKSC', 'SAVE ')} Failed to save data to {filepath}: {exc}"
+            )
+            return None
+        finally:
+            # Always return to IDLE regardless of success or failure.
+            self.state = ScopeState.IDLE
