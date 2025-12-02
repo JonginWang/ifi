@@ -37,6 +37,19 @@ features:
 @author: Dominik Rueß
 @copyright: © 2024, Dominik Rueß
 @licence: GPL v3
+
+Revised by: Jongin Wang
+@date: 2025-12-03
+
+Modifications:
+- Fixed interpolation method selection logic based on smoothing parameter (s):
+  * If s == 0: Uses scipy.interpolate.interp1d with spline interpolation (no smoothing)
+    - Supports all degrees (0: 'zero', 1: 'slinear', 2: 'quadratic', 3: 'cubic')
+    - Cannot use splrep with s = 0, so interp1d wrapper is used
+  * If s > 0: Uses scipy.interpolate.splrep (spline representation with smoothing)
+    - Supports degrees 1, 2, 3 (smoothing splines)
+    - The smoothing parameter s controls the trade-off between smoothness and fit quality
+
 """
 
 # sys imports
@@ -73,9 +86,13 @@ def interpolateNonFinite(   signal : np.array,
              be interpolated (otherwise it stays non-finite). Not used for <= 0
     @param degree: interpolation spline degree, choice of 0, 1, 2 or 3
     @param xCoords: if the signal values are non-uniformly spaced   
-    @param smooth: either "auto", 0 or any positive value 
+    @param smooth: either "auto", 0 or any positive value.
+             Determines interpolation method:
+             - If s == 0: Uses scipy.interpolate.interp1d (no smoothing, exact fit)
+             - If s > 0: Uses scipy.interpolate.splrep (smoothing spline, s controls smoothness)
+             - "auto": s = n - sqrt(2*n) where n is number of finite points
     @returns: numpy array of float type. Note not all non-finite values may be interpolated, mainly
-              depending on the maxDepth parameter
+              depending on the maxNonFiniteNeighbors parameter
     
     """
     if degree < 0 or degree > 3 or type(degree) is not int:
@@ -135,31 +152,37 @@ def interpolateNonFinite(   signal : np.array,
     else:
         s = np.abs(float(smooth))
         
-    if degree == 0: # calling the scipy wrapper
-        if s > 0:
+    if degree == 0:
+        kind = 'zero'
+    elif degree == 1:
+        kind = 'slinear'
+    elif degree == 2:   
+        kind = 'quadratic'
+    elif degree == 3: 
+        kind = 'cubic'
+
+    if s == 0:
+        if degree > 0:
             warnings.warn("degree 0 (constant) interpolation cannot be used with smoothing", RuntimeWarning)
             
-        if degree == 0:
-            kind = 'zero'
-        elif degree == 1:
-            kind = 'slinear'
-        elif degree == 2:   
-            kind = 'quadratic'
-        elif degree == 3: 
-            kind = 'cubic'
-        
-        interpolation = scipy.interpolate.interp1d(xCoords[finiteIndexes], 
-                                               data[finiteIndexes], 
-                                               kind = kind,
-                                               bounds_error = not allowExtrapolation,
-                                               fill_value = "extrapolate" if allowExtrapolation else 0.)
+        # For any degree, if s == 0, use interp1d for being unable to use splrep with s = 0
+        interpolation = scipy.interpolate.interp1d(
+            xCoords[finiteIndexes],
+            data[finiteIndexes],
+            kind=kind,
+            bounds_error=not allowExtrapolation,
+            fill_value="extrapolate" if allowExtrapolation else 0.0
+        )
         useWrapper = True
     else:
-        useWrapper = False                       
-        interpolation = scipy.interpolate.splrep(xCoords[finiteIndexes],
-                                                 data[finiteIndexes],
-                                                 k = degree,
-                                                 s = s)
+        # For any degree, if s > 0, use splrep (spline representation)
+        useWrapper = False
+        interpolation = scipy.interpolate.splrep(
+            xCoords[finiteIndexes],
+            data[finiteIndexes],
+            k=degree,
+            s=s
+        )
 
     # interpolate only at the values of the original input without finite value 
     # i.e. leave original finite signal values as given
