@@ -57,7 +57,8 @@ except ImportError as e:
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
-ALLOWED_EXTENSIONS = [".csv", ".dat", ".mat", ".isf", ".wfm"]
+# ALLOWED_EXTENSIONS = [".csv", ".dat", ".mat", ".isf", ".wfm"]
+ALLOWED_EXTENSIONS = [".csv", ".dat", ".isf", ".wfm"]
 
 # This script finds files and returns a newline-separated list.
 # It now accepts multiple patterns separated by spaces.

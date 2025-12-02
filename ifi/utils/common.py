@@ -516,7 +516,8 @@ class FlatShotList:
         ValueError: If an error occurs while parsing the list.
     """
 
-    ALLOWED_EXTENSIONS = [".csv", ".dat", ".mat", ".isf", ".wfm"]
+    # ALLOWED_EXTENSIONS = [".csv", ".dat", ".mat", ".isf", ".wfm"]
+    ALLOWED_EXTENSIONS = [".csv", ".dat", ".isf", ".wfm"]
 
     def __init__(self, raw_list: List[Union[int, str, list]]):
         self.nums: List[int] = []
