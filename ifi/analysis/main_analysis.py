@@ -70,9 +70,10 @@ def load_and_process_file(config_path, file_path, args):
         args (argparse.Namespace): argparse.Namespace object containing the analysis parameters
 
     Returns:
-        tuple: (file_path, df_processed, stft_result, cwt_result)
+        tuple: (file_path, df_processed, df_raw, stft_result, cwt_result)
             file_path (str): Path to the file that was processed
             df_processed (pd.DataFrame): DataFrame containing the processed data
+            df_raw (pd.DataFrame): DataFrame containing the raw data (before refining/offset removal)
             stft_result (dict): Dictionary containing the STFT results
             cwt_result (dict): Dictionary containing the CWT results
     Raises:
@@ -92,7 +93,16 @@ def load_and_process_file(config_path, file_path, args):
         # 1. Read single file data
         # Use basename instead of full path to avoid network path issues
         # get_shot_data will use basename as the dictionary key
-        data_dict = nas_instance.get_shot_data(file_path, force_remote=args.force_remote)
+        # Pass allowed_frequencies if --freq option is specified
+        allowed_freqs = None
+        if hasattr(args, 'freq') and args.freq is not None:
+            allowed_freqs = args.freq
+        
+        data_dict = nas_instance.get_shot_data(
+            file_path, 
+            force_remote=args.force_remote,
+            allowed_frequencies=allowed_freqs
+        )
         
         # Check with basename (consistent with get_shot_data return keys)
         if not data_dict or file_basename not in data_dict:
@@ -105,10 +115,10 @@ def load_and_process_file(config_path, file_path, args):
                 + "=" * 80
                 + "\n"
             )
-            return None, None, None, None  # Return None for all results
+            return None, None, None, None, None  # Return None for all results
 
         # Use basename to get data (consistent key)
-        df_raw = data_dict[file_basename]
+        df_raw = data_dict[file_basename].copy()  # Keep raw data for saving
 
         # 2. Refine data (Removing nan values)
         df_refined = processing.refine_data(df_raw)
@@ -244,8 +254,8 @@ def load_and_process_file(config_path, file_path, args):
             cwt_result = {file_path: cwt_result_for_file}
             logging.info(f"{log_tag('ANALY','LOAD')} CWT analysis complete for {file_path}")
 
-        # Return a tuple of the processed data and any analysis results
-        return file_path, df_processed, stft_result, cwt_result
+        # Return a tuple of the processed data, raw data, and any analysis results
+        return file_path, df_processed, df_raw, stft_result, cwt_result
     finally:
         # Always disconnect the NAS_DB instance to free up resources
         # This is important when multiple tasks run in parallel
@@ -353,19 +363,167 @@ def run_analysis(
         )
         return
 
-    # --- 1. Find and Load Data ---
-    target_files = nas_db.find_files(
-        query=flat_list.all,
-        data_folders=args.data_folders,
-        add_path=args.add_path,
-        force_remote=args.force_remote,
-    )
-    if not target_files:
-        logging.warning(
-            "\n"
-            + f"{log_tag('ANALY','RUN')} No files found for the given query. Skipping."
-            + "\n"
+    # --- 0. Check Results Directory for Existing Analysis ---
+    # Determine what analysis results are needed based on args
+    need_stft = args.stft if hasattr(args, 'stft') else False
+    need_cwt = args.cwt if hasattr(args, 'cwt') else False
+    need_density = args.density if hasattr(args, 'density') else False
+    
+    # Check results for each shot number
+    results_data_by_shot = {}
+    shots_to_analyze = set()
+    
+    for shot_num in flat_list.nums:
+        if shot_num == 0:
+            continue  # Skip unknown shots
+        
+        results = file_io.load_results_from_hdf5(shot_num, base_dir=args.results_dir)
+        
+        if results:
+            # Check if we have the required data
+            has_signals = False
+            if "signals" in results:
+                signals_data = results["signals"]
+                
+                # Check if signals group is empty (handle both dict and h5py Group)
+                is_empty = False
+                if isinstance(signals_data, dict):
+                    is_empty = not signals_data or signals_data.get("empty", False)
+                elif hasattr(signals_data, 'attrs'):
+                    is_empty = signals_data.attrs.get("empty", False)
+                
+                if not is_empty:
+                    # Extract frequencies from signal names
+                    signals_freqs = []
+                    signal_keys = signals_data.keys() if hasattr(signals_data, 'keys') else []
+                    
+                    for signal_name in signal_keys:
+                        # Extract frequency from signal name (e.g., 'freq_94.0_GHz' -> 94.0)
+                        freq_match = re.search(r"freq_(\d+\.?\d*)_GHz", signal_name)
+                        if freq_match:
+                            signal_freq = float(freq_match.group(1))
+                            # Map to standard frequency group (93-95 -> 94, 275-285 -> 280)
+                            if 93.0 <= signal_freq <= 95.0:
+                                group_freq = 94.0
+                            elif 275.0 <= signal_freq <= 285.0:
+                                group_freq = 280.0
+                            else:
+                                group_freq = signal_freq
+                            signals_freqs.append(group_freq)
+                    
+                    # Check if required frequencies are present
+                    if args.freq is not None and len(args.freq) > 0:
+                        # Check if ALL requested frequencies are present
+                        requested_freqs = set(args.freq)
+                        available_freqs = set(signals_freqs)
+                        
+                        if requested_freqs.issubset(available_freqs):
+                            # All requested frequencies are available
+                            has_signals = True
+                        else:
+                            # Partial match or no match - need to analyze
+                            missing_freqs = requested_freqs - available_freqs
+                            if available_freqs:
+                                logging.info(
+                                    f"{log_tag('ANALY','RSLT')} Shot {shot_num} has signals for frequencies {sorted(available_freqs)} GHz, "
+                                    f"but missing frequencies {sorted(missing_freqs)} GHz. Will analyze missing frequencies."
+                                )
+                            else:
+                                logging.info(
+                                    f"{log_tag('ANALY','RSLT')} Shot {shot_num} has no matching signals for requested frequencies {sorted(requested_freqs)} GHz. Will analyze."
+                                )
+                            has_signals = False
+                    else:
+                        # No frequency filter specified - signals exist is sufficient
+                        if signals_freqs:
+                            has_signals = True
+            has_stft = "stft_results" in results and results["stft_results"] if need_stft else True
+            has_cwt = "cwt_results" in results and results["cwt_results"] if need_cwt else True
+            has_density = "density_data" in results and not results["density_data"].empty if need_density else True
+            
+            # If we have all required data, use results
+            if has_signals and has_stft and has_cwt and has_density:
+                results_data_by_shot[shot_num] = results
+                logging.info(
+                    f"{log_tag('ANALY','RSLT')} Found complete analysis results for shot {shot_num} in results directory. "
+                    f"Will use cached results instead of re-analyzing."
+                )
+            else:
+                # Partial results - will need to analyze
+                shots_to_analyze.add(shot_num)
+                missing = []
+                if not has_signals:
+                    missing.append("signals")
+                if need_stft and not has_stft:
+                    missing.append("stft_results")
+                if need_cwt and not has_cwt:
+                    missing.append("cwt_results")
+                if need_density and not has_density:
+                    missing.append("density_data")
+                logging.info(
+                    f"{log_tag('ANALY','RSLT')} Shot {shot_num} has partial results. Missing: {', '.join(missing)}. "
+                    f"Will analyze to fill gaps."
+                )
+        else:
+            # No results found - need to analyze
+            shots_to_analyze.add(shot_num)
+            logging.info(
+                f"{log_tag('ANALY','RSLT')} No results found for shot {shot_num}. Will perform full analysis."
+            )
+    
+    # If all shots have complete results, return early
+    if not shots_to_analyze and results_data_by_shot:
+        logging.info(
+            f"{log_tag('ANALY','RSLT')} All shots have complete results in results directory. "
+            f"Returning cached results without re-analysis."
         )
+        # Format results to match expected return structure
+        all_analysis_bundles = {}
+        for shot_num, results in results_data_by_shot.items():
+            all_analysis_bundles[shot_num] = {
+                "analysis_results": results
+            }
+        return all_analysis_bundles
+
+    # --- 1. Find and Load Data (only for shots that need analysis) ---
+    # Filter query to only include shots that need analysis
+    if shots_to_analyze:
+        # Create filtered query for shots that need analysis
+        shots_query = [s for s in flat_list.all if isinstance(s, int) and s in shots_to_analyze]
+        shots_query.extend([p for p in flat_list.paths])  # Include paths
+        analysis_query = shots_query if shots_query else flat_list.all
+        
+        target_files = nas_db.find_files(
+            query=analysis_query,
+            data_folders=args.data_folders,
+            add_path=args.add_path,
+            force_remote=args.force_remote,
+        )
+        if not target_files:
+            logging.warning(
+                "\n"
+                + f"{log_tag('ANALY','RUN')} No files found for shots that need analysis. Skipping analysis."
+                + "\n"
+            )
+            # Return results we already have
+            if results_data_by_shot:
+                all_analysis_bundles = {}
+                for shot_num, results in results_data_by_shot.items():
+                    all_analysis_bundles[shot_num] = {
+                        "analysis_results": results
+                    }
+                return all_analysis_bundles
+            return
+    else:
+        # All shots have complete results, return early (already handled above)
+        # This should not be reached due to early return above, but keep for safety
+        if results_data_by_shot:
+            all_analysis_bundles = {}
+            for shot_num, results in results_data_by_shot.items():
+                all_analysis_bundles[shot_num] = {
+                    "analysis_results": results
+                }
+            return all_analysis_bundles
         return
 
     # Group files by shot number and determine interferometry parameters
@@ -447,10 +605,16 @@ def run_analysis(
 
     # --- Process Dask Results ---
     analysis_data = defaultdict(dict)
+    raw_data = defaultdict(dict)  # Store raw data separately
     stft_results = defaultdict(dict)
     cwt_results = defaultdict(dict)
-    for file_path, df, stft_result, cwt_result in results:
-        if df is None:
+    for result in results:
+        if result[0] is None:  # file_path is None
+            continue
+        
+        file_path, df_processed, df_raw_single, stft_result, cwt_result = result
+        
+        if df_processed is None:
             continue
 
         match = re.search(r"(\d{5,})", Path(file_path).name)
@@ -458,7 +622,9 @@ def run_analysis(
             int(match.group(1)) if match else 0
         )  # Group under 0 if no shot number
 
-        analysis_data[shot_num][Path(file_path).name] = df
+        analysis_data[shot_num][Path(file_path).name] = df_processed
+        if df_raw_single is not None:
+            raw_data[shot_num][Path(file_path).name] = df_raw_single
         if stft_result:
             stft_results[shot_num].update(stft_result)
         if cwt_result:
@@ -469,7 +635,8 @@ def run_analysis(
     shots_to_process = sorted(analysis_data.keys())
 
     for shot_num in shots_to_process:
-        shot_nas_data = analysis_data[shot_num]
+        shot_nas_data = analysis_data[shot_num]  # Processed data for analysis
+        shot_raw_data = raw_data.get(shot_num, {})  # Raw data for saving
         shot_stft_data = stft_results.get(shot_num, {})
         shot_cwt_data = cwt_results.get(shot_num, {})
 
@@ -1043,31 +1210,99 @@ def run_analysis(
                 else "unknown_shots"
             )
             
-            # Convert combined_signals dict to format expected by save_results_to_hdf5
-            # save_results_to_hdf5 expects signals as dict[str, DataFrame]
-            # combined_signals is now dict[float, DataFrame] (keys are 94.0, 280.0)
-            # Convert to dict[str, DataFrame] with string keys
+            # Create signals_dict from RAW data (not processed/refined data)
+            # Use raw_data instead of combined_signals to save original unprocessed signals
             signals_dict = {}
-            if isinstance(combined_signals, dict):
-                for freq_key, freq_df in combined_signals.items():
-                    # Convert frequency key to string and prepare DataFrame
-                    freq_str = str(freq_key)
-                    # Convert index to TIME column if needed
-                    freq_df_copy = freq_df.copy()
-                    if freq_df_copy.index.name == "TIME":
-                        freq_df_copy = freq_df_copy.reset_index()
-                    elif "TIME" not in freq_df_copy.columns:
-                        if freq_df_copy.index.name is None or freq_df_copy.index.name == "":
-                            freq_df_copy = freq_df_copy.reset_index()
-                            freq_df_copy.rename(columns={freq_df_copy.columns[0]: "TIME"}, inplace=True)
-                    # Use frequency as part of the key name
-                    signals_dict[f"freq_{freq_str}_GHz"] = freq_df_copy
-            else:
-                # Fallback: if combined_signals is still DataFrame (shouldn't happen)
-                combined_df = combined_signals.copy()
-                if combined_df.index.name == "TIME":
-                    combined_df = combined_df.reset_index()
-                signals_dict["combined"] = combined_df
+            
+            # Build frequency-grouped raw signals similar to combined_signals but using raw data
+            freq_raw_signals = {}
+            for freq_ghz, group_info in freq_groups.items():
+                files_in_group = group_info["files"]
+                
+                if freq_ghz == 280.0:
+                    # 280GHz: Use _ALL file independently
+                    all_file = None
+                    for basename in files_in_group:
+                        if "_ALL" in basename and basename in shot_raw_data:
+                            all_file = basename
+                            break
+                    
+                    if all_file:
+                        df_raw = shot_raw_data[all_file].copy()
+                        if "TIME" in df_raw.columns:
+                            df_raw.index = df_raw["TIME"]
+                            df_raw = df_raw.drop("TIME", axis=1)
+                            df_raw.index.name = "TIME"
+                        freq_raw_signals[freq_ghz] = df_raw
+                
+                elif freq_ghz == 94.0:
+                    # 94GHz: Use _0XX file as reference time axis, combine with other files
+                    ref_file = None
+                    other_files = []
+                    
+                    # Find reference file (_0XX pattern) and other files
+                    for basename in files_in_group:
+                        if "_0" in basename and basename in shot_raw_data:
+                            ref_file = basename
+                        elif basename in shot_raw_data:
+                            other_files.append(basename)
+                    
+                    if ref_file:
+                        # Use reference file's time axis
+                        ref_df_raw = shot_raw_data[ref_file].copy()
+                        if "TIME" in ref_df_raw.columns:
+                            ref_time_axis = ref_df_raw["TIME"]
+                            ref_df_raw.index = ref_time_axis
+                            ref_df_raw = ref_df_raw.drop("TIME", axis=1)
+                            ref_df_raw.index.name = "TIME"
+                        else:
+                            ref_time_axis = ref_df_raw.index
+                        
+                        # Rename reference file columns
+                        ref_suffix = ref_file.replace(".csv", "").replace(".dat", "")
+                        ref_df_raw.columns = [f"{col}_{ref_suffix}" for col in ref_df_raw.columns]
+                        
+                        combined_raw_dfs = [ref_df_raw]
+                        
+                        # Add other files, reindexed to reference time axis
+                        for other_file in other_files:
+                            other_df_raw = shot_raw_data[other_file].copy()
+                            if "TIME" in other_df_raw.columns:
+                                other_df_raw.index = other_df_raw["TIME"]
+                                other_df_raw = other_df_raw.drop("TIME", axis=1)
+                            
+                            # Reindex to reference time axis
+                            other_df_raw_reindexed = other_df_raw.reindex(
+                                ref_time_axis, method="nearest", limit=1
+                            )
+                            
+                            # Rename columns to avoid conflicts
+                            other_suffix = other_file.replace(".csv", "").replace(".dat", "")
+                            other_df_raw_reindexed.columns = [
+                                f"{col}_{other_suffix}"
+                                for col in other_df_raw_reindexed.columns
+                            ]
+                            
+                            combined_raw_dfs.append(other_df_raw_reindexed)
+                        
+                        # Combine all 94GHz raw files
+                        if combined_raw_dfs:
+                            freq_raw_signals[freq_ghz] = pd.concat(combined_raw_dfs, axis=1)
+            
+            # Convert freq_raw_signals to signals_dict format expected by save_results_to_hdf5
+            for freq_key, freq_df_raw in freq_raw_signals.items():
+                # Convert frequency key to string and prepare DataFrame
+                freq_str = str(freq_key)
+                # Convert index to TIME column if needed
+                freq_df_raw_copy = freq_df_raw.copy()
+                if freq_df_raw_copy.index.name == "TIME":
+                    freq_df_raw_copy = freq_df_raw_copy.reset_index()
+                elif "TIME" not in freq_df_raw_copy.columns:
+                    if freq_df_raw_copy.index.name is None or freq_df_raw_copy.index.name == "":
+                        freq_df_raw_copy = freq_df_raw_copy.reset_index()
+                        freq_df_raw_copy.rename(columns={freq_df_raw_copy.columns[0]: "TIME"}, inplace=True)
+                # Use frequency as part of the key name
+                signals_dict[f"freq_{freq_str}_GHz"] = freq_df_raw_copy
             
             # Convert density_data dict to format expected by save_results_to_hdf5
             # For now, combine all frequency density data into one DataFrame
@@ -1108,6 +1343,24 @@ def run_analysis(
             )
 
     logging.info(f"{log_tag('ANALY','RUN')} Full Analysis Finished")
+    
+    # Merge results from cache and newly analyzed data
+    if results_data_by_shot:
+        for shot_num, cached_results in results_data_by_shot.items():
+            if shot_num in all_analysis_bundles:
+                # Merge cached results with newly analyzed results
+                # Prefer newly analyzed results if both exist
+                logging.info(
+                    f"{log_tag('ANALY','RSLT')} Merging cached and newly analyzed results for shot {shot_num}"
+                )
+                # Newly analyzed results take precedence
+                # But we can merge missing parts from cache if needed
+            else:
+                # Add cached results that weren't re-analyzed
+                all_analysis_bundles[shot_num] = {
+                    "analysis_results": cached_results
+                }
+    
     return all_analysis_bundles
 
 

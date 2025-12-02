@@ -49,9 +49,11 @@ import uuid
 from contextlib import nullcontext
 try:
     from ..utils.common import LogManager, ensure_str_path, log_tag
+    from .. import get_project_root
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     from ifi.utils.common import LogManager, ensure_str_path, log_tag
+    from ifi import get_project_root
 
 # Define the set of file extensions that the system is designed to process.
 # This prevents attempts to read unsupported files like images (.tif) or documents.
@@ -354,11 +356,11 @@ class NAS_DB:
                     remote_path = os.path.join(home_dir, ".ifi_temp").replace("\\", "/")
                     self.remote_temp_dir = remote_path  # Store for later use
                     self.logger.info(
-                        f"{log_tag('NASDB','CHKD ')} Remote temp directory not configured, using dynamic path: {remote_path}"
+                        f"{log_tag('NASDB','CHKD')} Remote temp directory not configured, using dynamic path: {remote_path}"
                     )
                 except Exception as e:
                     self.logger.error(
-                        f"{log_tag('NASDB','CHKD ')} Could not determine remote home directory: {e}"
+                        f"{log_tag('NASDB','CHKD')} Could not determine remote home directory: {e}"
                     )
                     raise
 
@@ -371,12 +373,12 @@ class NAS_DB:
             except FileNotFoundError:
                 # If it doesn't exist, create it
                 self.logger.info(
-                    f"{log_tag('NASDB','CHKD ')} Remote directory '{remote_path}' not found. Creating it."
+                    f"{log_tag('NASDB','CHKD')} Remote directory '{remote_path}' not found. Creating it."
                 )
                 self.sftp_client.mkdir(remote_path)
             except Exception as e:
                 self.logger.error(
-                    f"{log_tag('NASDB','CHKD ')} Could not check or create remote directory '{remote_path}': {e}"
+                    f"{log_tag('NASDB','CHKD')} Could not check or create remote directory '{remote_path}': {e}"
                 )
                 # Depending on the desired robustness, you might want to raise this exception
                 raise
@@ -395,18 +397,18 @@ class NAS_DB:
 
             if Path(self.nas_mount).is_dir():
                 self.logger.info(
-                    f"{log_tag('NASDB','CONN ')} Local NAS mount found at '{self.nas_mount}'. Using direct access."
+                    f"{log_tag('NASDB','CONN')} Local NAS mount found at '{self.nas_mount}'. Using direct access."
                 )
                 self.access_mode = "local"
                 self._is_connected = True
                 return True
 
-            self.logger.info(f"{log_tag('NASDB','CONN ')} Local NAS mount not found. Attempting SSH connection.")
+            self.logger.info(f"{log_tag('NASDB','CONN')} Local NAS mount not found. Attempting SSH connection.")
             self.access_mode = "remote"
 
             for attempt in range(self.ssh_max_retries):
                 try:
-                    self.logger.info(f"{log_tag('NASDB','CONN ')} SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
+                    self.logger.info(f"{log_tag('NASDB','CONN')} SSH connection attempt {attempt + 1}/{self.ssh_max_retries}...")
                     self.ssh_client = paramiko.SSHClient()
                     self.ssh_client.set_missing_host_key_policy(
                         paramiko.AutoAddPolicy()
@@ -419,21 +421,21 @@ class NAS_DB:
                         timeout=self.ssh_connect_timeout,
                     )
                     self.sftp_client = self.ssh_client.open_sftp()
-                    self.logger.info(f"{log_tag('NASDB','CONN ')} SSH connection to {self.ssh_host} successful.")
+                    self.logger.info(f"{log_tag('NASDB','CONN')} SSH connection to {self.ssh_host} successful.")
 
                     self._authenticate_nas_remote()
                     self._is_connected = True
                     return True
 
                 except Exception as e:
-                    self.logger.error(f"{log_tag('NASDB','CONN ')} SSH connection attempt {attempt + 1} failed: {e}")
+                    self.logger.error(f"{log_tag('NASDB','CONN')} SSH connection attempt {attempt + 1} failed: {e}")
                     self.disconnect()  # disconnect sets _is_connected to False
                     if attempt < self.ssh_max_retries - 1:
-                        self.logger.info(f"{log_tag('NASDB','CONN ')} Retrying in 3 seconds...")
+                        self.logger.info(f"{log_tag('NASDB','CONN')} Retrying in 3 seconds...")
                         time.sleep(3)
 
             self._is_connected = False
-            self.logger.error(f"{log_tag('NASDB','CONN ')} All SSH connection attempts failed.")
+            self.logger.error(f"{log_tag('NASDB','CONN')} All SSH connection attempts failed.")
             return False
 
     def _authenticate_nas_remote(self):
@@ -441,7 +443,7 @@ class NAS_DB:
         Runs 'net use' on the remote machine to authenticate with the NAS.
         """
         auth_cmd = f'net use "{str(self.nas_path)}" /user:{self.nas_user} {self.nas_password} /persistent:no'
-        self.logger.info(f"{log_tag('NASDB','AUTH ')} Authenticating to NAS on remote machine.")
+        self.logger.info(f"{log_tag('NASDB','AUTH')} Authenticating to NAS on remote machine.")
         stdin, stdout, stderr = self.ssh_client.exec_command(auth_cmd)
 
         exit_status = stdout.channel.recv_exit_status()
@@ -449,11 +451,11 @@ class NAS_DB:
             err = stderr.read().decode("utf-8", errors="ignore").strip()
             # "The command completed successfully." is not an error.
             if "The command completed successfully" not in err:
-                self.logger.warning(f"{log_tag('NASDB','AUTH ')} NAS authentication may have failed with exit code {exit_status}: {err}")
+                self.logger.warning(f"{log_tag('NASDB','AUTH')} NAS authentication may have failed with exit code {exit_status}: {err}")
             else:
-                self.logger.info(f"{log_tag('NASDB','AUTH ')} NAS authentication successful.")
+                self.logger.info(f"{log_tag('NASDB','AUTH')} NAS authentication successful.")
         else:
-            self.logger.info(f"{log_tag('NASDB','AUTH ')} NAS authentication successful.")
+            self.logger.info(f"{log_tag('NASDB','AUTH')} NAS authentication successful.")
 
     def find_files(
         self,
@@ -706,12 +708,246 @@ class NAS_DB:
             self.logger.error(f"{log_tag('NASDB','QBYTE')} Error calculating file sizes: {e}")
             return -1  # Return -1 to indicate an error
 
+    def _is_valid_data(self, df: pd.DataFrame) -> bool:
+        """
+        Check if DataFrame contains valid data (no NaN, None, inf, or empty).
+        
+        Args:
+            df: DataFrame to validate
+            
+        Returns:
+            bool: True if data is valid, False otherwise
+        """
+        if df is None:
+            return False
+        
+        if df.empty:
+            return False
+        
+        # Check for NaN values
+        if df.isnull().any().any():
+            return False
+        
+        # Check for inf values in numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 0:
+            if np.isinf(df[numeric_cols]).any().any():
+                return False
+        
+        # Check if DataFrame has any actual data (not just structure)
+        if df.shape[0] == 0 or df.shape[1] == 0:
+            return False
+        
+        return True
+
+    def _load_signals_from_results(
+        self, 
+        shot_num: int, 
+        results_dir: Path,
+        allowed_frequencies: List[float] = None
+    ) -> Dict[str, pd.DataFrame] | None:
+        """
+        Load signals from results directory if available and valid.
+        
+        Args:
+            shot_num: Shot number
+            results_dir: Results base directory path (e.g., project_root / "ifi" / "results")
+            allowed_frequencies: Optional list of allowed frequencies in GHz (e.g., [94.0, 280.0]).
+                                If None, all frequencies are loaded.
+            
+        Returns:
+            Dictionary mapping signal names to DataFrames, or None if not available/invalid
+        """
+        results_file = results_dir / str(shot_num) / f"{shot_num}.h5"
+        
+        if not results_file.exists():
+            return None
+        
+        try:
+            with h5py.File(results_file, "r") as hf:
+                if "signals" not in hf:
+                    return None
+                
+                signals_group = hf["signals"]
+                
+                # Check if signals group is empty
+                if signals_group.attrs.get("empty", False):
+                    return None
+                
+                signals_dict = {}
+                for signal_name in signals_group.keys():
+                    # Extract frequency from signal name (e.g., 'freq_94.0_GHz' -> 94.0)
+                    freq_match = re.search(r"freq_(\d+\.?\d*)_GHz", signal_name)
+                    if freq_match:
+                        signal_freq = float(freq_match.group(1))
+                        
+                        # Map to standard frequency group (93-95 -> 94, 275-285 -> 280)
+                        if 93.0 <= signal_freq <= 95.0:
+                            group_freq = 94.0
+                        elif 275.0 <= signal_freq <= 285.0:
+                            group_freq = 280.0
+                        else:
+                            group_freq = signal_freq
+                        
+                        # Filter by allowed frequencies if specified
+                        if allowed_frequencies is not None:
+                            if group_freq not in allowed_frequencies:
+                                self.logger.debug(
+                                    f"{log_tag('NASDB','RSLT')} Skipping signal '{signal_name}' "
+                                    f"(frequency {group_freq} GHz not in allowed list: {allowed_frequencies})"
+                                )
+                                continue
+                    
+                    signal_group = signals_group[signal_name]
+                    signal_data = {}
+                    
+                    for col_name in signal_group.keys():
+                        signal_data[col_name] = signal_group[col_name][:]
+                    
+                    # Convert to DataFrame
+                    df = pd.DataFrame(signal_data)
+                    
+                    # Validate data
+                    if not self._is_valid_data(df):
+                        self.logger.warning(
+                            f"{log_tag('NASDB','RSLT')} Signal '{signal_name}' in results has invalid data. Skipping."
+                        )
+                        continue
+                    
+                    signals_dict[signal_name] = df
+                    self.logger.info(
+                        f"{log_tag('NASDB','RSLT')} Loaded signal '{signal_name}' from results with shape {df.shape}"
+                    )
+                
+                if signals_dict:
+                    return signals_dict
+                else:
+                    return None
+                    
+        except Exception as e:
+            self.logger.warning(
+                f"{log_tag('NASDB','RSLT')} Error loading signals from results file '{results_file}': {e}"
+            )
+            return None
+
+    def _convert_results_signals_to_nas_format(
+        self, 
+        results_signals: Dict[str, pd.DataFrame],
+        target_files: List[str],
+        shot_num: int
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Convert results signals format to NAS_DB format (file basename as key).
+        
+        Uses get_interferometry_params() to determine which files belong to which frequency,
+        then matches results signals (organized by frequency) to the corresponding files.
+        
+        Args:
+            results_signals: Dictionary from results (keys: signal names like 'freq_94.0_GHz')
+            target_files: List of target file paths to match
+            shot_num: Shot number for interferometry parameter lookup
+            
+        Returns:
+            Dictionary with file basenames as keys
+        """
+        from ..analysis.phi2ne import get_interferometry_params
+        
+        nas_format_dict = {}
+        
+        # First, determine which files belong to which frequency using get_interferometry_params
+        file_freq_map = {}  # Maps file basename -> frequency group (94.0 or 280.0)
+        for file_path in target_files:
+            basename = Path(file_path).name
+            try:
+                params = get_interferometry_params(shot_num, basename)
+                freq_ghz = params.get("freq_ghz", 94.0)
+                
+                # Map to standard frequency group
+                if 93.0 <= freq_ghz <= 95.0:
+                    group_freq = 94.0
+                elif 275.0 <= freq_ghz <= 285.0:
+                    group_freq = 280.0
+                else:
+                    group_freq = freq_ghz
+                
+                file_freq_map[basename] = group_freq
+                self.logger.debug(
+                    f"{log_tag('NASDB','RSLT')} File '{basename}' mapped to frequency group {group_freq} GHz"
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"{log_tag('NASDB','RSLT')} Could not determine frequency for file '{basename}': {e}"
+                )
+                continue
+        
+        # Now match results signals to files based on frequency
+        for signal_name, df in results_signals.items():
+            # Extract frequency from signal name (e.g., 'freq_94.0_GHz' -> 94.0)
+            freq_match = re.search(r"freq_(\d+\.?\d*)_GHz", signal_name)
+            if not freq_match:
+                self.logger.warning(
+                    f"{log_tag('NASDB','RSLT')} Could not extract frequency from signal name '{signal_name}'"
+                )
+                continue
+            
+            signal_freq = float(freq_match.group(1))
+            
+            # Map to standard frequency group
+            if 93.0 <= signal_freq <= 95.0:
+                group_freq = 94.0
+            elif 275.0 <= signal_freq <= 285.0:
+                group_freq = 280.0
+            else:
+                group_freq = signal_freq
+            
+            # Find files that match this frequency
+            matching_files = [
+                basename for basename, freq in file_freq_map.items()
+                if abs(freq - group_freq) < 0.1
+            ]
+            
+            if not matching_files:
+                self.logger.warning(
+                    f"{log_tag('NASDB','RSLT')} No matching files found for signal '{signal_name}' "
+                    f"(frequency group {group_freq} GHz)"
+                )
+                continue
+            
+            # For 280GHz: typically one _ALL file
+            # For 94GHz: multiple files (_056, _789, etc.) - combine them
+            if group_freq == 280.0:
+                # Find _ALL file
+                all_file = next((f for f in matching_files if "_ALL" in f), None)
+                if all_file:
+                    nas_format_dict[all_file] = df
+                    self.logger.info(
+                        f"{log_tag('NASDB','RSLT')} Matched results signal '{signal_name}' to file '{all_file}'"
+                    )
+                else:
+                    self.logger.warning(
+                        f"{log_tag('NASDB','RSLT')} No _ALL file found for 280GHz signal '{signal_name}'"
+                    )
+            else:  # 94GHz - multiple files
+                # For 94GHz, the results signal contains combined data from multiple files
+                # We need to assign it to all matching files, or use the first one as representative
+                # Since results contain combined data, we'll use the first matching file as key
+                # and log that it represents multiple files
+                first_file = matching_files[0]
+                nas_format_dict[first_file] = df
+                self.logger.info(
+                    f"{log_tag('NASDB','RSLT')} Matched results signal '{signal_name}' to file '{first_file}' "
+                    f"(represents {len(matching_files)} files: {matching_files})"
+                )
+        
+        return nas_format_dict
+
     def get_shot_data(
         self,
         query: Union[int, str, List[Union[int, str]]],
         data_folders: Union[list, str] = None,
         add_path: bool = False,
         force_remote: bool = False,
+        allowed_frequencies: List[float] = None,
         **kwargs,
     ) -> Dict[str, pd.DataFrame]:
         """
@@ -770,8 +1006,58 @@ class NAS_DB:
         if force_remote:
             files_to_fetch = target_files
         else:
-            # --- Check cache for each file individually ---
+            # --- Check results directory first (highest priority) ---
+            # Extract shot numbers from target files
+            shot_numbers_in_query = set()
             for file_path in target_files:
+                basename = _extract_filename_from_path(file_path)
+                match = re.match(r"(\d+)", basename)
+                if match:
+                    shot_numbers_in_query.add(int(match.group(1)))
+            
+            # Try to load from results for each shot number
+            project_root = get_project_root()
+            results_base_dir = project_root / "ifi" / "results"
+            
+            results_signals_loaded = {}
+            for shot_num in shot_numbers_in_query:
+                results_signals = self._load_signals_from_results(
+                    shot_num, results_base_dir, allowed_frequencies=allowed_frequencies
+                )
+                if results_signals:
+                    results_signals_loaded[shot_num] = results_signals
+                    self.logger.info(
+                        f"{log_tag('NASDB','RSLT')} Found valid signals in results for shot {shot_num}"
+                    )
+            
+            # Convert results signals to NAS format and add to data_dict
+            if results_signals_loaded:
+                for shot_num, signals in results_signals_loaded.items():
+                    # Match results signals to target files for this shot
+                    shot_target_files = [
+                        f for f in target_files
+                        if re.match(r"(\d+)", _extract_filename_from_path(f)) and
+                        int(re.match(r"(\d+)", _extract_filename_from_path(f)).group(1)) == shot_num
+                    ]
+                    converted_signals = self._convert_results_signals_to_nas_format(
+                        signals, shot_target_files, shot_num
+                    )
+                    data_dict.update(converted_signals)
+            
+            # Determine which files still need to be fetched
+            # Files that were successfully loaded from results don't need to be fetched
+            for file_path in target_files:
+                basename = _extract_filename_from_path(file_path)
+                if basename not in data_dict:
+                    files_to_fetch.append(file_path)
+                else:
+                    self.logger.info(
+                        f"{log_tag('NASDB','RSLT')} Skipping '{basename}' - already loaded from results"
+                    )
+            
+            # --- Check cache for remaining files ---
+            remaining_files_to_fetch = []
+            for file_path in files_to_fetch:
                 basename = _extract_filename_from_path(file_path)
                 # Try to extract shot number from filename (e.g., "45821_056.csv" -> "45821")
                 match = re.match(r"(\d+)", basename)
@@ -781,7 +1067,7 @@ class NAS_DB:
                     self.logger.warning(
                         f"{log_tag('NASDB','QSHOT')} Could not determine shot number for '{basename}'. Will not use cache."
                     )
-                    files_to_fetch.append(file_path)
+                    remaining_files_to_fetch.append(file_path)
                     continue
 
                 cache_dir = Path(self.dumping_folder) / str(shot_num_for_cache)
@@ -793,7 +1079,7 @@ class NAS_DB:
 
                 if not cache_file.exists():
                     self.logger.warning(f"{log_tag('NASDB','CACHE')} -> Cache file NOT FOUND.")
-                    files_to_fetch.append(file_path)
+                    remaining_files_to_fetch.append(file_path)
                     continue
 
                 self.logger.info(f"{log_tag('NASDB','CACHE')} -> Cache file FOUND.")
@@ -844,12 +1130,15 @@ class NAS_DB:
                             data_dict[basename] = df
                         else:
                             self.logger.warning(f"{log_tag('NASDB','CACHE')} -> Key NOT FOUND in cache file. Re-fetching.")
-                            files_to_fetch.append(file_path)
+                            remaining_files_to_fetch.append(file_path)
                 except Exception as e:
                     self.logger.error(
                         f"{log_tag('NASDB','CACHE')} Error reading cache file '{cache_file}': {e}. Will refetch."
                     )
-                    files_to_fetch.append(file_path)
+                    remaining_files_to_fetch.append(file_path)
+            
+            # Update files_to_fetch with remaining files
+            files_to_fetch = remaining_files_to_fetch
 
         if not files_to_fetch:
             self.logger.info(f"{log_tag('NASDB','CACHE')} All required files were found in the cache.")
@@ -1007,7 +1296,7 @@ class NAS_DB:
         Raises:
             read_error: If an error occurs while reading the file.
         """
-        self.logger.info(f"{log_tag('NASDB','QCSV ')} Reading CSV file: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','QCSV')} Reading CSV file: {file_path}")
 
         # Get header without any locks for full parallel processing
         # Note: _get_data_top_remote is called with use_semaphore=False because
@@ -1019,13 +1308,13 @@ class NAS_DB:
             header_text = self._get_data_top_remote(file_path, lines=40, use_semaphore=False)
 
         if not header_text:
-            self.logger.error(f"{log_tag('NASDB','QCSV ')} Could not read header of {file_path}")
+            self.logger.error(f"{log_tag('NASDB','QCSV')} Could not read header of {file_path}")
             return None
 
         header_content = header_text.splitlines()
         csv_type = self._identify_csv_type(header_content)
         self.logger.info(
-            f"{log_tag('NASDB','QCSV ')} Identified CSV type for {Path(file_path).name} as: {csv_type}"
+            f"{log_tag('NASDB','QCSV')} Identified CSV type for {Path(file_path).name} as: {csv_type}"
         )
 
         # All files run in parallel - no locks
@@ -1037,11 +1326,11 @@ class NAS_DB:
             if df is not None:
                 df.attrs["source_file_type"] = "csv"
                 df.attrs["source_file_format"] = csv_type
-                self.logger.info(f"{log_tag('NASDB','QCSV ')} Successfully parsed file: {file_path}")
+                self.logger.info(f"{log_tag('NASDB','QCSV')} Successfully parsed file: {file_path}")
                 return df  # Success, return immediately
         except Exception as read_error:
             self.logger.error(
-                f"{log_tag('NASDB','QCSV ')} Failed to parse file '{file_path}'. Error: {read_error}"
+                f"{log_tag('NASDB','QCSV')} Failed to parse file '{file_path}'. Error: {read_error}"
             )
             return None
 
@@ -1069,7 +1358,7 @@ class NAS_DB:
                 file_path, header_content, csv_type, **kwargs
             )
         else:
-            self.logger.error(f"{log_tag('NASDB','PCSV ')} Unknown CSV type '{csv_type}' for {file_path}")
+            self.logger.error(f"{log_tag('NASDB','PCSV')} Unknown CSV type '{csv_type}' for {file_path}")
             return None
 
     def _identify_csv_type(self, header_content: list[str]) -> str:
@@ -1376,7 +1665,7 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"{log_tag('NASDB','P3K  ')} Parsing as {csv_type}: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','P3K')} Parsing as {csv_type}: {file_path}")
 
         metadata = {}
         header_row_index = -1
@@ -1402,12 +1691,12 @@ class NAS_DB:
 
         if header_row_index == -1:
             self.logger.error(
-                f"{log_tag('NASDB','P3K  ')} Could not find a valid header row ('TIME', 'CH...') in {file_path}"
+                f"{log_tag('NASDB','P3K')} Could not find a valid header row ('TIME', 'CH...') in {file_path}"
             )
             return None
 
         self.logger.info(
-            f"{log_tag('NASDB','P3K  ')} Found header at line {header_row_index + 1}. Metadata: {metadata}"
+            f"{log_tag('NASDB','P3K')} Found header at line {header_row_index + 1}. Metadata: {metadata}"
         )
 
         # 2. Read the actual data using pandas, skipping to the data section
@@ -1416,7 +1705,7 @@ class NAS_DB:
         try:
             if self.access_mode == "remote":
                 self.logger.info(
-                    f"{log_tag('NASDB','P3K  ')} Downloading remote file to temp location: {file_path}"
+                    f"{log_tag('NASDB','P3K')} Downloading remote file to temp location: {file_path}"
                 )
                 temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
                 self.sftp_client.get(file_path, temp_file.name)
@@ -1442,7 +1731,7 @@ class NAS_DB:
                     )
             except Exception as e_c:
                 self.logger.warning(
-                    f"{log_tag('NASDB','P3K  ')} C engine parse failed for standard CSV: {e_c}. Retrying with python engine."
+                    f"{log_tag('NASDB','P3K')} C engine parse failed for standard CSV: {e_c}. Retrying with python engine."
                 )
                 p = ensure_str_path(read_target)
                 with open(p, "rb") as fh:
@@ -1468,7 +1757,7 @@ class NAS_DB:
             return df
         except Exception as e:
             self.logger.error(
-                f"{log_tag('NASDB','P3K  ')} Pandas failed to parse {file_path} with detected header. Error: {e}"
+                f"{log_tag('NASDB','P3K')} Pandas failed to parse {file_path} with detected header. Error: {e}"
             )
             return None
         finally:
@@ -1526,13 +1815,13 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while parsing the file.
         """
-        self.logger.info(f"{log_tag('NASDB','PMAT ')} Parsing as MATLAB .mat: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','PMAT')} Parsing as MATLAB .mat: {file_path}")
         try:
             local_mat_path = file_path
             if self.access_mode == "remote":
                 # .mat are binary, need to be downloaded whole first.
                 self.logger.warning(
-                    f"{log_tag('NASDB','PMAT ')} Remote .mat files will be downloaded to a temporary local file."
+                    f"{log_tag('NASDB','PMAT')} Remote .mat files will be downloaded to a temporary local file."
                 )
                 local_mat_path = Path(self.dumping_folder) / Path(file_path).name
                 self.sftp_client.get(file_path, local_mat_path)
@@ -1559,7 +1848,7 @@ class NAS_DB:
             df.attrs["source_file_format"] = "MATLAB"
             return df
         except Exception as e:
-            self.logger.error(f"{log_tag('NASDB','PMAT ')} Failed to parse MATLAB file {file_path}: {e}")
+            self.logger.error(f"{log_tag('NASDB','PMAT')} Failed to parse MATLAB file {file_path}: {e}")
             return None
 
     def get_data_top(
@@ -1592,11 +1881,11 @@ class NAS_DB:
 
         file_paths = self.find_files(query, data_folders)
         if not file_paths:
-            self.logger.warning(f"{log_tag('NASDB','QTOP ')} No files found for query {query} to get header from.")
+            self.logger.warning(f"{log_tag('NASDB','QTOP')} No files found for query {query} to get header from.")
             return None
 
         first_file = file_paths[0]
-        self.logger.info(f"{log_tag('NASDB','QTOP ')} Getting top {lines} lines from: {first_file}")
+        self.logger.info(f"{log_tag('NASDB','QTOP')} Getting top {lines} lines from: {first_file}")
 
         if self.access_mode == "local":
             return self._get_data_top_local(first_file, lines)
@@ -1617,13 +1906,13 @@ class NAS_DB:
         Raises:
             Exception: If an error occurs while reading the file.
         """
-        self.logger.info(f"{log_tag('NASDB','QTOP ')} Reading top {lines} lines from local file: {file_path}")
+        self.logger.info(f"{log_tag('NASDB','QTOP')} Reading top {lines} lines from local file: {file_path}")
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 head = [f.readline() for _ in range(lines)]
             return "".join(line for line in head if line)
         except Exception as e:
-            self.logger.error(f"{log_tag('NASDB','QTOP ')} Error reading top lines from {file_path}: {e}")
+            self.logger.error(f"{log_tag('NASDB','QTOP')} Error reading top lines from {file_path}: {e}")
             return None
 
     def _get_data_top_remote(self, file_path: str, lines: int, use_semaphore: bool = True) -> str | None:
@@ -1703,7 +1992,7 @@ class NAS_DB:
             self.ssh_client.close()
             self.ssh_client = None
         self._is_connected = False
-        self.logger.info(f"{log_tag('NASDB','DISC ')} Disconnected.")
+        self.logger.info(f"{log_tag('NASDB','DISC')} Disconnected.")
 
     def __enter__(self):
         if not self.connect():
