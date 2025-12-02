@@ -153,7 +153,7 @@ class TekScopeController:
                     mapping[serial] = visa
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error(
-                f"{log_tag('TEKSC', 'CONF ')} Failed to load Tektronix VISA addresses: {exc}"
+                f"{log_tag('TEKSC', 'CONF')} Failed to load Tektronix VISA addresses: {exc}"
             )
         return mapping
 
@@ -194,7 +194,7 @@ class TekScopeController:
                     mapping[serial] = "_789"
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error(
-                f"{log_tag('TEKSC', 'CONF ')} Failed to build serial-to-suffix map: {exc}"
+                f"{log_tag('TEKSC', 'CONF')} Failed to build serial-to-suffix map: {exc}"
             )
         return mapping
 
@@ -298,26 +298,26 @@ class TekScopeController:
             # Setting the scope object to none if it is not a scope.
             if not hasattr(self.scope, "idn_string") or self.scope.idn_string is None:
                 logger.error(
-                    f"{log_tag('TEKSC', 'CONN ')} Device is not found or does not have an identification string."
+                    f"{log_tag('TEKSC', 'CONN')} Device is not found or does not have an identification string."
                 )
                 self.scope = None
                 raise TypeError("Device is not a Scope")
             if not isinstance(self.scope, (MDO3, MSO5)):
                 if self.scope.idn_string is not None:
                     logger.error(
-                        f"{log_tag('TEKSC', 'CONN ')} Device is not a Scope: {self.scope.idn_string}"
+                        f"{log_tag('TEKSC', 'CONN')} Device is not a Scope: {self.scope.idn_string}"
                     )
                 self.scope = None
                 raise TypeError("Device is not a Scope")
 
             logger.info(
-                f"{log_tag('TEKSC', 'CONN ')} Successfully connected to: {self.scope.idn_string}"
+                f"{log_tag('TEKSC', 'CONN')} Successfully connected to: {self.scope.idn_string}"
             )
             self.state = ScopeState.IDLE
             return True
         except (IndexError, KeyError, TypeError) as e:
             logger.error(
-                f"{log_tag('TEKSC', 'CONN ')} Failed to connect to {device_identifier}: {e}"
+                f"{log_tag('TEKSC', 'CONN')} Failed to connect to {device_identifier}: {e}"
             )
             self.scope = None
             self.state = ScopeState.ERROR
@@ -332,7 +332,7 @@ class TekScopeController:
         """
         if self.scope:
             logger.info(
-                f"{log_tag('TEKSC', 'DISC ')} Disconnecting from {self.scope.device_name}"
+                f"{log_tag('TEKSC', 'DISC')} Disconnecting from {self.scope.device_name}"
             )
             self.scope.close()
             self.scope = None
@@ -429,7 +429,7 @@ class TekScopeController:
         """
         if not self.scope:
             logger.error(
-                f"{log_tag('TEKSC', 'ACQ  ')} Cannot acquire data, no scope connected."
+                f"{log_tag('TEKSC', 'ACQ')} Cannot acquire data, no scope connected."
             )
             self.state = ScopeState.ERROR
             return {}
@@ -444,11 +444,11 @@ class TekScopeController:
                     results[ch] = data
                 else:
                     logger.warning(
-                        f"{log_tag('TEKSC', 'ACQ  ')} Skipping channel {ch}: no data returned."
+                        f"{log_tag('TEKSC', 'ACQ')} Skipping channel {ch}: no data returned."
                     )
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(
-                    f"{log_tag('TEKSC', 'ACQ  ')} Error acquiring data for {ch}: {exc}"
+                    f"{log_tag('TEKSC', 'ACQ')} Error acquiring data for {ch}: {exc}"
                 )
 
         # If at least one channel succeeded, return to IDLE, otherwise mark ERROR.
@@ -504,14 +504,14 @@ class TekScopeController:
             filename = f"{shot_code}{suffix}.h5"
         else:
             logger.error(
-                f"{log_tag('TEKSC', 'SAVE ')} Unsupported file format: {file_format}"
+                f"{log_tag('TEKSC', 'SAVE')} Unsupported file format: {file_format}"
             )
             return None
 
         filepath = directory_path / filename
 
         logger.info(
-            f"{log_tag('TEKSC', 'SAVE ')} Saving data to {filepath} "
+            f"{log_tag('TEKSC', 'SAVE')} Saving data to {filepath} "
             f"with columns: {list(data.keys())}"
         )
 
@@ -533,7 +533,7 @@ class TekScopeController:
             return filepath
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error(
-                f"{log_tag('TEKSC', 'SAVE ')} Failed to save data to {filepath}: {exc}"
+                f"{log_tag('TEKSC', 'SAVE')} Failed to save data to {filepath}: {exc}"
             )
             return None
         finally:

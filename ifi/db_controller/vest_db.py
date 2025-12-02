@@ -202,7 +202,7 @@ class VEST_DB:
 
         # 1. Attempt direct connection
         self.logger.info(
-            f"{log_tag('VESTB', 'CONN ')} Attempting direct connection to VEST DB..."
+            f"{log_tag('VESTB', 'CONN')} Attempting direct connection to VEST DB..."
         )
         try:
             self.connection = pymysql.connect(
@@ -210,37 +210,37 @@ class VEST_DB:
             )
             if self.connection.open:
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN ')} Direct connection successful."
+                    f"{log_tag('VESTB', 'CONN')} Direct connection successful."
                 )
                 return True
         except pymysql.Error as err:
             self.logger.warning(
-                f"{log_tag('VESTB', 'CONN ')} Direct connection failed: {err}"
+                f"{log_tag('VESTB', 'CONN')} Direct connection failed: {err}"
             )
             if not self.tunnel_enabled:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN ')} SSH tunnel is disabled. Cannot proceed."
+                    f"{log_tag('VESTB', 'CONN')} SSH tunnel is disabled. Cannot proceed."
                 )
                 return False
             # Explicitly log the fallback attempt
             self.logger.info(
-                f"{log_tag('VESTB', 'CONN ')} Direct connection failed. Now attempting fallback to SSH tunnel."
+                f"{log_tag('VESTB', 'CONN')} Direct connection failed. Now attempting fallback to SSH tunnel."
             )
 
         # 2. Fallback to SSH tunnel connection
         self.logger.info(
-            f"{log_tag('VESTB', 'CONN ')} Falling back to SSH tunnel connection..."
+            f"{log_tag('VESTB', 'CONN')} Falling back to SSH tunnel connection..."
         )
         for attempt in range(self.ssh_max_retries):
             try:
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN ')} Attempt {attempt + 1}/{self.ssh_max_retries}..."
+                    f"{log_tag('VESTB', 'CONN')} Attempt {attempt + 1}/{self.ssh_max_retries}..."
                 )
                 self.tunnel = SSHTunnelForwarder(**self.ssh_config)
                 self.tunnel.start()
 
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN ')} SSH tunnel established (localhost:{self.tunnel.local_bind_port})."
+                    f"{log_tag('VESTB', 'CONN')} SSH tunnel established (localhost:{self.tunnel.local_bind_port})."
                 )
 
                 # Connect to MySQL through the tunnel
@@ -252,37 +252,37 @@ class VEST_DB:
 
                 if self.connection.open:
                     self.logger.info(
-                        f"{log_tag('VESTB', 'CONN ')} MySQL connection through tunnel successful."
+                        f"{log_tag('VESTB', 'CONN')} MySQL connection through tunnel successful."
                     )
                     return True
 
             except BaseSSHTunnelForwarderError as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN ')} SSH Tunnel Error on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTB', 'CONN')} SSH Tunnel Error on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()  # Cleanup
             except pymysql.Error as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN ')} MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTB', 'CONN')} MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()  # Cleanup
             except Exception as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN ')} An unexpected error occurred during SSH tunnel connection on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTB', 'CONN')} An unexpected error occurred during SSH tunnel connection on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()  # Cleanup
 
             if attempt < self.ssh_max_retries - 1:
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN ')} Retrying in 3 seconds..."
+                    f"{log_tag('VESTB', 'CONN')} Retrying in 3 seconds..."
                 )
                 time.sleep(3)
 
         self.logger.error(
-            f"{log_tag('VESTB', 'CONN ')} Failed to establish a database connection."
+            f"{log_tag('VESTB', 'CONN')} Failed to establish a database connection."
         )
         return False
 
@@ -290,12 +290,12 @@ class VEST_DB:
         """Closes the database connection and the SSH tunnel if it's active."""
         if self.connection and self.connection.open:
             self.connection.close()
-            self.logger.info(f"{log_tag('VESTB', 'DISC ')} MySQL connection closed.")
+            self.logger.info(f"{log_tag('VESTB', 'DISC')} MySQL connection closed.")
         self.connection = None
 
         if self.tunnel and self.tunnel.is_active:
             self.tunnel.stop()
-            self.logger.info(f"{log_tag('VESTB', 'DISC ')} SSH tunnel closed.")
+            self.logger.info(f"{log_tag('VESTB', 'DISC')} SSH tunnel closed.")
         self.tunnel = None
 
     def get_next_shot_code(self) -> int | None:
@@ -400,13 +400,13 @@ class VEST_DB:
         """
         if not self.connect():
             self.logger.error(
-                f"{log_tag('VESTB', 'LOAD ')} Failed to connect to database."
+                f"{log_tag('VESTB', 'LOAD')} Failed to connect to database."
             )
             return {}
 
         if shot <= 29349:
             self.logger.warning(
-                f"{log_tag('VESTB', 'LOAD ')} Shot {shot} is too old. Only shots > 29349 in MySQL are supported in this version."
+                f"{log_tag('VESTB', 'LOAD')} Shot {shot} is too old. Only shots > 29349 in MySQL are supported in this version."
             )
             return {}
 
@@ -450,16 +450,16 @@ class VEST_DB:
 
                         grouped_series[rate_key].append(series)
                         self.logger.info(
-                            f"{log_tag('VESTB', 'LOAD ')} Successfully loaded and processed Shot {shot} Field {field} as '{series_name}' (Rate Group: {rate_key})."
+                            f"{log_tag('VESTB', 'LOAD')} Successfully loaded and processed Shot {shot} Field {field} as '{series_name}' (Rate Group: {rate_key})."
                         )
                     else:
                         self.logger.warning(
-                            f"{log_tag('VESTB', 'LOAD ')} Shot {shot} field {field} not found in database."
+                            f"{log_tag('VESTB', 'LOAD')} Shot {shot} field {field} not found in database."
                         )
 
             except pymysql.Error as err:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'LOAD ')} Query Error for field {field}: {err}"
+                    f"{log_tag('VESTB', 'LOAD')} Query Error for field {field}: {err}"
                 )
                 continue  # Move to the next field
 
@@ -471,7 +471,7 @@ class VEST_DB:
         for rate_key, series_list in grouped_series.items():
             final_dfs[rate_key] = pd.concat(series_list, axis=1)
             self.logger.info(
-                f"{log_tag('VESTB', 'LOAD ')} Created DataFrame for '{rate_key}' group with {len(series_list)} signal(s)."
+                f"{log_tag('VESTB', 'LOAD')} Created DataFrame for '{rate_key}' group with {len(series_list)} signal(s)."
             )
 
         return final_dfs
@@ -496,7 +496,7 @@ class VEST_DB:
         if field_id in [101, 214, 140]:
             data = -data
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC ')} Flipping sign for field_id {field_id}."
+                f"{log_tag('VESTB', 'PROC')} Flipping sign for field_id {field_id}."
             )
 
         # 2. Estimate sampling rate from the final time axis
@@ -533,14 +533,14 @@ class VEST_DB:
         if t_start is not None and t_end is not None and len(time) > 1:
             # High-speed DAQ: create a new time axis
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC ')} High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis."
+                f"{log_tag('VESTB', 'PROC')} High-speed DAQ ({sample_rate:.0e} Hz) detected. Recalculating time axis."
             )
             new_time = np.linspace(t_start, t_end, len(time) + 1)
             time = new_time[:-1]
         else:
             # Low-speed DAQ: time values are already in seconds
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC ')} Normal-speed DAQ detected. Using original time values."
+                f"{log_tag('VESTB', 'PROC')} Normal-speed DAQ detected. Using original time values."
             )
             pass  # Time is already correct
 
@@ -566,7 +566,7 @@ class VEST_DB:
         """
         if not (self.connection and self.connection.open):
             self.logger.error(
-                f"{log_tag('VESTB', 'QRY ')} Not connected to the database."
+                f"{log_tag('VESTB', 'QRY')} Not connected to the database."
             )
             return None
 
@@ -580,16 +580,16 @@ class VEST_DB:
                 # Fetch all results
                 results = cursor.fetchall()
                 self.logger.info(
-                    f"{log_tag('VESTB', 'QRY ')} Query executed successfully. Returned {len(results)} rows."
+                    f"{log_tag('VESTB', 'QRY')} Query executed successfully. Returned {len(results)} rows."
                 )
                 return results
 
         except pymysql.Error as e:
-            self.logger.error(f"{log_tag('VESTB', 'QRY ')} Database query error: {e}")
+            self.logger.error(f"{log_tag('VESTB', 'QRY')} Database query error: {e}")
             return None
         except Exception as e:
             self.logger.error(
-                f"{log_tag('VESTB', 'QRY ')} Unexpected error during query execution: {e}"
+                f"{log_tag('VESTB', 'QRY')} Unexpected error during query execution: {e}"
             )
             return None
 

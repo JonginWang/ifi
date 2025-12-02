@@ -205,7 +205,7 @@ class LogManager:
         except Exception:
             logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
             logging.error(
-                f"{log_tag('LOGS','INIt ')} Failed to configure advanced logging",
+                f"{log_tag('LOGS','INIT')} Failed to configure advanced logging",
                 exc_info=True,
             )
 

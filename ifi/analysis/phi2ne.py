@@ -1000,15 +1000,15 @@ class PhaseConverter:
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
             logger.info(
-                f"{log_tag('PHI2N', 'LPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
+                f"{log_tag('PHI2N', 'LPF')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
             )
             logger.info(
-                f"{log_tag('PHI2N', 'LPF  ')} Difference is significant. Using the value from remezord."
+                f"{log_tag('PHI2N', 'LPF')} Difference is significant. Using the value from remezord."
             )
             pass
         elif approx:
             logger.info(
-                f"{log_tag('PHI2N', 'LPF  ')} Using approximate numtaps: {numtaps_approx}"
+                f"{log_tag('PHI2N', 'LPF')} Using approximate numtaps: {numtaps_approx}"
             )
             numtaps = numtaps_approx
         if all(bands) <= 1.0:
@@ -1093,15 +1093,15 @@ class PhaseConverter:
         # compare the numtaps from remezord and approximate one
         if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
             logger.info(
-                f"{log_tag('PHI2N', 'BPF  ')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
+                f"{log_tag('PHI2N', 'BPF')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
             )
             logger.info(
-                f"{log_tag('PHI2N', 'BPF  ')} Difference is significant. Using the value from remezord."
+                f"{log_tag('PHI2N', 'BPF')} Difference is significant. Using the value from remezord."
             )
             pass
         elif approx:
             logger.info(
-                f"{log_tag('PHI2N', 'BPF  ')} Using approximate numtaps: {numtaps_approx}"
+                f"{log_tag('PHI2N', 'BPF')} Using approximate numtaps: {numtaps_approx}"
             )
             numtaps = numtaps_approx
 

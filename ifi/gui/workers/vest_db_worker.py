@@ -95,7 +95,7 @@ class VestDbPollingWorker(threading.Thread):
 
     def run(self) -> None:
         """Main polling loop executed in the background thread."""
-        logger.info(f"{log_tag('VESTB', 'POLL ')} VEST DB polling worker started.")
+        logger.info(f"{log_tag('VESTB', 'POLL')} VEST DB polling worker started.")
 
         while self._running.is_set():
             try:
@@ -105,18 +105,18 @@ class VestDbPollingWorker(threading.Thread):
                         self._last_shot_code = shot_code
                     elif shot_code > self._last_shot_code:
                         logger.info(
-                            f"{log_tag('VESTB', 'POLL ')} New shot code detected: {shot_code}"
+                            f"{log_tag('VESTB', 'POLL')} New shot code detected: {shot_code}"
                         )
                         self._last_shot_code = shot_code
                         # Notify GUI layer about the new shot code
                         self._on_new_shot_code(shot_code)
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.error(
-                    f"{log_tag('VESTB', 'POLL ')} Error while polling VEST DB: {exc}"
+                    f"{log_tag('VESTB', 'POLL')} Error while polling VEST DB: {exc}"
                 )
 
             time.sleep(self._poll_interval)
 
-        logger.info(f"{log_tag('VESTB', 'POLL ')} VEST DB polling worker stopped.")
+        logger.info(f"{log_tag('VESTB', 'POLL')} VEST DB polling worker stopped.")
 
 
