@@ -22,12 +22,16 @@ Example:
 import sys
 import subprocess
 from pathlib import Path
-from collections import defaultdict
 from typing import List, Tuple
 
+# Add project root to path (must be done before importing IFI modules)
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+# IFI module imports (after path setup - linter warning is intentional)
+
 try:
+    from ifi import get_project_root
     from ifi.db_controller.nas_db import NAS_DB
-    from ifi.utils.common import FlatShotList, get_project_root
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     sys.exit(1)
@@ -115,7 +119,7 @@ def group_shots_for_execution(file_counts: dict[int, int]) -> List[Tuple[List[in
     
     # Group shots with 3 files: run individually
     for shot in sorted(shots_with_3_files):
-        execution_groups.append(([shot], f"3 files"))
+        execution_groups.append(([shot], "3 files"))
     
     # Group shots with 1-2 files: combine 2 shots
     shots_with_1_or_2_sorted = sorted(shots_with_1_or_2_files)
@@ -207,26 +211,132 @@ def run_analysis_for_group(shot_numbers: List[int], additional_args: List[str], 
     return result.returncode
 
 
-def main():
-    """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python scripts/run_analysis_smart.py SHOT_RANGE [additional args...]")
-        print("Example: python scripts/run_analysis_smart.py 45000:45010 --freq 280 --density --stft --save_data")
-        sys.exit(1)
+def process_shot_range(shot_range_str: str, additional_args: List[str], project_root: Path, nas_db: NAS_DB) -> Tuple[bool, List[Tuple[int, List[int], int]]]:
+    """
+    Process a single shot range and return execution results.
     
-    shot_range_str = sys.argv[1]
-    additional_args = sys.argv[2:]
-    
+    Args:
+        shot_range_str: Shot range string (e.g., "45000:45010")
+        additional_args: Additional command-line arguments
+        project_root: Project root directory
+        nas_db: NAS_DB instance
+        
+    Returns:
+        Tuple of (success bool, list of failed groups)
+    """
     # Parse shot range
     try:
         shot_numbers = parse_shot_range(shot_range_str)
     except ValueError as e:
-        print(f"Error: {e}")
+        print(f"Error parsing shot range '{shot_range_str}': {e}")
+        return False, []
+    
+    print(f"\n{'='*60}")
+    print(f"Processing shot range: {shot_range_str}")
+    print(f"Total shots to check: {len(shot_numbers)}")
+    print(f"{'='*60}")
+    
+    # Get file counts for all shots
+    file_counts = get_file_counts_for_shots(nas_db, shot_numbers)
+    
+    # Count existing shots
+    existing_shots = {shot: count for shot, count in file_counts.items() if count > 0}
+    print("\nSummary:")
+    print(f"  Total shots checked: {len(shot_numbers)}")
+    print(f"  Shots with files: {len(existing_shots)}")
+    print(f"  Shots without files: {len(shot_numbers) - len(existing_shots)}")
+    
+    if not existing_shots:
+        print("\nNo shots with files found. Skipping this range.")
+        return True, []
+    
+    # Group shots for execution
+    execution_groups = group_shots_for_execution(file_counts)
+    
+    print(f"\nExecution plan: {len(execution_groups)} group(s)")
+    for i, (shots, reason) in enumerate(execution_groups, 1):
+        print(f"  Group {i}: Shots {shots} ({reason})")
+    
+    # Execute analysis for each group
+    print(f"\n{'='*60}")
+    print("Starting analysis execution...")
+    print(f"{'='*60}\n")
+    
+    failed_groups = []
+    for i, (shots, reason) in enumerate(execution_groups, 1):
+        print(f"\n[Group {i}/{len(execution_groups)}] Processing shots: {shots} ({reason})")
+        exit_code = run_analysis_for_group(shots, additional_args, project_root)
+        
+        if exit_code != 0:
+            print(f"\n[ERROR] Analysis failed for group {i} (shots: {shots}) with exit code {exit_code}")
+            failed_groups.append((i, shots, exit_code))
+        else:
+            print(f"\n[SUCCESS] Analysis completed for group {i} (shots: {shots})")
+    
+    return len(failed_groups) == 0, failed_groups
+
+
+def main():
+    """Main entry point."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Smart Analysis Runner - Automatically determines execution strategy based on file counts per shot.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Single shot range
+  python scripts/run_analysis_smart.py 45000:45010 --freq 280 --density --stft --save_data
+  
+  # Multiple shot ranges
+  python scripts/run_analysis_smart.py --shot-list "45000:45010" "45020:45030" --freq 280 --density --stft --save_data
+  
+  # Using example shot list from script (if --shot-list not provided, uses defaults)
+  python scripts/run_analysis_smart.py --freq 280 --density --stft --save_data
+        """
+    )
+    
+    parser.add_argument(
+        "--shot-list",
+        nargs="+",
+        help="One or more shot ranges (e.g., '45000:45010' '45020:45030'). "
+             "If not provided, uses example list from script."
+    )
+    
+    # Parse known args to separate shot ranges from additional args
+    args, additional_args = parser.parse_known_args()
+    
+    # Example shot list (used if --shot-list is not provided)
+    example_shot_ranges = [
+        "46687:46691", "46692:46695", "46696:46699", "46700:46703",
+        "46595:46599", "46600:46603", "46604:46607", "46608:46611", "46612:46615"
+    ]
+    
+    # Determine shot ranges to process
+    if args.shot_list:
+        shot_ranges = args.shot_list
+    else:
+        # Check if first positional argument is a shot range (backward compatibility)
+        if additional_args and not any(arg.startswith("--") for arg in additional_args[:1]):
+            shot_ranges = [additional_args[0]]
+            additional_args = additional_args[1:]
+        else:
+            shot_ranges = example_shot_ranges
+            print("Using example shot list (use --shot-list to override)")
+            print(f"Example ranges: {', '.join(shot_ranges[:3])}...")
+            print()
+    
+    if not shot_ranges:
+        parser.print_help()
         sys.exit(1)
     
-    print(f"Parsed shot range: {shot_range_str}")
-    print(f"Total shots to check: {len(shot_numbers)}")
-    print()
+    print(f"{'='*60}")
+    print("Smart Analysis Runner - Batch Mode")
+    print(f"{'='*60}")
+    print(f"Total shot ranges to process: {len(shot_ranges)}")
+    print(f"Shot ranges: {', '.join(shot_ranges)}")
+    print(f"Additional arguments: {' '.join(additional_args) if additional_args else '(none)'}")
+    print(f"{'='*60}\n")
     
     # Get project root
     project_root = get_project_root()
@@ -236,7 +346,7 @@ def main():
         print(f"Error: Config file not found: {config_path}")
         sys.exit(1)
     
-    # Initialize NAS DB
+    # Initialize NAS DB (reuse connection for all ranges)
     print("Connecting to NAS DB...")
     nas_db = NAS_DB(config_path=str(config_path))
     try:
@@ -244,55 +354,49 @@ def main():
             print("Error: Failed to connect to NAS DB")
             sys.exit(1)
         
-        # Get file counts for all shots
-        file_counts = get_file_counts_for_shots(nas_db, shot_numbers)
+        # Process each shot range
+        all_failed_groups = []
+        successful_ranges = []
+        failed_ranges = []
         
-        # Count existing shots
-        existing_shots = {shot: count for shot, count in file_counts.items() if count > 0}
-        print(f"\nSummary:")
-        print(f"  Total shots checked: {len(shot_numbers)}")
-        print(f"  Shots with files: {len(existing_shots)}")
-        print(f"  Shots without files: {len(shot_numbers) - len(existing_shots)}")
-        
-        if not existing_shots:
-            print("\nNo shots with files found. Exiting.")
-            sys.exit(0)
-        
-        # Group shots for execution
-        execution_groups = group_shots_for_execution(file_counts)
-        
-        print(f"\nExecution plan: {len(execution_groups)} group(s)")
-        for i, (shots, reason) in enumerate(execution_groups, 1):
-            print(f"  Group {i}: Shots {shots} ({reason})")
-        
-        # Execute analysis for each group
-        print(f"\n{'='*60}")
-        print("Starting analysis execution...")
-        print(f"{'='*60}\n")
-        
-        failed_groups = []
-        for i, (shots, reason) in enumerate(execution_groups, 1):
-            print(f"\n[Group {i}/{len(execution_groups)}] Processing shots: {shots} ({reason})")
-            exit_code = run_analysis_for_group(shots, additional_args, project_root)
+        for range_idx, shot_range_str in enumerate(shot_ranges, 1):
+            print(f"\n{'#'*60}")
+            print(f"Range {range_idx}/{len(shot_ranges)}: {shot_range_str}")
+            print(f"{'#'*60}")
             
-            if exit_code != 0:
-                print(f"\n[ERROR] Analysis failed for group {i} (shots: {shots}) with exit code {exit_code}")
-                failed_groups.append((i, shots, exit_code))
+            success, failed_groups = process_shot_range(
+                shot_range_str, additional_args, project_root, nas_db
+            )
+            
+            if success:
+                successful_ranges.append(shot_range_str)
             else:
-                print(f"\n[SUCCESS] Analysis completed for group {i} (shots: {shots})")
+                failed_ranges.append(shot_range_str)
+                all_failed_groups.extend([(range_idx, group_num, shots, exit_code) 
+                                         for group_num, shots, exit_code in failed_groups])
         
         # Final summary
         print(f"\n{'='*60}")
-        print("Execution Summary")
+        print("Final Execution Summary")
         print(f"{'='*60}")
-        print(f"Total groups: {len(execution_groups)}")
-        print(f"Successful: {len(execution_groups) - len(failed_groups)}")
-        print(f"Failed: {len(failed_groups)}")
+        print(f"Total ranges processed: {len(shot_ranges)}")
+        print(f"Successful ranges: {len(successful_ranges)}")
+        print(f"Failed ranges: {len(failed_ranges)}")
         
-        if failed_groups:
+        if successful_ranges:
+            print("\nSuccessful ranges:")
+            for range_str in successful_ranges:
+                print(f"  ✓ {range_str}")
+        
+        if failed_ranges:
+            print("\nFailed ranges:")
+            for range_str in failed_ranges:
+                print(f"  ✗ {range_str}")
+        
+        if all_failed_groups:
             print("\nFailed groups:")
-            for group_num, shots, exit_code in failed_groups:
-                print(f"  Group {group_num}: Shots {shots} (exit code: {exit_code})")
+            for range_idx, group_num, shots, exit_code in all_failed_groups:
+                print(f"  Range {range_idx}, Group {group_num}: Shots {shots} (exit code: {exit_code})")
             sys.exit(1)
         else:
             print("\nAll analyses completed successfully!")

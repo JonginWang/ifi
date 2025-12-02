@@ -21,10 +21,13 @@ from typing import List, Dict, Any, Optional
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 # IFI module imports (after path setup - linter warning is intentional)
-from ifi.db_controller.nas_db import NAS_DB  # noqa: E402
-from ifi.db_controller.vest_db import VEST_DB  # noqa: E402
-from ifi.analysis.main_analysis import run_analysis  # noqa: E402
-from ifi.utils.common import LogManager  # noqa: E402
+try:
+    from ifi.db_controller.nas_db import NAS_DB  # noqa: E402
+    from ifi.db_controller.vest_db import VEST_DB  # noqa: E402
+    from ifi.analysis.main_analysis import run_analysis  # noqa: E402
+    from ifi.utils.common import LogManager  # noqa: E402
+except ImportError as e:
+    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
 
 # Initialize logging
 logger = LogManager().get_logger(__name__, level="INFO")
@@ -235,19 +238,45 @@ def create_analysis_args(config: Dict[str, Any]) -> argparse.Namespace:
     # VEST data
     vest_fields = config.get("vest_fields", [])
     # Convert field names to IDs if needed (simplified - may need actual mapping)
-    args.vest_fields = vest_fields if isinstance(vest_fields, list) else []
+    # Note: vest_fields should be a list of integers (field IDs) or field names
+    if isinstance(vest_fields, list):
+        # Convert to list of integers if strings are provided (simplified conversion)
+        # In production, you may want to use a proper field name to ID mapping
+        args.vest_fields = [int(f) if isinstance(f, (int, str)) and str(f).isdigit() else f for f in vest_fields]
+    elif isinstance(vest_fields, (int, str)):
+        # Single value - convert to list
+        args.vest_fields = [int(vest_fields) if isinstance(vest_fields, str) and vest_fields.isdigit() else vest_fields]
+    else:
+        args.vest_fields = []
 
     # Baseline correction
     args.baseline = config.get("baseline", None)
 
     # Frequency filtering
+    # Note: Only 94.0 and 280.0 are valid choices per main_analysis.py
     freq = config.get("freq", None)
     if freq is not None:
         # Convert to list if single value
         if isinstance(freq, (int, float)):
-            args.freq = [float(freq)]
+            freq_float = float(freq)
+            # Validate frequency choice (94.0 or 280.0)
+            if freq_float in [94.0, 280.0]:
+                args.freq = [freq_float]
+            else:
+                raise ValueError(
+                    f"Invalid frequency value: {freq_float}. "
+                    f"Only 94.0 and 280.0 are allowed."
+                )
         elif isinstance(freq, list):
-            args.freq = [float(f) for f in freq]
+            # Validate all frequencies in list
+            freq_list = [float(f) for f in freq]
+            invalid_freqs = [f for f in freq_list if f not in [94.0, 280.0]]
+            if invalid_freqs:
+                raise ValueError(
+                    f"Invalid frequency values: {invalid_freqs}. "
+                    f"Only 94.0 and 280.0 are allowed."
+                )
+            args.freq = freq_list
         else:
             args.freq = None
     else:

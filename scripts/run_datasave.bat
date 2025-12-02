@@ -42,6 +42,12 @@ set "QUERY="
 
 :parse_args
 if "%~1"=="" goto :check_mode
+if "%~1"=="--query" (
+    set "QUERY=%~2"
+    shift
+    shift
+    goto :parse_args
+)
 if "%~1"=="--signal-only" (
     set "MODE=signal-only"
     shift
@@ -136,15 +142,69 @@ if "%~1"=="--offset-window" (
     goto :parse_args
 )
 if "%~1"=="--stft-cols" (
-    set "ARGS=!ARGS! --stft_cols %~2"
+    REM Collect stft-cols values (can be comma or space separated)
+    set "STFT_COLS_VAL="
     shift
+    :collect_stft_cols
+    if "%~1"=="" goto :apply_stft_cols
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_stft_cols
+    REM Treat any non-option arguments after --stft-cols as column indices
+    if "!STFT_COLS_VAL!"=="" (
+        set "STFT_COLS_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !STFT_COLS_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "STFT_COLS_VAL=!STFT_COLS_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "STFT_COLS_VAL=!STFT_COLS_VAL! !ARG_VAL!"
+        )
+    )
     shift
+    goto :collect_stft_cols
+    :apply_stft_cols
+    REM Convert comma-separated to space-separated for Python argparse
+    set "STFT_COLS_CONVERTED=!STFT_COLS_VAL!"
+    set "STFT_COLS_CONVERTED=!STFT_COLS_CONVERTED:,= !"
+    set "ARGS=!ARGS! --stft_cols !STFT_COLS_CONVERTED!"
     goto :parse_args
 )
 if "%~1"=="--cwt-cols" (
-    set "ARGS=!ARGS! --cwt_cols %~2"
+    REM Collect cwt-cols values (can be comma or space separated)
+    set "CWT_COLS_VAL="
     shift
+    :collect_cwt_cols
+    if "%~1"=="" goto :apply_cwt_cols
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_cwt_cols
+    REM Treat any non-option arguments after --cwt-cols as column indices
+    if "!CWT_COLS_VAL!"=="" (
+        set "CWT_COLS_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !CWT_COLS_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "CWT_COLS_VAL=!CWT_COLS_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "CWT_COLS_VAL=!CWT_COLS_VAL! !ARG_VAL!"
+        )
+    )
     shift
+    goto :collect_cwt_cols
+    :apply_cwt_cols
+    REM Convert comma-separated to space-separated for Python argparse
+    set "CWT_COLS_CONVERTED=!CWT_COLS_VAL!"
+    set "CWT_COLS_CONVERTED=!CWT_COLS_CONVERTED:,= !"
+    set "ARGS=!ARGS! --cwt_cols !CWT_COLS_CONVERTED!"
     goto :parse_args
 )
 if "%~1"=="--downsample" (
@@ -244,25 +304,41 @@ echo IFI Data Save Batch Script
 echo.
 echo Usage:
 echo   run_datasave.bat SHOT_NUMBER [MODE] [OPTIONS]
+echo   run_datasave.bat --query SHOT_NUMBER [MODE] [OPTIONS]
+echo.
+echo Query formats:
+echo   Single shot: 45687 or --query 45687
+echo   Range (colon): "45687:45689" or --query "45687:45689" (processes 45687, 45688, 45689)
+echo   List (comma): "45687,45689" or --query "45687,45689" (processes 45687, 45689)
 echo.
 echo Modes (required):
 echo   --signal-only         Save only processed signals (no density calculation)
 echo   --density             Save processed signals + density data (full analysis)
 echo.
 echo Examples:
-echo   run_datasave.bat 45821 --signal-only
 echo   run_datasave.bat 45821 --density
+echo   run_datasave.bat --query 45821 --density
+echo   run_datasave.bat --query "45687:45689" --density
+echo   run_datasave.bat --query "45687,45689" --density
+echo   run_datasave.bat 45687:45689 --density
+echo   run_datasave.bat 45687,45689 --density
+echo   run_datasave.bat 45821 --signal-only
 echo   run_datasave.bat 45821:45825 --density
 echo   run_datasave.bat 45821 --density --freq 94
-echo   run_datasave.bat 45821 --density --freq 280
-echo   run_datasave.bat 45821 --density --freq 94 280
+echo   run_datasave.bat 45821 --density --freq "94,280"
+echo   run_datasave.bat 45821 --density --freq "94 280"
 echo   run_datasave.bat 45821 --density --freq 94.0 280.0
 echo   run_datasave.bat 45821 --density --baseline ip
 echo   run_datasave.bat 45821 --density --vest-fields 109 110
+echo   run_datasave.bat 45821 --density --stft-cols "0,1,2"
+echo   run_datasave.bat 45821 --density --stft-cols 1
+echo   run_datasave.bat 45821 --density --stft-cols "0 1 2"
 echo.
 echo Options:
 echo   --freq FREQ                  Filter to specific frequency(ies): 94, 280, 94.0, 280.0
-echo                                Can specify multiple: --freq 94 280
+echo                                Default: comma-separated (e.g., "94,280")
+echo                                Single value: --freq 94
+echo                                Space-separated: --freq "94 280"
 echo   --scheduler TYPE             Dask scheduler: threads, processes, single-threaded
 echo   --processes                  Use processes scheduler (alias)
 echo   --single                     Use single-threaded scheduler (alias)
@@ -274,8 +350,14 @@ echo   --add-path                   Add data folders to default paths
 echo   --results-dir DIR             Directory for results (default: ifi/results)
 echo   --no-offset-removal          Disable offset removal
 echo   --offset-window SIZE         Window size for offset removal (default: 2001)
-echo   --stft-cols INDICES          Space-separated column indices for STFT
-echo   --cwt-cols INDICES           Space-separated column indices for CWT
+echo   --stft-cols INDICES          Column indices for STFT
+echo                                Default: comma-separated (e.g., "0,1,2")
+echo                                Single value: --stft-cols 1
+echo                                Space-separated: --stft-cols "0 1 2"
+echo   --cwt-cols INDICES           Column indices for CWT
+echo                                Default: comma-separated (e.g., "0,1")
+echo                                Single value: --cwt-cols 1
+echo                                Space-separated: --cwt-cols "0 1"
 echo   --downsample FACTOR          Downsample factor for plotting (default: 10)
 echo   --trigger-time SECONDS       Trigger time in seconds (default: 0.290)
 echo   --color-density-by-amplitude Color-code density plots by amplitude
