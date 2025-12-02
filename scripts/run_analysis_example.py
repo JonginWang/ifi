@@ -28,6 +28,7 @@ try:
     from ifi.utils.common import LogManager  # noqa: E402
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
+    sys.exit(1)
 
 # Initialize logging
 logger = LogManager().get_logger(__name__, level="INFO")
