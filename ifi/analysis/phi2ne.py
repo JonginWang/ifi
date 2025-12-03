@@ -53,7 +53,7 @@ Examples:
     # Calculate phase from I/Q signals
     i_signal = np.array([1.0, 0.5, -0.5])
     q_signal = np.array([0.0, 0.866, 0.866])
-    phase = converter.calc_phase_iq(i_signal, q_signal)
+    phase, _ = converter.calc_phase_iq(i_signal, q_signal)
     ```
 """
 
@@ -698,7 +698,7 @@ class PhaseConverter:
         # Calculate phase from I/Q signals (IQ method)
         i_signal = np.array([1.0, 0.5, -0.5, -1.0])
         q_signal = np.array([0.0, 0.866, 0.866, 0.0])
-        phase = converter.calc_phase_iq(i_signal, q_signal, iscxprod=False)
+        phase, _ = converter.calc_phase_iq(i_signal, q_signal, iscxprod=False)
         
         # Convert phase to density
         density = converter.phase_to_density(
@@ -710,7 +710,7 @@ class PhaseConverter:
         # CDM method (requires reference and probe signals)
         ref_signal = np.sin(2 * np.pi * 15e6 * t)
         probe_signal = np.sin(2 * np.pi * 15e6 * t + phase)
-        phase_cdm = converter.calc_phase_cdm(
+        phase_cdm, _ = converter.calc_phase_cdm(
             ref_signal, probe_signal,
             fs=50e6, f_center=15e6
         )
@@ -918,7 +918,7 @@ class PhaseConverter:
         interpolate_nan: bool = False,
         interpolation_method: str = "linear",
         interpolation_degree: int = 1,
-        return_magnitude_stats: bool = False,
+        return_magnitude_stats: bool = True,
     ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals using atan2 method.
@@ -948,7 +948,7 @@ class PhaseConverter:
                 Default is 1.
             return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
                 If True, returns tuple (phase, stats_dict) where stats_dict contains
-                'mean_magnitude' and 'min_magnitude'. Default is False.
+                'mean_magnitude' and 'min_magnitude'. Default is True.
                 When True and magnitude_threshold=None, automatically uses mean * 0.1 as threshold.
 
         Returns:
@@ -968,7 +968,8 @@ class PhaseConverter:
             converter = PhaseConverter()
             i = np.array([1.0, 0.5, -0.5, -1.0])
             q = np.array([0.0, 0.866, 0.866, 0.0])
-            phase = converter.calc_phase_iq_atan2(i, q)
+            # Default: returns tuple (phase, stats_dict)
+            phase, _ = converter.calc_phase_iq_atan2(i, q)
             # Result: [0, π/3, 2π/3, π] (approximately)
             
             # With magnitude threshold and statistics
@@ -979,6 +980,9 @@ class PhaseConverter:
                 return_magnitude_stats=True
             )
             print(f"Mean magnitude: {stats['mean_magnitude']:.3f}")
+            
+            # To get only phase without statistics
+            phase = converter.calc_phase_iq_atan2(i, q, return_magnitude_stats=False)
             ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
@@ -1056,7 +1060,7 @@ class PhaseConverter:
         interpolation_method: str = "linear",
         interpolation_degree: int = 1,
         adjust_baseline: bool = True,
-        return_magnitude_stats: bool = False,
+        return_magnitude_stats: bool = True,
     ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals using asin2 (cross-product) method.
@@ -1093,7 +1097,7 @@ class PhaseConverter:
                 Default is True. If False, the interpolated values are not adjusted.
             return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
                 If True, returns tuple (phase, stats_dict) where stats_dict contains
-                'mean_magnitude' and 'min_magnitude'. Default is False.
+                'mean_magnitude' and 'min_magnitude'. Default is True.
                 When True and magnitude_threshold=None, automatically uses mean * 0.1 as threshold.
 
         Returns:
@@ -1115,7 +1119,8 @@ class PhaseConverter:
             converter = PhaseConverter()
             i = np.array([1.0, 0.5, -0.5, -1.0])
             q = np.array([0.0, 0.866, 0.866, 0.0])
-            phase = converter.calc_phase_iq_asin2(i, q)
+            # Default: returns tuple (phase, stats_dict)
+            phase, _ = converter.calc_phase_iq_asin2(i, q)
             # Result: Accumulated phase from differential cross-products
             
             # With magnitude threshold and statistics
@@ -1126,6 +1131,9 @@ class PhaseConverter:
                 return_magnitude_stats=True
             )
             print(f"Mean magnitude: {stats['mean_magnitude']:.3f}")
+            
+            # To get only phase without statistics
+            phase = converter.calc_phase_iq_asin2(i, q, return_magnitude_stats=False)
             ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
@@ -1230,7 +1238,7 @@ class PhaseConverter:
         interpolation_method: str = "linear",
         interpolation_degree: int = 1,
         adjust_baseline: bool = True,
-        return_magnitude_stats: bool = False,
+        return_magnitude_stats: bool = True,
     ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals (convenience method).
@@ -1263,7 +1271,7 @@ class PhaseConverter:
                 Default is True. If False, the interpolated values are not adjusted.
             return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
                 If True, returns tuple (phase, stats_dict) where stats_dict contains
-                'mean_magnitude' and 'min_magnitude'. Default is False.
+                'mean_magnitude' and 'min_magnitude'. Default is True.
 
         Returns:
             np.ndarray or tuple: Phase array in radians (same length as input signals).
@@ -1281,8 +1289,8 @@ class PhaseConverter:
             i = np.array([1.0, 0.5, -0.5])
             q = np.array([0.0, 0.866, 0.866])
             
-            # Default: atan2 method
-            phase_atan2 = converter.calc_phase_iq(i, q, iscxprod=False)
+            # Default: atan2 method, returns tuple (phase, stats_dict)
+            phase_atan2, _ = converter.calc_phase_iq(i, q, iscxprod=False)
             
             # Cross-product method with threshold and interpolation
             phase_asin2, stats = converter.calc_phase_iq(
@@ -1293,6 +1301,9 @@ class PhaseConverter:
                 adjust_baseline=True,
                 return_magnitude_stats=True
             )
+            
+            # To get only phase without statistics
+            phase = converter.calc_phase_iq(i, q, return_magnitude_stats=False)
             ```
         """
         if iscxprod:
@@ -1571,7 +1582,7 @@ class PhaseConverter:
         interpolation_method: str = "nearest",
         interpolation_degree: int = 0,
         adjust_baseline: bool = True,
-        return_magnitude_stats: bool = False,
+        return_magnitude_stats: bool = True,
     ) -> np.ndarray | tuple:
         """
         Calculate phase using Complex Demodulation (CDM) method.
@@ -1650,8 +1661,8 @@ class PhaseConverter:
             # Determine f_center from STFT analysis
             f_center = 15e6  # 15 MHz IF frequency
             
-            # Calculate phase using CDM
-            phase = converter.calc_phase_cdm(
+            # Calculate phase using CDM (default: returns tuple)
+            phase, _ = converter.calc_phase_cdm(
                 ref_signal, probe_signal,
                 fs=50e6,
                 f_center=f_center,
@@ -1660,10 +1671,17 @@ class PhaseConverter:
             )
             
             # With filter visualization
-            phase = converter.calc_phase_cdm(
+            phase, _ = converter.calc_phase_cdm(
                 ref_signal, probe_signal,
                 fs=50e6, f_center=f_center,
                 plot_filters=True  # Shows BPF and LPF responses
+            )
+            
+            # To get only phase without statistics
+            phase = converter.calc_phase_cdm(
+                ref_signal, probe_signal,
+                fs=50e6, f_center=f_center,
+                return_magnitude_stats=False
             )
             ```
         """

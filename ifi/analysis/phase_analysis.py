@@ -860,7 +860,7 @@ class SignalStacker:
             )
 
         try:
-            phase_diff = self.phase_converter.calc_phase_cdm(
+            phase_diff, _ = self.phase_converter.calc_phase_cdm(
                 ref_signal,
                 probe_signal,
                 self.fs,

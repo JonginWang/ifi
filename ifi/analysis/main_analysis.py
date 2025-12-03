@@ -976,7 +976,7 @@ def run_analysis(
                                     probe_signal = (
                                         freq_data[probe_col_name].dropna().to_numpy()
                                     )
-                                    phase = phase_converter.calc_phase_cdm(
+                                    phase, _ = phase_converter.calc_phase_cdm(
                                         ref_signal, probe_signal, fs, f_center
                                     )
                                     # Store in frequency-specific density DataFrame
@@ -1070,7 +1070,7 @@ def run_analysis(
                                         q_signal = (
                                             freq_data[q_col_name].dropna().to_numpy()
                                         )
-                                        phase = phase_converter.calc_phase_iq(
+                                        phase, _ = phase_converter.calc_phase_iq(
                                             i_signal, q_signal
                                         )
                                         # Store in frequency-specific density DataFrame
