@@ -69,11 +69,16 @@ import matplotlib.pyplot as plt
 try:
     from .functions.remezord import remezord  # remezord is from eegpy package, translated from MATLAB
     from .plots import plot_response
+    from .functions.interpolateNonFiniteValues import interpolateNonFinite
     from ..utils.common import LogManager, log_tag
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     from ifi.analysis.functions.remezord import remezord
     from ifi.analysis.plots import plot_response
+    try:
+        from ifi.analysis.functions.interpolateNonFiniteValues import interpolateNonFinite
+    except ImportError:
+        interpolateNonFinite = None
     from ifi.utils.common import LogManager, log_tag
 
 logger = LogManager().get_logger(__name__)
@@ -93,24 +98,27 @@ def _normalize_iq_signals(i_signal, q_signal):
         q_signal (np.ndarray): Quadrature signal array (1D), must have same length as i_signal.
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]:
             - i_norm (np.ndarray): Normalized I signal (unit circle).
             - q_norm (np.ndarray): Normalized Q signal (unit circle).
+            - iq_mag (np.ndarray): Magnitude array sqrt(i^2 + q^2) before normalization.
 
     Notes:
         - Zero magnitude values are replaced with 1.0 to avoid division by zero.
         - The function is JIT-compiled with Numba for performance.
         - Input arrays must have the same length.
+        - The magnitude array is returned for statistical analysis and quality control.
 
     Examples:
         ```python
         i = np.array([1.0, 0.5, 0.0])
         q = np.array([0.0, 0.866, 1.0])
-        i_norm, q_norm = _normalize_iq_signals(i, q)
-        # Result: i_norm and q_norm have unit magnitude
+        i_norm, q_norm, iq_mag = _normalize_iq_signals(i, q)
+        # Result: i_norm and q_norm have unit magnitude, iq_mag contains original magnitudes
         ```
     """
     iq_mag = np.sqrt(i_signal**2 + q_signal**2)
+    iq_mag_original = iq_mag.copy()
     # Avoid division by zero
     for i in range(len(iq_mag)):
         if iq_mag[i] == 0:
@@ -118,7 +126,7 @@ def _normalize_iq_signals(i_signal, q_signal):
 
     i_norm = i_signal / iq_mag
     q_norm = q_signal / iq_mag
-    return i_norm, q_norm
+    return i_norm, q_norm, iq_mag_original
 
 
 @numba.jit(nopython=True, cache=True, fastmath=True)
@@ -164,9 +172,157 @@ def _calculate_differential_phase(i_norm, q_norm):
     ratio = np.clip(
         (i_norm[:-1] * q_norm[1:] - q_norm[:-1] * i_norm[1:]) / denominator, -1.0, 1.0
     )
-    phase_diff = 2.0 * np.arcsin(ratio)
+    phase_diff = np.arcsin(ratio)
 
     return phase_diff
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _compute_magnitude_stats(iq_mag):
+    """
+    Compute statistics for I/Q magnitude array (Numba-optimized).
+
+    This function calculates mean and minimum values of the magnitude array,
+    which can be used for quality control and threshold-based filtering.
+
+    Args:
+        iq_mag (np.ndarray): Magnitude array sqrt(i^2 + q^2) (1D array).
+
+    Returns:
+        Tuple[float, float]:
+            - mean_mag (float): Mean magnitude value.
+            - min_mag (float): Minimum magnitude value.
+
+    Notes:
+        - The function is JIT-compiled with Numba for performance.
+        - Non-finite values (NaN, inf) are excluded from statistics.
+
+    Examples:
+        ```python
+        iq_mag = np.array([1.0, 0.866, 0.5, 0.1])
+        mean_mag, min_mag = _compute_magnitude_stats(iq_mag)
+        # Result: mean_mag ≈ 0.6165, min_mag = 0.1
+        ```
+    """
+    # Filter out non-finite values
+    finite_mask = np.isfinite(iq_mag)
+    if np.sum(finite_mask) == 0:
+        return np.nan, np.nan
+    
+    finite_mag = iq_mag[finite_mask]
+    mean_mag = np.mean(finite_mag)
+    min_mag = np.min(finite_mag)
+    return mean_mag, min_mag
+
+
+@numba.jit(nopython=True, cache=True, fastmath=True)
+def _apply_magnitude_threshold(iq_mag, threshold):
+    """
+    Create a mask for magnitude values above threshold (Numba-optimized).
+
+    This function creates a boolean mask indicating which samples have
+    magnitude values above the specified threshold. Low magnitude values
+    may indicate poor signal quality and can be filtered out.
+
+    Args:
+        iq_mag (np.ndarray): Magnitude array sqrt(i^2 + q^2) (1D array).
+        threshold (float): Minimum magnitude threshold. Values below this are masked.
+
+    Returns:
+        np.ndarray: Boolean mask array (True for values >= threshold, False otherwise).
+
+    Notes:
+        - The function is JIT-compiled with Numba for performance.
+        - Non-finite values (NaN, inf) are always masked as False.
+
+    Examples:
+        ```python
+        iq_mag = np.array([1.0, 0.866, 0.5, 0.1])
+        mask = _apply_magnitude_threshold(iq_mag, threshold=0.5)
+        # Result: [True, True, True, False]
+        ```
+    """
+    mask = np.ones(len(iq_mag), dtype=numba.types.boolean)
+    for i in range(len(iq_mag)):
+        if not np.isfinite(iq_mag[i]) or iq_mag[i] < threshold:
+            mask[i] = False
+    return mask
+
+
+def _adjust_interpolated_baseline(phase_diff_interp: np.ndarray, phase_diff_original: np.ndarray) -> np.ndarray:
+    """
+    Adjust interpolated values by subtracting the last finite value before each NaN segment.
+    
+    For consecutive NaN segments (i, i+1, i+2, ...), subtract the actual value at index i-1
+    from each interpolated value in that segment. This ensures the interpolated values
+    are relative to the baseline before the gap.
+    
+    Args:
+        phase_diff_interp (np.ndarray): Interpolated phase difference array (all NaN filled).
+        phase_diff_original (np.ndarray): Original phase difference array (with NaN markers).
+            Used to identify which indices were interpolated.
+    
+    Returns:
+        np.ndarray: Baseline-adjusted interpolated array.
+    
+    Notes:
+        - Only adjusts values that were originally NaN (interpolated).
+        - For degree=0 (nearest), this effectively sets interpolated values to 0.
+        - For degree>=1, this removes the baseline offset from interpolated segments.
+        - If a NaN segment starts at index 0, interpolated values are set to 0.
+    
+    Examples:
+        ```python
+        original = np.array([1.0, 2.0, np.nan, np.nan, 5.0])
+        interp = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        adjusted = _adjust_interpolated_baseline(interp, original)
+        # Result: [1.0, 2.0, 1.0, 2.0, 5.0]  # 3.0-2.0=1.0, 4.0-2.0=2.0
+        ```
+    """
+    if len(phase_diff_interp) != len(phase_diff_original):
+        raise ValueError("Interpolated and original arrays must have same length")
+    
+    adjusted = phase_diff_interp.copy()
+    nan_mask_original = np.isnan(phase_diff_original)
+    
+    if not np.any(nan_mask_original):
+        return adjusted
+    
+    # Find consecutive NaN segments
+    i = 0
+    while i < len(nan_mask_original):
+        if nan_mask_original[i]:
+            # Start of a NaN segment
+            segment_start = i
+            
+            # Find the end of this segment
+            while i < len(nan_mask_original) and nan_mask_original[i]:
+                i += 1
+            segment_end = i
+            
+            # Find the last finite value before this segment (from original array)
+            baseline_value = None
+            if segment_start > 0:
+                # Look backwards from segment_start to find the last finite value
+                # Use original array value (y(i-)) as requested
+                for k in range(segment_start - 1, -1, -1):
+                    if not np.isnan(phase_diff_original[k]):
+                        baseline_value = phase_diff_original[k]  # Use original actual value
+                        break
+            
+            # Adjust all interpolated values in this segment
+            if baseline_value is not None:
+                for j in range(segment_start, segment_end):
+                    adjusted[j] = phase_diff_interp[j] - baseline_value
+            else:
+                # No baseline available (segment starts at index 0 or all previous values are NaN)
+                # Set interpolated values to 0
+                for j in range(segment_start, segment_end):
+                    adjusted[j] = 0.0
+        else:
+            i += 1
+    
+    return adjusted
 
 
 @numba.jit(nopython=True, cache=True, fastmath=True)
@@ -758,7 +914,12 @@ class PhaseConverter:
         q_signal: np.ndarray,
         isnorm: bool = True,
         isflip: bool = False,
-    ) -> np.ndarray:
+        magnitude_threshold: float = None,
+        interpolate_nan: bool = False,
+        interpolation_method: str = "linear",
+        interpolation_degree: int = 1,
+        return_magnitude_stats: bool = False,
+    ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals using atan2 method.
 
@@ -773,15 +934,32 @@ class PhaseConverter:
                 Default is True. If False, signals are used as-is (must already be normalized).
             isflip (bool, optional): Whether to flip the sign of the phase.
                 Default is False. Useful for correcting phase convention.
+            magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
+                Values with magnitude below this threshold will be set to NaN.
+                If None, no threshold filtering is applied. Default is None.
+            interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
+                Default is False. Uses interpolateNonFiniteValues if True.
+            interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
+                Options: "nearest" (degree=0), "linear" (degree=1), "quadratic" (degree=2), "cubic" (degree=3).
+                Default is "linear".
+            interpolation_degree (int, optional): Spline degree for interpolation (0-3).
+                Only used if interpolation_method is not one of the named methods.
+                Default is 1.
+            return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
+                If True, returns tuple (phase, stats_dict) where stats_dict contains
+                'mean_magnitude' and 'min_magnitude'. Default is False.
 
         Returns:
-            np.ndarray: Phase array in radians (same length as input signals).
+            np.ndarray or tuple: Phase array in radians (same length as input signals).
                 Phase is unwrapped and calibrated to start at 0.
+                If return_magnitude_stats=True, returns tuple (phase, stats_dict).
 
         Notes:
             - Normalization uses Numba-optimized function for performance.
             - Phase unwrapping handles 2π jumps automatically.
             - The first phase value is always 0 (calibrated).
+            - Magnitude statistics are computed from the original magnitude before normalization.
+            - Threshold filtering sets low-quality samples to NaN before interpolation.
 
         Examples:
             ```python
@@ -790,20 +968,76 @@ class PhaseConverter:
             q = np.array([0.0, 0.866, 0.866, 0.0])
             phase = converter.calc_phase_iq_atan2(i, q)
             # Result: [0, π/3, 2π/3, π] (approximately)
+            
+            # With magnitude threshold and statistics
+            phase, stats = converter.calc_phase_iq_atan2(
+                i, q,
+                magnitude_threshold=0.5,
+                interpolate_nan=True,
+                return_magnitude_stats=True
+            )
+            print(f"Mean magnitude: {stats['mean_magnitude']:.3f}")
             ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
         if isnorm:
-            i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
+            i_norm, q_norm, iq_mag = _normalize_iq_signals(i_signal, q_signal)
         else:
             i_norm = i_signal
             q_norm = q_signal
+            iq_mag = np.sqrt(i_signal**2 + q_signal**2)
+
+        # Compute magnitude statistics if requested
+        stats_dict = {}
+        if return_magnitude_stats or magnitude_threshold is not None:
+            mean_mag, min_mag = _compute_magnitude_stats(iq_mag)
+            stats_dict = {
+                "mean_magnitude": mean_mag,
+                "min_magnitude": min_mag,
+            }
 
         # 2. Calculate phase by arctan (direct calculation)
         phase = np.unwrap(np.arctan2(q_norm, i_norm))
         phase -= phase[0]  # Calibrate to start at 0
         if isflip:
             phase *= -1
+
+        # 3. Apply magnitude threshold filtering if specified
+        if magnitude_threshold is not None:
+            mask = _apply_magnitude_threshold(iq_mag, magnitude_threshold)
+            phase[~mask] = np.nan
+
+        # 4. Interpolate NaN values if requested
+        if interpolate_nan and np.any(np.isnan(phase)):
+            if interpolateNonFinite is None:
+                logger.warning(
+                    f"{log_tag('PHI2N', 'INTERP')} interpolateNonFinite not available. Skipping NaN interpolation."
+                )
+            else:
+                # Map interpolation method to degree
+                method_to_degree = {
+                    "nearest": 0,
+                    "linear": 1,
+                    "quadratic": 2,
+                    "cubic": 3,
+                }
+                degree = method_to_degree.get(interpolation_method, interpolation_degree)
+                try:
+                    phase = interpolateNonFinite(
+                        phase,
+                        xCoords=None,  # Uniform spacing
+                        maxNonFiniteNeighbors=-1,  # No limit
+                        degree=degree,
+                        allowExtrapolation=False,
+                        smooth=0,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"{log_tag('PHI2N', 'INTERP')} Interpolation failed: {e}. Returning phase with NaN values."
+                    )
+
+        if return_magnitude_stats:
+            return phase, stats_dict
         return phase
 
     def calc_phase_iq_asin2(
@@ -812,7 +1046,13 @@ class PhaseConverter:
         q_signal: np.ndarray,
         isnorm: bool = True,
         isflip: bool = False,
-    ) -> np.ndarray:
+        magnitude_threshold: float = None,
+        interpolate_nan: bool = False,
+        interpolation_method: str = "linear",
+        interpolation_degree: int = 1,
+        adjust_baseline: bool = True,
+        return_magnitude_stats: bool = False,
+    ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals using asin2 (cross-product) method.
 
@@ -822,7 +1062,7 @@ class PhaseConverter:
 
         The algorithm is based on MATLAB's IQPostprocessing script and uses:
         1. I/Q normalization to unit circle
-        2. Differential phase calculation: Δφ = 2 * arcsin(cross_product / magnitude_product)
+        2. Differential phase calculation: Δφ = arcsin(cross_product / magnitude_product)
         3. Phase accumulation via cumulative sum
 
         Args:
@@ -832,16 +1072,36 @@ class PhaseConverter:
                 Default is True. If False, signals are used as-is (must already be normalized).
             isflip (bool, optional): Whether to flip the sign of the accumulated phase.
                 Default is False. Useful for correcting phase convention.
+            magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
+                Values with magnitude below this threshold will be set to NaN.
+                If None, no threshold filtering is applied. Default is None.
+            interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
+                Default is False. Uses interpolateNonFiniteValues if True.
+            interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
+                Options: "nearest" (degree=0), "linear" (degree=1), "quadratic" (degree=2), "cubic" (degree=3).
+                Default is "linear".
+            interpolation_degree (int, optional): Spline degree for interpolation (0-3).
+                Only used if interpolation_method is not one of the named methods.
+                Default is 1.
+            adjust_baseline (bool, optional): Whether to adjust the baseline of the interpolated values.
+                Default is True. If False, the interpolated values are not adjusted.
+            return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
+                If True, returns tuple (phase, stats_dict) where stats_dict contains
+                'mean_magnitude' and 'min_magnitude'. Default is False.
 
         Returns:
-            np.ndarray: Phase array in radians (same length as input signals).
+            np.ndarray or tuple: Phase array in radians (same length as input signals).
                 Phase is accumulated from differential phase differences.
+                If return_magnitude_stats=True, returns tuple (phase, stats_dict).
 
         Notes:
             - Uses Numba-optimized functions for normalization, differential calculation, and accumulation.
-            - NaN values in phase differences are replaced with 0.0.
+            - NaN values in phase differences are replaced with 0.0 before accumulation.
             - The cross-product method is more robust to amplitude variations than atan2.
             - The output length matches input length (last differential value is duplicated).
+            - Magnitude statistics are computed from the original magnitude before normalization.
+            - Threshold filtering sets low-quality samples to NaN before interpolation.
+            - If adjust_baseline is True, the baseline of the interpolated values is adjusted.
 
         Examples:
             ```python
@@ -850,27 +1110,101 @@ class PhaseConverter:
             q = np.array([0.0, 0.866, 0.866, 0.0])
             phase = converter.calc_phase_iq_asin2(i, q)
             # Result: Accumulated phase from differential cross-products
+            
+            # With magnitude threshold and statistics
+            phase, stats = converter.calc_phase_iq_asin2(
+                i, q,
+                magnitude_threshold=0.5,
+                interpolate_nan=True,
+                return_magnitude_stats=True
+            )
+            print(f"Mean magnitude: {stats['mean_magnitude']:.3f}")
             ```
         """
         # 1. Normalize I and Q signals (numba-optimized)
         if isnorm:
-            i_norm, q_norm = _normalize_iq_signals(i_signal, q_signal)
+            i_norm, q_norm, iq_mag = _normalize_iq_signals(i_signal, q_signal)
         else:
             i_norm = i_signal
             q_norm = q_signal
+            iq_mag = np.sqrt(i_signal**2 + q_signal**2)
+
+        # Compute magnitude statistics if requested
+        stats_dict = {}
+        if return_magnitude_stats or magnitude_threshold is not None:
+            mean_mag, min_mag = _compute_magnitude_stats(iq_mag)
+            stats_dict = {
+                "mean_magnitude": mean_mag,
+                "min_magnitude": min_mag,
+            }
 
         # 2. Calculate the differential phase (numba-optimized)
         phase_diff = _calculate_differential_phase(i_norm, q_norm)
 
-        # Handle any potential NaNs, as in the MATLAB code
-        phase_diff[np.isnan(phase_diff)] = 0.0
+        # 3. Apply magnitude threshold filtering if specified
+        if magnitude_threshold is not None:
+            # phase_diff has length len(i_signal) - 1, so use iq_mag[:-1] for threshold
+            mask = _apply_magnitude_threshold(iq_mag[:-1], magnitude_threshold)
+            phase_diff[~mask] = np.nan
 
-        # 3. Accumulate the phase differences (numba-optimized)
+        # 4. Interpolate NaN values if requested
+        if interpolate_nan and np.any(np.isnan(phase_diff)):
+            if interpolateNonFinite is None:
+                logger.warning(
+                    f"{log_tag('PHI2N', 'INTERP')} interpolateNonFinite not available. Skipping NaN interpolation."
+                )
+            else:
+                # Map interpolation method to degree
+                method_to_degree = {
+                    "nearest": 0,
+                    "linear": 1,
+                    "quadratic": 2,
+                    "cubic": 3,
+                }
+                degree = method_to_degree.get(interpolation_method, interpolation_degree)
+                
+                # Store original NaN positions before interpolation
+                phase_diff_original = phase_diff.copy()
+                
+                try:
+                    phase_diff_interp = interpolateNonFinite(
+                        phase_diff,
+                        xCoords=None,  # Uniform spacing
+                        maxNonFiniteNeighbors=-1,  # No limit
+                        degree=degree,
+                        allowExtrapolation=False,
+                        smooth=0,
+                    )
+                    
+                    # Adjust baseline: subtract the last finite value before each NaN segment
+                    if adjust_baseline:
+                        if degree == 0:
+                            # For nearest (degree=0), set interpolated values to 0 (equivalent to baseline adjustment)
+                            nan_mask = np.isnan(phase_diff_original)
+                            phase_diff_interp[nan_mask] = 0.0
+                            phase_diff = phase_diff_interp
+                        else:
+                            # For degree >= 1, adjust interpolated values by baseline
+                            phase_diff = _adjust_interpolated_baseline(phase_diff_interp, phase_diff_original)
+                    else:
+                        phase_diff = phase_diff_interp
+                except Exception as e:
+                    logger.warning(
+                        f"{log_tag('PHI2N', 'INTERP')} Interpolation failed: {e}. Returning phase with NaN values."
+                    )
+        # Handle any potential NaNs, as in the MATLAB code
+        elif interpolate_nan is False:
+            phase_diff[np.isnan(phase_diff)] = 0.0
+
+        # 5. Accumulate the phase differences (numba-optimized)
         phase_accum = _accumulate_phase_diff(phase_diff)
 
         # Match the sign from the MATLAB script
         if isflip:
             phase_accum *= -1
+            
+        if return_magnitude_stats:
+            return phase_accum, stats_dict
 
         return phase_accum
 
@@ -881,7 +1215,13 @@ class PhaseConverter:
         iscxprod: bool = False,
         isnorm: bool = True,
         isflip: bool = False,
-    ) -> np.ndarray:
+        magnitude_threshold: float = None,
+        interpolate_nan: bool = False,
+        interpolation_method: str = "linear",
+        interpolation_degree: int = 1,
+        adjust_baseline: bool = True,
+        return_magnitude_stats: bool = False,
+    ) -> np.ndarray | tuple:
         """
         Calculate phase from I and Q signals (convenience method).
 
@@ -897,14 +1237,33 @@ class PhaseConverter:
                 Default is True.
             isflip (bool, optional): Whether to flip the sign of the phase.
                 Default is False.
+            magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
+                Values with magnitude below this threshold will be set to NaN.
+                If None, no threshold filtering is applied. Default is None.
+            interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
+                Default is False. Uses interpolateNonFiniteValues if True.
+            interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
+                Options: "nearest" (degree=0), "linear" (degree=1), "quadratic" (degree=2), "cubic" (degree=3).
+                Default is "linear".
+            interpolation_degree (int, optional): Spline degree for interpolation (0-3).
+                Only used if interpolation_method is not one of the named methods.
+                Default is 1.
+            adjust_baseline (bool, optional): Whether to adjust the baseline of the interpolated values.
+                Only applies when iscxprod=True and interpolate_nan=True.
+                Default is True. If False, the interpolated values are not adjusted.
+            return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
+                If True, returns tuple (phase, stats_dict) where stats_dict contains
+                'mean_magnitude' and 'min_magnitude'. Default is False.
 
         Returns:
-            np.ndarray: Phase array in radians (same length as input signals).
+            np.ndarray or tuple: Phase array in radians (same length as input signals).
+                If return_magnitude_stats=True, returns tuple (phase, stats_dict).
 
         Notes:
             - Default method (iscxprod=False) uses atan2, which is faster and simpler.
             - Cross-product method (iscxprod=True) is more robust to noise but slightly slower.
             - Both methods normalize signals and handle phase unwrapping/accumulation.
+            - All optional parameters are passed through to the underlying method.
 
         Examples:
             ```python
@@ -915,17 +1274,41 @@ class PhaseConverter:
             # Default: atan2 method
             phase_atan2 = converter.calc_phase_iq(i, q, iscxprod=False)
             
-            # Cross-product method
-            phase_asin2 = converter.calc_phase_iq(i, q, iscxprod=True)
+            # Cross-product method with threshold and interpolation
+            phase_asin2, stats = converter.calc_phase_iq(
+                i, q,
+                iscxprod=True,
+                magnitude_threshold=0.5,
+                interpolate_nan=True,
+                adjust_baseline=True,
+                return_magnitude_stats=True
+            )
             ```
         """
         if iscxprod:
             return self.calc_phase_iq_asin2(
-                i_signal, q_signal, isnorm=isnorm, isflip=isflip
+                i_signal,
+                q_signal,
+                isnorm=isnorm,
+                isflip=isflip,
+                magnitude_threshold=magnitude_threshold,
+                interpolate_nan=interpolate_nan,
+                interpolation_method=interpolation_method,
+                interpolation_degree=interpolation_degree,
+                adjust_baseline=adjust_baseline,
+                return_magnitude_stats=return_magnitude_stats,
             )
         else:
             return self.calc_phase_iq_atan2(
-                i_signal, q_signal, isnorm=isnorm, isflip=isflip
+                i_signal,
+                q_signal,
+                isnorm=isnorm,
+                isflip=isflip,
+                magnitude_threshold=magnitude_threshold,
+                interpolate_nan=interpolate_nan,
+                interpolation_method=interpolation_method,
+                interpolation_degree=interpolation_degree,
+                return_magnitude_stats=return_magnitude_stats,
             )
 
     def _create_lpf(self, f_pass, f_stop, fs, approx=False, max_taps=None):
@@ -1173,6 +1556,11 @@ class PhaseConverter:
         iszif: bool = False,
         isflip: bool = False,
         plot_filters: bool = False,
+        magnitude_threshold: float = None,
+        interpolate_nan: bool = False,
+        interpolation_method: str = "linear",
+        interpolation_degree: int = 1,
+        adjust_baseline: bool = True,
     ) -> np.ndarray:
         """
         Calculate phase using Complex Demodulation (CDM) method.
@@ -1206,6 +1594,23 @@ class PhaseConverter:
             isflip (bool, optional): Whether to flip the sign of the phase. Default is False.
             plot_filters (bool, optional): Whether to plot BPF and LPF frequency responses.
                 Default is False.
+            magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
+                For iszif=False: Applied to demodulated signal magnitude before phase calculation.
+                For iszif=True: Applied to demod_zif magnitude (|demod_zif|).
+                Values with magnitude below this threshold will be set to NaN.
+                If None, no threshold filtering is applied. Default is None.
+            interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
+                Default is False. Uses interpolateNonFiniteValues if True.
+                Applies to both differential method (iszif=False) and zero-IF method (iszif=True).
+            interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
+                Options: "nearest" (degree=0), "linear" (degree=1), "quadratic" (degree=2), "cubic" (degree=3).
+                Default is "linear".
+            interpolation_degree (int, optional): Spline degree for interpolation (0-3).
+                Only used if interpolation_method is not one of the named methods.
+                Default is 1.
+            adjust_baseline (bool, optional): Whether to adjust the baseline of the interpolated values.
+                Only applies when interpolate_nan=True.
+                Default is True. If False, the interpolated values are not adjusted.
 
         Returns:
             np.ndarray: Phase array in radians (same length as input signals).
@@ -1216,6 +1621,9 @@ class PhaseConverter:
             - Uses scipy.signal.hilbert for complex demodulation (matches MATLAB behavior).
             - Baseline correction uses first 10000 samples (or 1000 if signal is shorter).
             - The method uses Numba-optimized functions for differential phase calculation.
+            - If magnitude_threshold is specified, low-magnitude samples are set to NaN before interpolation.
+            - If interpolate_nan=True and adjust_baseline=True, interpolated values are adjusted by baseline.
+            - For iszif=True, magnitude threshold is applied to |demod_zif| (magnitude of demodulated signal).
 
         Examples:
             ```python
@@ -1301,8 +1709,7 @@ class PhaseConverter:
         demod_lpf = filtfilt(lpf_coeffs, 1, demod_signal) if islpf else demod_signal
 
         # 5. Calculate phase
-        if not iszif:      
-        
+        if not iszif:
             # The matlab script uses a differential method.
             re = np.real(demod_lpf)
             im = np.imag(demod_lpf)
@@ -1310,11 +1717,122 @@ class PhaseConverter:
             # Vectorized differential phase calculation (cross-product method)
             phase_diff = _calculate_differential_phase(re, im)
 
+            # 6. Apply magnitude threshold filtering if specified (for differential method)
+            if magnitude_threshold is not None:
+                # phase_diff has length len(demod_lpf) - 1, so use demod_lpf_mag[:-1] for threshold
+                demod_lpf_mag = np.abs(demod_lpf)
+                mask = _apply_magnitude_threshold(demod_lpf_mag[:-1], magnitude_threshold)
+                phase_diff[~mask] = np.nan
+
+            # 7. Interpolate NaN values if requested (only for differential method)
+            if interpolate_nan and np.any(np.isnan(phase_diff)):
+                if interpolateNonFinite is None:
+                    logger.warning(
+                        f"{log_tag('PHI2N', 'INTERP')} interpolateNonFinite not available. Skipping NaN interpolation."
+                    )
+                else:
+                    # Map interpolation method to degree
+                    method_to_degree = {
+                        "nearest": 0,
+                        "linear": 1,
+                        "quadratic": 2,
+                        "cubic": 3,
+                    }
+                    degree = method_to_degree.get(interpolation_method, interpolation_degree)
+                    
+                    # Store original NaN positions before interpolation
+                    phase_diff_original = phase_diff.copy()
+                    
+                    try:
+                        phase_diff_interp = interpolateNonFinite(
+                            phase_diff,
+                            xCoords=None,  # Uniform spacing
+                            maxNonFiniteNeighbors=-1,  # No limit
+                            degree=degree,
+                            allowExtrapolation=False,
+                            smooth=0,
+                        )
+                        
+                        # Adjust baseline: subtract the last finite value before each NaN segment
+                        if adjust_baseline:
+                            if degree == 0:
+                                # For nearest (degree=0), set interpolated values to 0 (equivalent to baseline adjustment)
+                                nan_mask = np.isnan(phase_diff_original)
+                                phase_diff_interp[nan_mask] = 0.0
+                                phase_diff = phase_diff_interp
+                            else:
+                                # For degree >= 1, adjust interpolated values by baseline
+                                phase_diff = _adjust_interpolated_baseline(phase_diff_interp, phase_diff_original)
+                        else:
+                            phase_diff = phase_diff_interp
+                    except Exception as e:
+                        logger.warning(
+                            f"{log_tag('PHI2N', 'INTERP')} Interpolation failed: {e}. Returning phase with NaN values."
+                        )
+            # Handle any potential NaNs, as in the MATLAB code
+            elif interpolate_nan is False:
+                phase_diff[np.isnan(phase_diff)] = 0.0
+
             # The first sample is phase_diff[0] at _accumulate_phase_diff, so no need to prepend a 0.
             phase_accum = _accumulate_phase_diff(phase_diff)
         else:
             demod_zif = ref_hilbert.conj() * hilbert(prob_bpf)
             phase_accum = np.angle(demod_zif)
+
+            # 6. Apply magnitude threshold filtering if specified (for zero-IF method)
+            if magnitude_threshold is not None:
+                demod_zif_mag = np.abs(demod_zif)
+                mask = _apply_magnitude_threshold(demod_zif_mag, magnitude_threshold)
+                phase_accum[~mask] = np.nan
+
+            # 7. Interpolate NaN values if requested (for zero-IF method)
+            if interpolate_nan and np.any(np.isnan(phase_accum)):
+                if interpolateNonFinite is None:
+                    logger.warning(
+                        f"{log_tag('PHI2N', 'INTERP')} interpolateNonFinite not available. Skipping NaN interpolation."
+                    )
+                else:
+                    # Map interpolation method to degree
+                    method_to_degree = {
+                        "nearest": 0,
+                        "linear": 1,
+                        "quadratic": 2,
+                        "cubic": 3,
+                    }
+                    degree = method_to_degree.get(interpolation_method, interpolation_degree)
+                    
+                    # Store original NaN positions before interpolation
+                    phase_accum_original = phase_accum.copy()
+                    
+                    try:
+                        phase_accum_interp = interpolateNonFinite(
+                            phase_accum,
+                            xCoords=None,  # Uniform spacing
+                            maxNonFiniteNeighbors=-1,  # No limit
+                            degree=degree,
+                            allowExtrapolation=False,
+                            smooth=0,
+                        )
+                        
+                        # Adjust baseline: subtract the last finite value before each NaN segment
+                        if adjust_baseline:
+                            if degree == 0:
+                                # For nearest (degree=0), set interpolated values to 0 (equivalent to baseline adjustment)
+                                nan_mask = np.isnan(phase_accum_original)
+                                phase_accum_interp[nan_mask] = 0.0
+                                phase_accum = phase_accum_interp
+                            else:
+                                # For degree >= 1, adjust interpolated values by baseline
+                                phase_accum = _adjust_interpolated_baseline(phase_accum_interp, phase_accum_original)
+                        else:
+                            phase_accum = phase_accum_interp
+                    except Exception as e:
+                        logger.warning(
+                            f"{log_tag('PHI2N', 'INTERP')} Interpolation failed: {e}. Returning phase with NaN values."
+                        )
+            # Handle any potential NaNs, as in the MATLAB code
+            elif interpolate_nan is False:
+                phase_accum[np.isnan(phase_accum)] = 0.0
 
         # MATLAB uses first 10000 samples; use same or adapt based on signal length
         if len(phase_accum) > 10000:
