@@ -94,6 +94,7 @@ $allArgsList = $args
 
 # Parse arguments to handle --query, --signal-only, --density and passthrough
 $query = $null
+$queryProcessed = $false
 $mode = $null
 $pythonArgs = @()
 $i = 0
@@ -107,8 +108,15 @@ while ($i -lt $allArgsList.Count) {
         $i++
         if ($i -lt $allArgsList.Count) {
             $query = $allArgsList[$i]
+            $queryProcessed = $true
             $i++
         }
+        continue
+    } elseif (-not $queryProcessed -and -not $arg.StartsWith("--")) {
+        # First non-option argument is the query
+        $query = $arg
+        $queryProcessed = $true
+        $i++
         continue
     } elseif ($arg -eq "--signal-only" -or $arg -eq "--signal_only") {
         $mode = "signal-only"
@@ -124,24 +132,30 @@ while ($i -lt $allArgsList.Count) {
         continue
     } elseif ($arg -eq "--freq" -or $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols") {
         # Handle options that accept comma or space-separated values
-        $pythonArgs += $arg
         $i++
         if ($i -lt $allArgsList.Count) {
             $value = $allArgsList[$i]
-            # If value contains comma, split and add as separate arguments (convert to space-separated)
-            if ($value -match ",") {
-                $values = $value -split "," | ForEach-Object { $_.Trim() }
-                $pythonArgs += $values
+            # Validate that value is not empty and not another option
+            if ($value -and -not $value.StartsWith("--")) {
+                $pythonArgs += $arg
+                # If value contains comma, split and add as separate arguments (convert to space-separated)
+                if ($value -match ",") {
+                    $values = $value -split "," | ForEach-Object { $_.Trim() }
+                    $pythonArgs += $values
+                } else {
+                    $pythonArgs += $value
+                }
+                $i++
             } else {
-                $pythonArgs += $value
+                # Value is invalid (empty or another option), decrement index so next iteration processes it
+                Write-Warning "$arg option specified but no values provided. Skipping $arg option."
+                $i--
             }
-            $i++
+        } else {
+            # No more arguments, decrement index to prevent skipping next iteration
+            Write-Warning "$arg option specified but no values provided. Skipping $arg option."
+            $i--
         }
-        continue
-    } elseif (-not $arg.StartsWith("--") -and $null -eq $query) {
-        # First non-option argument is the query
-        $query = $arg
-        $i++
         continue
     } else {
         # Passthrough to Python

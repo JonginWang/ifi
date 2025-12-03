@@ -25,14 +25,28 @@ set "CWT="
 REM Parse command line arguments
 set "QUERY="
 set "ARGS="
+set "QUERY_PROCESSED=0"
 
 :parse_args
 if "%~1"=="" goto :run_analysis
+REM Handle --query option first
 if "%~1"=="--query" (
     set "QUERY=%~2"
+    set "QUERY_PROCESSED=1"
     shift
     shift
     goto :parse_args
+)
+REM Handle first non-option argument as query (only if query not already processed)
+if "!QUERY_PROCESSED!"=="0" (
+    echo %~1 | findstr /R "^--" >nul
+    if !ERRORLEVEL! NEQ 0 (
+        REM First non-option argument is the query
+        set "QUERY=%~1"
+        set "QUERY_PROCESSED=1"
+        shift
+        goto :parse_args
+    )
 )
 if "%~1"=="--cwt" (
     set "CWT=--cwt"
@@ -141,6 +155,11 @@ if "%~1"=="--stft-cols" (
     shift
     goto :collect_stft_cols
     :apply_stft_cols
+    REM Validate that at least one value was collected
+    if "!STFT_COLS_VAL!"=="" (
+        echo WARNING: --stft-cols option specified but no values provided. Skipping --stft-cols option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "STFT_COLS_CONVERTED=!STFT_COLS_VAL!"
     set "STFT_COLS_CONVERTED=!STFT_COLS_CONVERTED:,= !"
@@ -174,6 +193,11 @@ if "%~1"=="--cwt-cols" (
     shift
     goto :collect_cwt_cols
     :apply_cwt_cols
+    REM Validate that at least one value was collected
+    if "!CWT_COLS_VAL!"=="" (
+        echo WARNING: --cwt-cols option specified but no values provided. Skipping --cwt-cols option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "CWT_COLS_CONVERTED=!CWT_COLS_VAL!"
     set "CWT_COLS_CONVERTED=!CWT_COLS_CONVERTED:,= !"
@@ -240,6 +264,11 @@ if "%~1"=="--freq" (
     shift
     goto :collect_freq
     :apply_freq
+    REM Validate that at least one value was collected
+    if "!FREQ_VAL!"=="" (
+        echo WARNING: --freq option specified but no values provided. Skipping --freq option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "FREQ_CONVERTED=!FREQ_VAL!"
     set "FREQ_CONVERTED=!FREQ_CONVERTED:,= !"
@@ -266,12 +295,8 @@ if "%~1"=="--amplitude-impedance" (
 if "%~1"=="--help" (
     goto :show_help
 )
-if "!QUERY!"=="" (
-    set "QUERY=%~1"
-) else (
-    REM After the first positional argument (QUERY), treat all others as passthrough args.
-    set "ARGS=!ARGS! %~1"
-)
+REM All remaining arguments are passthrough (query already processed)
+set "ARGS=!ARGS! %~1"
 shift
 goto :parse_args
 

@@ -84,6 +84,11 @@ if "%~1"=="--freq" (
     shift
     goto :collect_freq
     :apply_freq
+    REM Validate that at least one value was collected
+    if "!FREQ_VAL!"=="" (
+        echo WARNING: --freq option specified but no values provided. Skipping --freq option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "FREQ_CONVERTED=!FREQ_VAL!"
     set "FREQ_CONVERTED=!FREQ_CONVERTED:,= !"
@@ -117,6 +122,11 @@ if "%~1"=="--stft-cols" (
     shift
     goto :collect_stft_cols
     :apply_stft_cols
+    REM Validate that at least one value was collected
+    if "!STFT_COLS_VAL!"=="" (
+        echo WARNING: --stft-cols option specified but no values provided. Skipping --stft-cols option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "STFT_COLS_CONVERTED=!STFT_COLS_VAL!"
     set "STFT_COLS_CONVERTED=!STFT_COLS_CONVERTED:,= !"
@@ -150,6 +160,11 @@ if "%~1"=="--cwt-cols" (
     shift
     goto :collect_cwt_cols
     :apply_cwt_cols
+    REM Validate that at least one value was collected
+    if "!CWT_COLS_VAL!"=="" (
+        echo WARNING: --cwt-cols option specified but no values provided. Skipping --cwt-cols option.
+        goto :parse_args
+    )
     REM Convert comma-separated to space-separated for Python argparse
     set "CWT_COLS_CONVERTED=!CWT_COLS_VAL!"
     set "CWT_COLS_CONVERTED=!CWT_COLS_CONVERTED:,= !"
