@@ -213,6 +213,39 @@ if "%~1"=="--vest-fields" (
     shift
     goto :parse_args
 )
+if "%~1"=="--freq" (
+    REM Collect freq values (can be comma or space separated within quotes)
+    set "FREQ_VAL="
+    shift
+    :collect_freq
+    if "%~1"=="" goto :apply_freq
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_freq
+    REM Treat any non-option arguments after --freq as frequency values
+    if "!FREQ_VAL!"=="" (
+        set "FREQ_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !FREQ_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "FREQ_VAL=!FREQ_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "FREQ_VAL=!FREQ_VAL! !ARG_VAL!"
+        )
+    )
+    shift
+    goto :collect_freq
+    :apply_freq
+    REM Convert comma-separated to space-separated for Python argparse
+    set "FREQ_CONVERTED=!FREQ_VAL!"
+    set "FREQ_CONVERTED=!FREQ_CONVERTED:,= !"
+    set "ARGS=!ARGS! --freq !FREQ_CONVERTED!"
+    goto :parse_args
+)
 if "%~1"=="--color-density-by-amplitude" (
     set "ARGS=!ARGS! --color_density_by_amplitude"
     shift
@@ -283,8 +316,8 @@ echo   run_analysis.bat SHOT_NUMBER [OPTIONS]
 echo   run_analysis.bat --query SHOT_NUMBER [OPTIONS]
 echo.
 echo Query formats:
-echo   Single shot: 45687 or --query 45687
-echo   Range (colon): "45687:45689" or --query "45687:45689" (processes 45687, 45688, 45689)
+echo   Single shot: 45687 or --query "45687"
+echo   Range (colon, default for consecutive): "45687:45689" or --query "45687:45689" (processes 45687, 45688, 45689)
 echo   List (comma): "45687,45689" or --query "45687,45689" (processes 45687, 45689)
 echo.
 echo Examples:
@@ -303,12 +336,10 @@ echo   run_analysis.bat 45821 --cwt --color-density-by-amplitude
 echo   run_analysis.bat 45821 --cwt --color-density-by-amplitude --amplitude-colormap viridis
 echo   run_analysis.bat 45821 --cwt --vest-fields 109 110
 echo   run_analysis.bat 45821 --cwt --no-plot-raw --no-plot-ft
-echo   run_analysis.bat 45821 --cwt --freq 94
-echo   run_analysis.bat 45821 --cwt --freq "94,280"
+echo   run_analysis.bat 45821 --cwt --freq "94"
 echo   run_analysis.bat 45821 --cwt --freq "94 280"
-echo   run_analysis.bat 45821 --cwt --stft-cols "0,1,2"
-echo   run_analysis.bat 45821 --cwt --stft-cols 1
 echo   run_analysis.bat 45821 --cwt --stft-cols "0 1 2"
+echo   run_analysis.bat 45821 --cwt --stft-cols "1"
 echo.
 echo Options:
 echo   --cwt                        Enable CWT analysis
@@ -326,14 +357,12 @@ echo   --add-path                   Add data folders to default paths
 echo   --results-dir DIR             Directory for results (default: ifi/results)
 echo   --no-offset-removal          Disable offset removal
 echo   --offset-window SIZE         Window size for offset removal (default: 2001)
-echo   --stft-cols INDICES          Column indices for STFT
-echo                                Default: comma-separated (e.g., "0,1,2")
-echo                                Single value: --stft-cols 1
-echo                                Space-separated: --stft-cols "0 1 2"
-echo   --cwt-cols INDICES           Column indices for CWT
-echo                                Default: comma-separated (e.g., "0,1")
-echo                                Single value: --cwt-cols 1
-echo                                Space-separated: --cwt-cols "0 1"
+echo   --stft-cols INDICES          Column indices for STFT (space-separated in quotes)
+echo                                Example: --stft-cols "0 1 2"
+echo                                Single value: --stft-cols "1"
+echo   --cwt-cols INDICES           Column indices for CWT (space-separated in quotes)
+echo                                Example: --cwt-cols "0 1"
+echo                                Single value: --cwt-cols "1"
 echo   --no-plot-block              Non-blocking plot mode
 echo   --no-plot-raw                Don't plot raw data
 echo   --no-plot-ft                 Don't plot time-frequency transforms
@@ -344,9 +373,8 @@ echo   --color-density-by-amplitude Color-code density plots by amplitude
 echo   --amplitude-colormap MAP     Colormap for amplitude (default: coolwarm)
 echo   --amplitude-impedance OHMS   System impedance in ohms (default: 50.0)
 echo   --freq FREQ                  Filter to specific frequency(ies): 94, 280, 94.0, 280.0
-echo                                Default: comma-separated (e.g., "94,280")
-echo                                Single value: --freq 94
-echo                                Space-separated: --freq "94 280"
+echo                                Space-separated in quotes (default): --freq "94 280"
+echo                                Single value: --freq "94"
 echo   --help                       Show this help message
 echo.
 goto :end

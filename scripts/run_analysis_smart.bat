@@ -57,6 +57,105 @@ if "%~1"=="--shot-list" (
     shift
     goto :collect_shots
 )
+if "%~1"=="--freq" (
+    REM Collect freq values (can be comma or space separated within quotes)
+    set "FREQ_VAL="
+    shift
+    :collect_freq
+    if "%~1"=="" goto :apply_freq
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_freq
+    REM Treat any non-option arguments after --freq as frequency values
+    if "!FREQ_VAL!"=="" (
+        set "FREQ_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !FREQ_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "FREQ_VAL=!FREQ_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "FREQ_VAL=!FREQ_VAL! !ARG_VAL!"
+        )
+    )
+    shift
+    goto :collect_freq
+    :apply_freq
+    REM Convert comma-separated to space-separated for Python argparse
+    set "FREQ_CONVERTED=!FREQ_VAL!"
+    set "FREQ_CONVERTED=!FREQ_CONVERTED:,= !"
+    set "ARGS=!ARGS! --freq !FREQ_CONVERTED!"
+    goto :parse_args
+)
+if "%~1"=="--stft-cols" (
+    REM Collect stft-cols values (can be comma or space separated)
+    set "STFT_COLS_VAL="
+    shift
+    :collect_stft_cols
+    if "%~1"=="" goto :apply_stft_cols
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_stft_cols
+    REM Treat any non-option arguments after --stft-cols as column indices
+    if "!STFT_COLS_VAL!"=="" (
+        set "STFT_COLS_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !STFT_COLS_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "STFT_COLS_VAL=!STFT_COLS_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "STFT_COLS_VAL=!STFT_COLS_VAL! !ARG_VAL!"
+        )
+    )
+    shift
+    goto :collect_stft_cols
+    :apply_stft_cols
+    REM Convert comma-separated to space-separated for Python argparse
+    set "STFT_COLS_CONVERTED=!STFT_COLS_VAL!"
+    set "STFT_COLS_CONVERTED=!STFT_COLS_CONVERTED:,= !"
+    set "ARGS=!ARGS! --stft_cols !STFT_COLS_CONVERTED!"
+    goto :parse_args
+)
+if "%~1"=="--cwt-cols" (
+    REM Collect cwt-cols values (can be comma or space separated)
+    set "CWT_COLS_VAL="
+    shift
+    :collect_cwt_cols
+    if "%~1"=="" goto :apply_cwt_cols
+    REM Check if next argument starts with -- (another option), if so stop collecting
+    set "ARG_VAL=%~1"
+    echo !ARG_VAL! | findstr /R "^--" >nul
+    if !ERRORLEVEL! EQU 0 goto :apply_cwt_cols
+    REM Treat any non-option arguments after --cwt-cols as column indices
+    if "!CWT_COLS_VAL!"=="" (
+        set "CWT_COLS_VAL=!ARG_VAL!"
+    ) else (
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !CWT_COLS_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "CWT_COLS_VAL=!CWT_COLS_VAL!,!ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "CWT_COLS_VAL=!CWT_COLS_VAL! !ARG_VAL!"
+        )
+    )
+    shift
+    goto :collect_cwt_cols
+    :apply_cwt_cols
+    REM Convert comma-separated to space-separated for Python argparse
+    set "CWT_COLS_CONVERTED=!CWT_COLS_VAL!"
+    set "CWT_COLS_CONVERTED=!CWT_COLS_CONVERTED:,= !"
+    set "ARGS=!ARGS! --cwt_cols !CWT_COLS_CONVERTED!"
+    goto :parse_args
+)
 REM Check if first argument is a shot range (not starting with --)
 if "!USE_SINGLE_RANGE!"=="0" (
     echo %~1 | findstr /R "^--" >nul
@@ -127,15 +226,23 @@ echo   Multiple ranges: run_analysis_smart.bat --shot-list "RANGE1" "RANGE2" [OP
 echo   Example list: run_analysis_smart.bat [OPTIONS] (uses example list)
 echo.
 echo Examples:
-echo   run_analysis_smart.bat 45000:45010 --freq 280 --density --stft --save_data
-echo   run_analysis_smart.bat --shot-list "45000:45010" "45020:45030" --freq 280 --density --stft --save_data
-echo   run_analysis_smart.bat --freq 280 --density --stft --save_data
+echo   run_analysis_smart.bat "45000:45010" --freq "280" --density --stft --save_data
+echo   run_analysis_smart.bat --shot-list "45000:45010" "45020:45030" --freq "94 280" --density --stft --save_data
+echo   run_analysis_smart.bat --freq "94 280" --density --stft --save_data --stft-cols "0 1 2"
 echo.
 echo Options:
-echo   --shot-list RANGES          Space-separated shot ranges (e.g., "45000:45010" "45020:45030")
+echo   --shot-list RANGES          Space-separated shot ranges (colon for ranges, e.g., "45000:45010" "45020:45030")
 echo                               If not provided, uses example list from script
+echo   --freq FREQ                 Filter frequencies (space-separated in quotes, e.g., "94 280")
+echo   --stft-cols INDICES         Column indices for STFT (space-separated in quotes, e.g., "0 1 2")
+echo   --cwt-cols INDICES          Column indices for CWT (space-separated in quotes, e.g., "0 1")
 echo   All other arguments are passed to the Python script
 echo   --help                      Show this help message
+echo.
+echo Notes:
+echo   - Arrays use space-separated values in quotes (default)
+echo   - Ranges use colon separator (e.g., "45687:45689")
+echo   - Comma-separated values are automatically converted to space-separated
 echo.
 goto :end
 

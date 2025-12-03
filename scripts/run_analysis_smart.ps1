@@ -40,16 +40,23 @@ if ($Help) {
     Write-Host "  Example list: .\run_analysis_smart.ps1 [OPTIONS] (uses example list)"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Yellow
-    Write-Host "  .\run_analysis_smart.ps1 45000:45010 --freq 280 --density --stft --save_data"
-    Write-Host "  .\run_analysis_smart.ps1 --shot-list '45000:45010' '45020:45030' --freq 280 --density --stft --save_data"
-    Write-Host "  .\run_analysis_smart.ps1 --freq 280 --density --stft --save_data"
+    Write-Host "  .\run_analysis_smart.ps1 '45000:45010' --freq '280' --density --stft --save_data"
+    Write-Host "  .\run_analysis_smart.ps1 --shot-list '45000:45010' '45020:45030' --freq '94 280' --density --stft --save_data"
+    Write-Host "  .\run_analysis_smart.ps1 --freq '94 280' --density --stft --save_data --stft-cols '0 1 2'"
     Write-Host ""
     Write-Host "Options:" -ForegroundColor Yellow
-    Write-Host "  --shot-list RANGES          Space-separated shot ranges (e.g., '45000:45010' '45020:45030')"
+    Write-Host "  --shot-list RANGES          Space-separated shot ranges (colon for ranges, e.g., '45000:45010' '45020:45030')"
     Write-Host "                             If not provided, uses example list from script"
+    Write-Host "  --freq FREQ                 Filter frequencies (space-separated in quotes, e.g., '94 280')"
+    Write-Host "  --stft-cols INDICES         Column indices for STFT (space-separated in quotes, e.g., '0 1 2')"
+    Write-Host "  --cwt-cols INDICES          Column indices for CWT (space-separated in quotes, e.g., '0 1')"
     Write-Host "  All other arguments are passed directly to the Python script"
-    Write-Host "  Examples: --freq 280 --density --stft --save_data --stft_cols 0 1"
     Write-Host "  --help                     Show this help message"
+    Write-Host ""
+    Write-Host "Notes:" -ForegroundColor Yellow
+    Write-Host "  - Arrays use space-separated values in quotes (default)"
+    Write-Host "  - Ranges use colon separator (e.g., '45687:45689')"
+    Write-Host "  - Comma-separated values are automatically converted to space-separated"
     Write-Host ""
     exit 0
 }
@@ -78,6 +85,22 @@ while ($i -lt $allArgsList.Count) {
     } elseif ($arg -eq "--help" -or $arg -eq "-help") {
         # Help already handled above
         $i++
+        continue
+    } elseif ($arg -eq "--freq" -or $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols") {
+        # Handle options that accept comma-separated values
+        $pythonArgs += $arg
+        $i++
+        if ($i -lt $allArgsList.Count) {
+            $value = $allArgsList[$i]
+            # If value contains comma, split and add as separate arguments
+            if ($value -match ",") {
+                $values = $value -split "," | ForEach-Object { $_.Trim() }
+                $pythonArgs += $values
+            } else {
+                $pythonArgs += $value
+            }
+            $i++
+        }
         continue
     } elseif (-not $arg.StartsWith("--") -and $null -eq $singleRange) {
         # First non-option argument is the shot range

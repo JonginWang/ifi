@@ -28,8 +28,8 @@ if ($Help) {
     Write-Host "  .\run_datasave.ps1 --query SHOT_NUMBER [MODE] [OPTIONS]"
     Write-Host ""
     Write-Host "Query formats:" -ForegroundColor Yellow
-    Write-Host "  Single shot: 45687 or --query 45687"
-    Write-Host "  Range (colon): '45687:45689' or --query '45687:45689' (processes 45687, 45688, 45689)"
+    Write-Host "  Single shot: 45687 or --query '45687'"
+    Write-Host "  Range (colon, default for consecutive): '45687:45689' or --query '45687:45689' (processes 45687, 45688, 45689)"
     Write-Host "  List (comma): '45687,45689' or --query '45687,45689' (processes 45687, 45689)"
     Write-Host ""
     Write-Host "Modes (required):" -ForegroundColor Yellow
@@ -46,31 +46,33 @@ if ($Help) {
     Write-Host "  .\run_datasave.ps1 45821 --signal-only"
     Write-Host "  .\run_datasave.ps1 45821:45825 --density"
     Write-Host "  .\run_datasave.ps1 45687:45679 --density"
-    Write-Host "  .\run_datasave.ps1 45821 --density --freq 94"
-    Write-Host "  .\run_datasave.ps1 45821 --density --freq '94,280'"
+    Write-Host "  .\run_datasave.ps1 45821 --density --freq '94'"
     Write-Host "  .\run_datasave.ps1 45821 --density --freq '94 280'"
     Write-Host "  .\run_datasave.ps1 45821 --density --baseline ip"
-    Write-Host "  .\run_datasave.ps1 45821 --density --vest-fields 109 110"
-    Write-Host "  .\run_datasave.ps1 45821 --density --stft-cols '0,1,2'"
-    Write-Host "  .\run_datasave.ps1 45821 --density --stft-cols 1"
+    Write-Host "  .\run_datasave.ps1 45821 --density --vest-fields '109 110'"
     Write-Host "  .\run_datasave.ps1 45821 --density --stft-cols '0 1 2'"
+    Write-Host "  .\run_datasave.ps1 45821 --density --stft-cols '1'"
     Write-Host ""
     Write-Host "Options:" -ForegroundColor Yellow
     Write-Host "  --freq FREQ                  Filter to specific frequency(ies): 94, 280, 94.0, 280.0"
-    Write-Host "                              Can specify multiple: --freq 94 280"
+    Write-Host "                              Space-separated in quotes (default): --freq '94 280'"
+    Write-Host "                              Single value: --freq '94'"
     Write-Host "  --scheduler TYPE             Dask scheduler: threads, processes, single-threaded"
     Write-Host "  --processes                  Use processes scheduler (alias)"
     Write-Host "  --single                     Use single-threaded scheduler (alias)"
     Write-Host "  --force-remote               Force fetching from remote NAS"
     Write-Host "  --baseline TYPE              Baseline correction: ip or trig"
-    Write-Host "  --vest-fields FIELDS         Space-separated VEST DB field IDs"
+    Write-Host "  --vest-fields FIELDS         VEST DB field IDs (space-separated in quotes)"
+    Write-Host "                                Example: --vest-fields '102 109 101'"
     Write-Host "  --data-folders FOLDERS       Comma-separated list of data folders"
     Write-Host "  --add-path                   Add data folders to default paths"
     Write-Host "  --results-dir DIR            Directory for results (default: ifi/results)"
     Write-Host "  --no-offset-removal          Disable offset removal"
     Write-Host "  --offset-window SIZE         Window size for offset removal (default: 2001)"
-    Write-Host "  --stft-cols INDICES          Column indices for STFT (comma or space separated)"
-    Write-Host "  --cwt-cols INDICES           Column indices for CWT (comma or space separated)"
+    Write-Host "  --stft-cols INDICES          Column indices for STFT (space-separated in quotes)"
+    Write-Host "                                Example: --stft-cols '0 1 2'"
+    Write-Host "  --cwt-cols INDICES           Column indices for CWT (space-separated in quotes)"
+    Write-Host "                                Example: --cwt-cols '0 1'"
     Write-Host "  --downsample FACTOR          Downsample factor for plotting (default: 10)"
     Write-Host "  --trigger-time SECONDS       Trigger time in seconds (default: 0.290)"
     Write-Host "  --color-density-by-amplitude Color-code density plots by amplitude"
@@ -119,6 +121,22 @@ while ($i -lt $allArgsList.Count) {
     } elseif ($arg -eq "--help" -or $arg -eq "-help") {
         # Help already handled above
         $i++
+        continue
+    } elseif ($arg -eq "--freq" -or $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols") {
+        # Handle options that accept comma or space-separated values
+        $pythonArgs += $arg
+        $i++
+        if ($i -lt $allArgsList.Count) {
+            $value = $allArgsList[$i]
+            # If value contains comma, split and add as separate arguments (convert to space-separated)
+            if ($value -match ",") {
+                $values = $value -split "," | ForEach-Object { $_.Trim() }
+                $pythonArgs += $values
+            } else {
+                $pythonArgs += $value
+            }
+            $i++
+        }
         continue
     } elseif (-not $arg.StartsWith("--") -and $null -eq $query) {
         # First non-option argument is the query

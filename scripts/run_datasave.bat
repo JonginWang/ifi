@@ -59,26 +59,41 @@ if "%~1"=="--density" (
     goto :parse_args
 )
 if "%~1"=="--freq" (
-    REM Start collecting frequency values for --freq
+    REM Collect freq values (can be comma or space separated within quotes)
+    set "FREQ_VAL="
     set "FREQ_DISPLAY="
-    set "ARGS=!ARGS! --freq"
     shift
     :collect_freq
-    if "%~1"=="" goto :parse_args
+    if "%~1"=="" goto :apply_freq
     REM Check if next argument starts with -- (another option), if so stop collecting
     set "ARG_VAL=%~1"
     echo !ARG_VAL! | findstr /R "^--" >nul
-    if !ERRORLEVEL! EQU 0 goto :parse_args
-    REM Treat any non-option arguments after --freq as frequency values.
-    REM Validation of allowed values (94.0, 280.0) is handled by Python argparse.
-    set "ARGS=!ARGS! !ARG_VAL!"
-    if "!FREQ_DISPLAY!"=="" (
+    if !ERRORLEVEL! EQU 0 goto :apply_freq
+    REM Treat any non-option arguments after --freq as frequency values
+    if "!FREQ_VAL!"=="" (
+        set "FREQ_VAL=!ARG_VAL!"
         set "FREQ_DISPLAY=!ARG_VAL!"
     ) else (
-        set "FREQ_DISPLAY=!FREQ_DISPLAY!, !ARG_VAL!"
+        REM If contains comma, it's comma-separated; otherwise space-separated
+        echo !FREQ_VAL! | findstr /C:"," >nul
+        if !ERRORLEVEL! EQU 0 (
+            REM Already comma-separated, add with comma
+            set "FREQ_VAL=!FREQ_VAL!,!ARG_VAL!"
+            set "FREQ_DISPLAY=!FREQ_DISPLAY!, !ARG_VAL!"
+        ) else (
+            REM Space-separated, add with space
+            set "FREQ_VAL=!FREQ_VAL! !ARG_VAL!"
+            set "FREQ_DISPLAY=!FREQ_DISPLAY! !ARG_VAL!"
+        )
     )
     shift
     goto :collect_freq
+    :apply_freq
+    REM Convert comma-separated to space-separated for Python argparse
+    set "FREQ_CONVERTED=!FREQ_VAL!"
+    set "FREQ_CONVERTED=!FREQ_CONVERTED:,= !"
+    set "ARGS=!ARGS! --freq !FREQ_CONVERTED!"
+    goto :parse_args
 )
 if "%~1"=="--scheduler" (
     set "ARGS=!ARGS! --scheduler %~2"
@@ -307,8 +322,8 @@ echo   run_datasave.bat SHOT_NUMBER [MODE] [OPTIONS]
 echo   run_datasave.bat --query SHOT_NUMBER [MODE] [OPTIONS]
 echo.
 echo Query formats:
-echo   Single shot: 45687 or --query 45687
-echo   Range (colon): "45687:45689" or --query "45687:45689" (processes 45687, 45688, 45689)
+echo   Single shot: 45687 or --query "45687"
+echo   Range (colon, default for consecutive): "45687:45689" or --query "45687:45689" (processes 45687, 45688, 45689)
 echo   List (comma): "45687,45689" or --query "45687,45689" (processes 45687, 45689)
 echo.
 echo Modes (required):
@@ -324,40 +339,35 @@ echo   run_datasave.bat 45687:45689 --density
 echo   run_datasave.bat 45687,45689 --density
 echo   run_datasave.bat 45821 --signal-only
 echo   run_datasave.bat 45821:45825 --density
-echo   run_datasave.bat 45821 --density --freq 94
-echo   run_datasave.bat 45821 --density --freq "94,280"
+echo   run_datasave.bat 45821 --density --freq "94"
 echo   run_datasave.bat 45821 --density --freq "94 280"
-echo   run_datasave.bat 45821 --density --freq 94.0 280.0
 echo   run_datasave.bat 45821 --density --baseline ip
-echo   run_datasave.bat 45821 --density --vest-fields 109 110
-echo   run_datasave.bat 45821 --density --stft-cols "0,1,2"
-echo   run_datasave.bat 45821 --density --stft-cols 1
+echo   run_datasave.bat 45821 --density --vest-fields "109 110"
 echo   run_datasave.bat 45821 --density --stft-cols "0 1 2"
+echo   run_datasave.bat 45821 --density --stft-cols "1"
 echo.
 echo Options:
 echo   --freq FREQ                  Filter to specific frequency(ies): 94, 280, 94.0, 280.0
-echo                                Default: comma-separated (e.g., "94,280")
-echo                                Single value: --freq 94
-echo                                Space-separated: --freq "94 280"
+echo                                Space-separated in quotes (default): --freq "94 280"
+echo                                Single value: --freq "94"
 echo   --scheduler TYPE             Dask scheduler: threads, processes, single-threaded
 echo   --processes                  Use processes scheduler (alias)
 echo   --single                     Use single-threaded scheduler (alias)
 echo   --force-remote               Force fetching from remote NAS
 echo   --baseline TYPE              Baseline correction: ip or trig
-echo   --vest-fields FIELDS         Space-separated VEST DB field IDs
+echo   --vest-fields FIELDS         VEST DB field IDs (space-separated in quotes)
+echo                                Example: --vest-fields "102 109 101"
 echo   --data-folders FOLDERS       Comma-separated list of data folders
 echo   --add-path                   Add data folders to default paths
 echo   --results-dir DIR             Directory for results (default: ifi/results)
 echo   --no-offset-removal          Disable offset removal
 echo   --offset-window SIZE         Window size for offset removal (default: 2001)
-echo   --stft-cols INDICES          Column indices for STFT
-echo                                Default: comma-separated (e.g., "0,1,2")
-echo                                Single value: --stft-cols 1
-echo                                Space-separated: --stft-cols "0 1 2"
-echo   --cwt-cols INDICES           Column indices for CWT
-echo                                Default: comma-separated (e.g., "0,1")
-echo                                Single value: --cwt-cols 1
-echo                                Space-separated: --cwt-cols "0 1"
+echo   --stft-cols INDICES          Column indices for STFT (space-separated in quotes)
+echo                                Example: --stft-cols "0 1 2"
+echo                                Single value: --stft-cols "1"
+echo   --cwt-cols INDICES           Column indices for CWT (space-separated in quotes)
+echo                                Example: --cwt-cols "0 1"
+echo                                Single value: --cwt-cols "1"
 echo   --downsample FACTOR          Downsample factor for plotting (default: 10)
 echo   --trigger-time SECONDS       Trigger time in seconds (default: 0.290)
 echo   --color-density-by-amplitude Color-code density plots by amplitude
