@@ -936,7 +936,8 @@ class PhaseConverter:
                 Default is False. Useful for correcting phase convention.
             magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
                 Values with magnitude below this threshold will be set to NaN.
-                If None, no threshold filtering is applied. Default is None.
+                If None and return_magnitude_stats=True, mean magnitude * 0.1 is used as default threshold.
+                If None and return_magnitude_stats=False, no threshold filtering is applied. Default is None.
             interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
                 Default is False. Uses interpolateNonFiniteValues if True.
             interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
@@ -948,6 +949,7 @@ class PhaseConverter:
             return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
                 If True, returns tuple (phase, stats_dict) where stats_dict contains
                 'mean_magnitude' and 'min_magnitude'. Default is False.
+                When True and magnitude_threshold=None, automatically uses mean * 0.1 as threshold.
 
         Returns:
             np.ndarray or tuple: Phase array in radians (same length as input signals).
@@ -995,6 +997,9 @@ class PhaseConverter:
                 "mean_magnitude": mean_mag,
                 "min_magnitude": min_mag,
             }
+            # If return_magnitude_stats=True and magnitude_threshold=None, use mean * 0.1 as default
+            if magnitude_threshold is None and return_magnitude_stats:
+                magnitude_threshold = mean_mag * 0.1
 
         # 2. Calculate phase by arctan (direct calculation)
         phase = np.unwrap(np.arctan2(q_norm, i_norm))
@@ -1074,7 +1079,8 @@ class PhaseConverter:
                 Default is False. Useful for correcting phase convention.
             magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
                 Values with magnitude below this threshold will be set to NaN.
-                If None, no threshold filtering is applied. Default is None.
+                If None and return_magnitude_stats=True, mean magnitude * 0.1 is used as default threshold.
+                If None and return_magnitude_stats=False, no threshold filtering is applied. Default is None.
             interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
                 Default is False. Uses interpolateNonFiniteValues if True.
             interpolation_method (str, optional): Interpolation method when interpolate_nan=True.
@@ -1088,6 +1094,7 @@ class PhaseConverter:
             return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
                 If True, returns tuple (phase, stats_dict) where stats_dict contains
                 'mean_magnitude' and 'min_magnitude'. Default is False.
+                When True and magnitude_threshold=None, automatically uses mean * 0.1 as threshold.
 
         Returns:
             np.ndarray or tuple: Phase array in radians (same length as input signals).
@@ -1137,6 +1144,9 @@ class PhaseConverter:
                 "mean_magnitude": mean_mag,
                 "min_magnitude": min_mag,
             }
+            # If return_magnitude_stats=True and magnitude_threshold=None, use mean * 0.1 as default
+            if magnitude_threshold is None and return_magnitude_stats:
+                magnitude_threshold = mean_mag * 0.1
 
         # 2. Calculate the differential phase (numba-optimized)
         phase_diff = _calculate_differential_phase(i_norm, q_norm)
@@ -1557,11 +1567,12 @@ class PhaseConverter:
         isflip: bool = False,
         plot_filters: bool = False,
         magnitude_threshold: float = None,
-        interpolate_nan: bool = False,
-        interpolation_method: str = "linear",
-        interpolation_degree: int = 1,
+        interpolate_nan: bool = True,
+        interpolation_method: str = "nearest",
+        interpolation_degree: int = 0,
         adjust_baseline: bool = True,
-    ) -> np.ndarray:
+        return_magnitude_stats: bool = False,
+    ) -> np.ndarray | tuple:
         """
         Calculate phase using Complex Demodulation (CDM) method.
 
@@ -1595,10 +1606,11 @@ class PhaseConverter:
             plot_filters (bool, optional): Whether to plot BPF and LPF frequency responses.
                 Default is False.
             magnitude_threshold (float, optional): Minimum magnitude threshold for filtering.
-                For iszif=False: Applied to demodulated signal magnitude before phase calculation.
+                For iszif=False: Applied to demodulated signal magnitude (|demod_lpf|) before phase calculation.
                 For iszif=True: Applied to demod_zif magnitude (|demod_zif|).
                 Values with magnitude below this threshold will be set to NaN.
-                If None, no threshold filtering is applied. Default is None.
+                If None and return_magnitude_stats=True, mean magnitude * 0.1 is used as default threshold.
+                If None and return_magnitude_stats=False, no threshold filtering is applied. Default is None.
             interpolate_nan (bool, optional): Whether to interpolate NaN values in the phase array.
                 Default is False. Uses interpolateNonFiniteValues if True.
                 Applies to both differential method (iszif=False) and zero-IF method (iszif=True).
@@ -1611,10 +1623,15 @@ class PhaseConverter:
             adjust_baseline (bool, optional): Whether to adjust the baseline of the interpolated values.
                 Only applies when interpolate_nan=True.
                 Default is True. If False, the interpolated values are not adjusted.
+            return_magnitude_stats (bool, optional): Whether to return magnitude statistics.
+                If True, returns tuple (phase, stats_dict) where stats_dict contains
+                'mean_magnitude' and 'min_magnitude' computed from demod_lpf (iszif=False) or
+                demod_zif (iszif=True) magnitude. Default is False.
 
         Returns:
-            np.ndarray: Phase array in radians (same length as input signals).
+            np.ndarray or tuple: Phase array in radians (same length as input signals).
                 Phase is accumulated from differential phase differences and baseline-corrected.
+                If return_magnitude_stats=True, returns tuple (phase, stats_dict).
 
         Notes:
             - BPF and LPF are designed automatically based on f_center.
@@ -1624,6 +1641,8 @@ class PhaseConverter:
             - If magnitude_threshold is specified, low-magnitude samples are set to NaN before interpolation.
             - If interpolate_nan=True and adjust_baseline=True, interpolated values are adjusted by baseline.
             - For iszif=True, magnitude threshold is applied to |demod_zif| (magnitude of demodulated signal).
+            - If return_magnitude_stats=True and magnitude_threshold=None, mean magnitude * 0.1 is used as default threshold.
+            - If magnitude_threshold is provided, it overrides the default threshold value.
 
         Examples:
             ```python
@@ -1708,6 +1727,9 @@ class PhaseConverter:
         # 4. Apply LPF to the demodulated signal
         demod_lpf = filtfilt(lpf_coeffs, 1, demod_signal) if islpf else demod_signal
 
+        # Initialize stats_dict for magnitude statistics
+        stats_dict = {}
+
         # 5. Calculate phase
         if not iszif:
             # The matlab script uses a differential method.
@@ -1717,10 +1739,21 @@ class PhaseConverter:
             # Vectorized differential phase calculation (cross-product method)
             phase_diff = _calculate_differential_phase(re, im)
 
+            # Compute magnitude statistics if requested (for differential method)
+            demod_lpf_mag = np.abs(demod_lpf)
+            if return_magnitude_stats or magnitude_threshold is not None:
+                mean_mag, min_mag = _compute_magnitude_stats(demod_lpf_mag)
+                stats_dict = {
+                    "mean_magnitude": mean_mag,
+                    "min_magnitude": min_mag,
+                }
+                # If return_magnitude_stats=True and magnitude_threshold=None, use mean * 0.1 as default
+                if magnitude_threshold is None and return_magnitude_stats:
+                    magnitude_threshold = mean_mag * 0.1
+
             # 6. Apply magnitude threshold filtering if specified (for differential method)
             if magnitude_threshold is not None:
                 # phase_diff has length len(demod_lpf) - 1, so use demod_lpf_mag[:-1] for threshold
-                demod_lpf_mag = np.abs(demod_lpf)
                 mask = _apply_magnitude_threshold(demod_lpf_mag[:-1], magnitude_threshold)
                 phase_diff[~mask] = np.nan
 
@@ -1779,9 +1812,20 @@ class PhaseConverter:
             demod_zif = ref_hilbert.conj() * hilbert(prob_bpf)
             phase_accum = np.angle(demod_zif)
 
+            # Compute magnitude statistics if requested (for zero-IF method)
+            demod_zif_mag = np.abs(demod_zif)
+            if return_magnitude_stats or magnitude_threshold is not None:
+                mean_mag, min_mag = _compute_magnitude_stats(demod_zif_mag)
+                stats_dict = {
+                    "mean_magnitude": mean_mag,
+                    "min_magnitude": min_mag,
+                }
+                # If return_magnitude_stats=True and magnitude_threshold=None, use mean * 0.1 as default
+                if magnitude_threshold is None and return_magnitude_stats:
+                    magnitude_threshold = mean_mag * 0.1
+
             # 6. Apply magnitude threshold filtering if specified (for zero-IF method)
             if magnitude_threshold is not None:
-                demod_zif_mag = np.abs(demod_zif)
                 mask = _apply_magnitude_threshold(demod_zif_mag, magnitude_threshold)
                 phase_accum[~mask] = np.nan
 
@@ -1843,6 +1887,8 @@ class PhaseConverter:
         if isflip:
             phase_accum *= -1
 
+        if return_magnitude_stats:
+            return phase_accum, stats_dict
         return phase_accum
 
     def calc_phase_fpga(
