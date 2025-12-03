@@ -209,7 +209,7 @@ class TestCalcPhaseCDM:
         t, ref = reference_signal
         _, probe = probe_signal_constant_phase
 
-        phase = phase_converter.calc_phase_cdm(
+        phase, _ = phase_converter.calc_phase_cdm(
             ref,
             probe,
             params["fs"],
@@ -234,7 +234,7 @@ class TestCalcPhaseCDM:
         t, ref = reference_signal
         _, probe = probe_signal_constant_phase
 
-        phase = phase_converter.calc_phase_cdm(
+        phase, _ = phase_converter.calc_phase_cdm(
             ref, probe, params["fs"], params["f0"], isbpf=False, islpf=True, isconj=False, iszif=False
         )
 
@@ -251,7 +251,7 @@ class TestCalcPhaseCDM:
         t, ref = reference_signal
         _, probe = probe_signal_constant_phase
 
-        phase = phase_converter.calc_phase_cdm(
+        phase, _ = phase_converter.calc_phase_cdm(
             ref, probe, params["fs"], params["f0"], isbpf=False, islpf=False, isconj=False, iszif=True
         )
 
@@ -265,7 +265,7 @@ class TestCalcPhaseCDM:
         t, ref = reference_signal
         _, probe = probe_signal_linear_phase
 
-        phase = phase_converter.calc_phase_cdm(
+        phase, _ = phase_converter.calc_phase_cdm(
             ref, probe, params["fs"], params["f0"], isbpf=False, islpf=True, isconj=False, iszif=False
         )
 
@@ -301,7 +301,7 @@ class TestCalcPhaseCDM:
 
         # Should either handle gracefully or raise an error
         try:
-            phase = phase_converter.calc_phase_cdm(ref, probe, 50e6, 8e6)
+            phase, _ = phase_converter.calc_phase_cdm(ref, probe, 50e6, 8e6)
             # If it succeeds, check for NaN propagation
             if np.any(np.isnan(phase)):
                 pytest.skip("NaN values propagate through calculation (may be acceptable)")
@@ -319,7 +319,7 @@ class TestCalcPhaseCDM:
 
         # Very short signals may fail with LPF (filter length > signal length)
         # Test without LPF for short signals
-        phase = phase_converter.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, iszif=False)
+        phase, _ = phase_converter.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=False, iszif=False)
 
         # Should handle short signals gracefully
         assert len(phase) == n
@@ -338,7 +338,7 @@ class TestPhaseConverterClass:
 
     def test_calc_phase_iq_basic(self, phase_converter, iq_signals):
         """Test calc_phase_iq with known I/Q signals."""
-        phase = phase_converter.calc_phase_iq(iq_signals["i_signal"], iq_signals["q_signal"])
+        phase, _ = phase_converter.calc_phase_iq(iq_signals["i_signal"], iq_signals["q_signal"])
 
         assert len(phase) == len(iq_signals["i_signal"])
         assert np.all(np.isfinite(phase))

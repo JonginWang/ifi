@@ -142,7 +142,7 @@ class TestCDMFullPipeline:
             
             # Python PhaseConverter
             conv = PhaseConverter()
-            phase_python = conv.calc_phase_cdm(
+            phase_python, _ = conv.calc_phase_cdm(
                 ref, probe, fs, f0,
                 isbpf=False, islpf=True, isconj=False, isold=False, isflip=False
             )
@@ -169,8 +169,8 @@ class TestCDMPhaseOffset:
         
         conv = PhaseConverter()
         
-        phase_const = conv.calc_phase_cdm(ref, probe_const, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
-        phase_linear = conv.calc_phase_cdm(ref, probe_linear, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
+        phase_const, _ = conv.calc_phase_cdm(ref, probe_const, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
+        phase_linear, _ = conv.calc_phase_cdm(ref, probe_linear, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
         
         # Check that both produce valid phase results
         assert len(phase_const) > 0
@@ -221,7 +221,7 @@ class TestPhaseModulation:
             # Python CDM
             if HAS_MATLAB:  # PhaseConverter should be available
                 conv = PhaseConverter()
-                phase_cdm = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
+                phase_cdm, _ = conv.calc_phase_cdm(ref, probe, fs, f0, isbpf=False, islpf=True, isconj=False, isold=False)
                 assert len(phase_cdm) > 0
                 assert not np.any(np.isnan(phase_cdm))
             

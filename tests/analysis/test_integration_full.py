@@ -320,7 +320,7 @@ def test_density_calculation_integration(results, logger):
                         probe_signal = data[probe_col].values
                         
                         # Calculate phase
-                        phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
+                        phase, _ = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, f_center)
                         
                         # Convert to density
                         density = phase_converter.phase_to_density(phase, analysis_params=params)
@@ -447,7 +447,7 @@ def performance_benchmark_integration(logger):
             # Phase calculation
             start_time = time.time()
             phase_converter = PhaseConverter()
-            phase = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, 20e6)
+            phase, _ = phase_converter.calc_phase_cdm(ref_signal, probe_signal, fs, 20e6)
             timings['phase'] = time.time() - start_time
             
             # Density calculation

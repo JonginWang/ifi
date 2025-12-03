@@ -751,7 +751,7 @@ class TestNaNHandling:
         q_signal = np.array([1.0, 2.0, 3.0, np.nan, 5.0])
         
         # calc_phase_iq_asin2 should handle NaN (converts to 0.0)
-        phase = converter.calc_phase_iq_asin2(i_signal, q_signal, isnorm=False)
+        phase, _ = converter.calc_phase_iq_asin2(i_signal, q_signal, isnorm=False)
         
         # Phase should not contain NaN (should be converted to 0.0)
         assert not np.any(np.isnan(phase)), "Phase should not contain NaN after processing"
