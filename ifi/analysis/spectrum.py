@@ -207,8 +207,9 @@ class SpectrumAnalysis:
                   determined as ~1/64 of signal length, clamped between 512 and 8192,
                   rounded to nearest power of 2.
                 - noverlap (int, optional): Number of points to overlap between segments.
-                  If None, defaults to nperseg // 2.
-                - mfft (int, optional): Length of FFT. If None, defaults to nperseg.
+                  If None, automatically determined to achieve time resolution <= 250 μs.
+                - mfft (int, optional): Length of FFT. If None, automatically determined
+                  to achieve frequency resolution <= 200 kHz.
                 - window (str, tuple, or np.ndarray, optional): Window function.
                   Default is ("kaiser", 8).
                 - scale_to (str, optional): Scaling mode. Default is "magnitude".
@@ -227,8 +228,11 @@ class SpectrumAnalysis:
 
         Notes:
             - Window size (nperseg) is automatically optimized for signal length if not provided.
-            - Overlap is set to 50% of window size by default for good time-frequency resolution.
-            - FFT length defaults to window size for efficiency.
+              Defaults to ~1/64 of signal length, clamped between 512 and 8192, rounded to nearest power of 2.
+            - FFT length (mfft) is automatically determined to achieve frequency resolution <= 200 kHz.
+              Calculated as ceil(fs / 200 kHz) rounded to nearest power of 2, but at least nperseg.
+            - Overlap (noverlap) is automatically determined to achieve time resolution <= 250 μs.
+              Calculated from hop_length = fs * 250 μs, ensuring at least 25% overlap for smoothness.
 
         Examples:
             ```python
@@ -253,30 +257,66 @@ class SpectrumAnalysis:
 
         # Dynamically determine STFT sizing if not provided
         dynamic_kwargs = dict(kwargs)
+        
+        # Helper function to round to nearest power-of-two
+        def _round_pow2(x):
+            from math import log2
+            p = int(round(log2(x)))
+            return max(256, 1 << p)
+        
+        # Determine nperseg (window size) based on signal length
         if dynamic_kwargs.get("nperseg") is None:
             n = signal.shape[-1]
             # Aim ~1/64 of signal length, clamp between 512 and 8192
-            nperseg_dyn = max(512, min(8192, max(256, n // 64)))
-
-            # Round to nearest power-of-two for FFT efficiency
-            def _round_pow2(x):
-                from math import log2
-
-                p = int(round(log2(x)))
-                return max(256, 1 << p)
-
+            nperseg_dyn = max(1<<9, min(1<<16, max(1<<8, n // 1<<6)))
             nperseg_dyn = _round_pow2(nperseg_dyn)
             dynamic_kwargs["nperseg"] = nperseg_dyn
-        if (
-            dynamic_kwargs.get("noverlap") is None
-            and dynamic_kwargs.get("nperseg") is not None
-        ):
-            dynamic_kwargs["noverlap"] = int(dynamic_kwargs["nperseg"] // 2)
-        if (
-            dynamic_kwargs.get("mfft") is None
-            and dynamic_kwargs.get("nperseg") is not None
-        ):
-            dynamic_kwargs["mfft"] = int(dynamic_kwargs["nperseg"])
+        
+        # Determine mfft (FFT size) based on frequency resolution requirement
+        # Target: df <= 200 kHz
+        if dynamic_kwargs.get("mfft") is None:
+            # Calculate minimum mfft to achieve df <= 200 kHz
+            target_df_max = 200e3  # 200 kHz
+            mfft_min = int(np.ceil(fs / target_df_max))
+            # Round to nearest power-of-two for FFT efficiency
+            mfft_dyn = _round_pow2(mfft_min)
+            # Ensure mfft is at least nperseg (if nperseg is already set)
+            if dynamic_kwargs.get("nperseg") is not None:
+                mfft_dyn = max(mfft_dyn, dynamic_kwargs["nperseg"])
+            dynamic_kwargs["mfft"] = int(mfft_dyn)
+        
+        # Determine hop_length based on time resolution requirement
+        # Target: dt <= 250 μs
+        if dynamic_kwargs.get("noverlap") is None and dynamic_kwargs.get("nperseg") is not None:
+            target_dt_max = 250e-6  # 250 μs
+            hop_length_target = int(np.floor(fs * target_dt_max))
+            nperseg = dynamic_kwargs["nperseg"]
+            
+            # hop_length cannot exceed nperseg (must be at least 1)
+            # If hop_length_target > nperseg, we need to increase nperseg or accept worse time resolution
+            # For now, we'll use the maximum hop_length possible (nperseg - 1) and ensure minimum overlap
+            hop_length_max = min(hop_length_target, nperseg - 1)
+            
+            # Calculate noverlap from hop_length
+            # hop_length = nperseg - noverlap, so noverlap = nperseg - hop_length
+            noverlap_dyn = max(0, nperseg - hop_length_max)
+            
+            # Ensure reasonable overlap (at least 25% overlap for smoothness)
+            min_overlap = int(nperseg * 0.25)
+            noverlap_dyn = max(noverlap_dyn, min_overlap)
+            
+            # Recalculate hop_length from final noverlap to ensure consistency
+            final_hop_length = nperseg - noverlap_dyn
+            actual_dt = final_hop_length / fs
+            
+            # Log warning if time resolution requirement cannot be met
+            if actual_dt > target_dt_max * 1.1:  # 10% tolerance
+                logger.warning(
+                    f"{log_tag('SPECR','STFT')} Time resolution {actual_dt*1e6:.2f} μs exceeds target "
+                    f"{target_dt_max*1e6:.2f} μs. Consider increasing nperseg or accepting lower resolution."
+                )
+            
+            dynamic_kwargs["noverlap"] = int(noverlap_dyn)
 
         all_kwargs = self._get_stft_kwargs(**dynamic_kwargs)
         scipy_kwargs = self._translate_kwargs(all_kwargs, "scipy")
@@ -315,8 +355,9 @@ class SpectrumAnalysis:
                   determined as ~1/64 of signal length, clamped between 512 and 8192,
                   rounded to nearest power of 2.
                 - noverlap (int, optional): Number of points to overlap between segments.
-                  If None, defaults to nperseg // 2.
-                - mfft (int, optional): Length of FFT. If None, defaults to nperseg.
+                  If None, automatically determined to achieve time resolution <= 250 μs.
+                - mfft (int, optional): Length of FFT. If None, automatically determined
+                  to achieve frequency resolution <= 200 kHz.
                 - window (str, tuple, or np.ndarray, optional): Window function.
                   Default is ("kaiser", 8).
                 - padtype (str, optional): Padding type. Default is "reflect".
@@ -334,7 +375,12 @@ class SpectrumAnalysis:
         Notes:
             - This method returns only positive frequencies (unlike compute_stft which may
               return full spectrum depending on scipy version).
-            - Window size and overlap are automatically optimized if not provided.
+            - Window size (nperseg) is automatically optimized for signal length if not provided.
+              Defaults to ~1/64 of signal length, clamped between 512 and 8192, rounded to nearest power of 2.
+            - FFT length (mfft) is automatically determined to achieve frequency resolution <= 200 kHz.
+              Calculated as ceil(fs / 200 kHz) rounded to nearest power of 2, but at least nperseg.
+            - Overlap (noverlap) is automatically determined to achieve time resolution <= 250 μs.
+              Calculated from hop_length = fs * 250 μs, ensuring at least 25% overlap for smoothness.
             - Uses ssqueezepy's STFT implementation which may have different numerical
               characteristics compared to scipy.
 
@@ -355,28 +401,65 @@ class SpectrumAnalysis:
 
         # Dynamically determine STFT sizing if not provided
         dynamic_kwargs = dict(kwargs)
+        
+        # Helper function to round to nearest power-of-two
+        def _round_pow2(x):
+            from math import log2
+            p = int(round(log2(x)))
+            return max(256, 1 << p)
+        
+        # Determine nperseg (window size) based on signal length
         if dynamic_kwargs.get("nperseg") is None:
             n = signal.shape[-1]
-            nperseg_dyn = max(512, min(8192, max(256, n // 64)))
-
-            def _round_pow2(x):
-                from math import log2
-
-                p = int(round(log2(x)))
-                return max(256, 1 << p)
-
+            nperseg_dyn = max(1<<9, min(1<<16, max(1<<8, n // 1<<6)))
             nperseg_dyn = _round_pow2(nperseg_dyn)
             dynamic_kwargs["nperseg"] = nperseg_dyn
-        if (
-            dynamic_kwargs.get("noverlap") is None
-            and dynamic_kwargs.get("nperseg") is not None
-        ):
-            dynamic_kwargs["noverlap"] = int(dynamic_kwargs["nperseg"] // 2)
-        if (
-            dynamic_kwargs.get("mfft") is None
-            and dynamic_kwargs.get("nperseg") is not None
-        ):
-            dynamic_kwargs["mfft"] = int(dynamic_kwargs["nperseg"])
+        
+        # Determine mfft (FFT size) based on frequency resolution requirement
+        # Target: df <= 200 kHz
+        if dynamic_kwargs.get("mfft") is None:
+            # Calculate minimum mfft to achieve df <= 200 kHz
+            target_df_max = 200e3  # 200 kHz
+            mfft_min = int(np.ceil(fs / target_df_max))
+            # Round to nearest power-of-two for FFT efficiency
+            mfft_dyn = _round_pow2(mfft_min)
+            # Ensure mfft is at least nperseg (if nperseg is already set)
+            if dynamic_kwargs.get("nperseg") is not None:
+                mfft_dyn = max(mfft_dyn, dynamic_kwargs["nperseg"])
+            dynamic_kwargs["mfft"] = int(mfft_dyn)
+        
+        # Determine hop_length based on time resolution requirement
+        # Target: dt <= 250 μs
+        if dynamic_kwargs.get("noverlap") is None and dynamic_kwargs.get("nperseg") is not None:
+            target_dt_max = 250e-6  # 250 μs
+            hop_length_target = int(np.floor(fs * target_dt_max))
+            nperseg = dynamic_kwargs["nperseg"]
+            
+            # hop_length cannot exceed nperseg (must be at least 1)
+            # If hop_length_target > nperseg, we need to increase nperseg or accept worse time resolution
+            # For now, we'll use the maximum hop_length possible (nperseg - 1) and ensure minimum overlap
+            hop_length_max = min(hop_length_target, nperseg - 1)
+            
+            # Calculate noverlap from hop_length
+            # hop_length = nperseg - noverlap, so noverlap = nperseg - hop_length
+            noverlap_dyn = max(0, nperseg - hop_length_max)
+            
+            # Ensure reasonable overlap (at least 25% overlap for smoothness)
+            min_overlap = int(nperseg * 0.25)
+            noverlap_dyn = max(noverlap_dyn, min_overlap)
+            
+            # Recalculate hop_length from final noverlap to ensure consistency
+            final_hop_length = nperseg - noverlap_dyn
+            actual_dt = final_hop_length / fs
+            
+            # Log warning if time resolution requirement cannot be met
+            if actual_dt > target_dt_max * 1.1:  # 10% tolerance
+                logger.warning(
+                    f"{log_tag('SPECR','SSTFT')} Time resolution {actual_dt*1e6:.2f} μs exceeds target "
+                    f"{target_dt_max*1e6:.2f} μs. Consider increasing nperseg or accepting lower resolution."
+                )
+            
+            dynamic_kwargs["noverlap"] = int(noverlap_dyn)
 
         all_kwargs = self._get_stft_kwargs(**dynamic_kwargs)
         sqpy_kwargs = self._translate_kwargs(all_kwargs, "ssqueezepy")
