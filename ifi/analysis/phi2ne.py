@@ -677,6 +677,7 @@ class PhaseConverter:
         
         Signal Processing:
             _create_lpf: Create low-pass FIR filter using remez algorithm.
+            _create_hpf: Create high-pass FIR filter using remez algorithm.
             _create_bpf: Create band-pass FIR filter using remez algorithm.
             _plot_filter_response: Plot frequency response of a filter.
         
@@ -1415,6 +1416,117 @@ class PhaseConverter:
                 f"{log_tag('PHI2N', 'LPF')} Using approximate numtaps: {numtaps_approx}"
             )
             numtaps = numtaps_approx
+        if all(bands) <= 1.0:
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=1.0,
+                grid_density=20,
+            )
+        else:
+            taps = remez(
+                numtaps=numtaps,
+                bands=bands,
+                desired=amps,
+                weight=weight,
+                fs=fs,
+                grid_density=20,
+            )
+
+        return taps
+
+    def _create_hpf(self, f_stop, f_pass, fs, approx=False, max_taps=None):
+        """
+        Create a high-pass FIR filter using the remez (Parks-McClellan) algorithm.
+
+        This method designs an optimal FIR filter with specified stopband and passband
+        frequencies. The filter design uses remezord to determine the optimal number
+        of taps and remez to generate the filter coefficients.
+
+        Args:
+            f_stop (float): Stopband edge frequency in Hz (below passband).
+            f_pass (float): Passband edge frequency in Hz. Must be > f_stop.
+            fs (float): Sampling frequency in Hz.
+            approx (bool, optional): Whether to use approximate tap count instead of remezord.
+                Default is False. If True, uses rule-of-thumb: N ≈ 4 / (transition_width_normalized).
+            max_taps (int, optional): Maximum number of filter taps to prevent filtfilt issues
+                with short signals. If None, no limit is applied. Default is None.
+
+        Returns:
+            np.ndarray: FIR filter coefficients (taps) for use with scipy.signal.filtfilt.
+
+        Notes:
+            - Filter specifications: ~0.5 dB passband ripple, -80 dB stopband attenuation.
+            - The number of taps is always odd (required by remez).
+            - If approx=True, uses simplified tap count estimation.
+            - Filter coefficients are designed for use with filtfilt (zero-phase filtering).
+            - Frequency order must be: f_stop < f_pass < Nyquist frequency.
+
+        Examples:
+            ```python
+            converter = PhaseConverter()
+            # Create HPF: stopband below 0.5 MHz, passband above 1 MHz
+            hpf_taps = converter._create_hpf(
+                f_stop=0.5e6,
+                f_pass=1e6,
+                fs=50e6
+            )
+            # Apply filter
+            from scipy.signal import filtfilt
+            filtered_signal = filtfilt(hpf_taps, 1, signal)
+            ```
+        """
+        nyq = 0.5 * fs
+        
+        # Validate frequency order
+        if f_stop >= f_pass:
+            raise ValueError(
+                f"Highpass filter requires f_stop < f_pass. Got f_stop={f_stop} Hz, f_pass={f_pass} Hz"
+            )
+        if f_pass >= nyq:
+            raise ValueError(
+                f"Passband frequency must be below Nyquist frequency. Got f_pass={f_pass} Hz, Nyquist={nyq} Hz"
+            )
+        
+        # Transition width is f_pass - f_stop
+        # A common rule of thumb: N = 4 / (transition_width_normalized)
+        numtaps_approx = int(4 / ((f_pass - f_stop) / nyq))
+        if numtaps_approx % 2 == 0:
+            numtaps_approx += 1
+
+        freqs = [f_stop, f_pass]
+        amps = [0, 1]  # Stopband at 0, passband at 1 (opposite of LPF)
+        rip_stop = 1e-4  # stop-band ripple (linear)
+        rip_pass = 0.057501127785  # pass-band ripple (linear)
+        rips = [rip_stop, rip_pass]  # Order: stopband ripple first, then passband ripple
+
+        [numtaps, bands, amps, weight] = remezord(
+            freqs, amps, rips, Hz=fs, alg="herrmann"
+        )
+
+        # Limit the number of taps to prevent filtfilt issues
+        if max_taps is not None:
+            numtaps = min(numtaps, max_taps)
+            if numtaps % 2 == 0:
+                numtaps += 1
+
+        # compare the numtaps from remezord and approximate one
+        if abs(numtaps - numtaps_approx) > 50 and not approx:  # Allow some tolerance
+            logger.info(
+                f"{log_tag('PHI2N', 'HPF')} numtaps from remezord: {numtaps}, numtaps_approx: {numtaps_approx}"
+            )
+            logger.info(
+                f"{log_tag('PHI2N', 'HPF')} Difference is significant. Using the value from remezord."
+            )
+            pass
+        elif approx:
+            logger.info(
+                f"{log_tag('PHI2N', 'HPF')} Using approximate numtaps: {numtaps_approx}"
+            )
+            numtaps = numtaps_approx
+        
         if all(bands) <= 1.0:
             taps = remez(
                 numtaps=numtaps,
