@@ -140,6 +140,15 @@ class LogManager:
 
     def _log_shutdown(self):
         """Function registered with atexit to log a shutdown message."""
+        root_logger = logging.getLogger()
+        for handler in list(root_logger.handlers):
+            stream = getattr(handler, "stream", None)
+            if stream is not None and getattr(stream, "closed", False):
+                root_logger.removeHandler(handler)
+
+        if not root_logger.handlers:
+            return
+
         logging.info(f"\n{log_tag('LOGS','SHUTD')} Logging ended")
 
     def _setup_logging(self, level):
