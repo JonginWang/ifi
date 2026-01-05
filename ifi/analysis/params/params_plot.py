@@ -13,7 +13,7 @@ Functions:
 import matplotlib as mpl
 
 
-def set_plot_style(font="Arial", size=8.5):
+def set_plot_style(font="sans-serif", size=8.5, tex=False):
     """
     Apply a consistent plot style, suitable for scientific publications (e.g., AIP).
 
@@ -21,9 +21,10 @@ def set_plot_style(font="Arial", size=8.5):
     and other common style elements.
 
     Args:
-        font (str): The font family to use for all text elements. Default is "Arial".
+        font (str): The font family to use for all text elements. Default is "sans-serif".
         size (float): The base font size for labels and ticks. Default is 8.5.
-
+        tex (bool): Whether to use LaTeX for rendering text. Default is False.
+        
     Examples:
     ```python
     from .params_plot import set_plot_style, FontStyle
@@ -34,8 +35,19 @@ def set_plot_style(font="Arial", size=8.5):
     ax.set_ylabel("Y-axis Label", **FontStyle.label)
     ```
     """
+    mpl.rcParams["text.usetex"] = tex
     mpl.rcParams["font.family"] = font
     mpl.rcParams["font.size"] = size
+    if tex:
+        mpl.rcParams["text.latex.preamble"] = "\n".join(
+            [
+                r"\usepackage{siunitx}",   # Si units
+                r"\sisetup{detect-all}",   # detect and use fonts (helvetica)
+                r"\usepackage{helvet}",    # set the helvet as normal font
+                r"\usepackage{sansmath}",  # the sansmath for math
+                r"\sansmath",              # tell tex to use
+            ]
+        )
     mpl.rcParams["axes.labelweight"] = "bold"
     mpl.rcParams["axes.titlesize"] = 10
     mpl.rcParams["axes.labelsize"] = size
