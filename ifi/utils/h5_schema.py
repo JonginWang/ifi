@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-Module: h5_schema
-Purpose: Define and validate the canonical HDF5 schema used for IFI analysis results.
+HDF5 Schema Validation and Loading
+==================================
+
+Define and validate the canonical HDF5 schema used for IFI analysis results.
 Assumptions: Result files are written by `ifi.utils.file_io.save_results_to_hdf5`.
 Key I/O: Validation of HDF5 files under `ifi/results/<shot_num>/*.h5`.
+
+Classes:
+    SchemaValidationError: Exception raised for schema validation errors.
+    
+Functions:
+    validate_h5_schema: Validate an HDF5 file against the expected schema.
+    load_h5_data: Load and validate an HDF5 file, returning its data.
 """
 
 from __future__ import annotations
