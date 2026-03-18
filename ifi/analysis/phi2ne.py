@@ -223,7 +223,7 @@ class PhaseConverter:
         max_taps: int | None = None,
     ) -> np.ndarray:
         """Delegate LPF design to shared filter utilities."""
-        return create_lpf(self, f_pass, f_stop, fs, approx=approx, max_taps=max_taps)
+        return create_lpf(f_pass, f_stop, fs, approx=approx, max_taps=max_taps)
 
     def _create_bpf(
         self,
@@ -236,7 +236,6 @@ class PhaseConverter:
     ) -> np.ndarray:
         """Delegate BPF design to shared filter utilities."""
         return create_bpf(
-            self,
             f_stop1,
             f_pass1,
             f_pass2,
@@ -252,7 +251,7 @@ class PhaseConverter:
         title: str = "Frequency Response",
     ) -> None:
         """Delegate filter-response plotting to shared filter utilities."""
-        plot_filter_response(self, taps, fs=fs, title=title)
+        plot_filter_response(taps, fs=fs, title=title)
 
     def phase_to_density(
         self,
