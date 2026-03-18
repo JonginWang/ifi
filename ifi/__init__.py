@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""
+IFI Package Initialization
+==========================
+
+This file initializes the IFI package.
+It makes the IFI directory a Python package.
+
+Functions:
+    get_project_root: Get the project root directory.
+    add_project_root: Add the project root to the Python path.
+
+Variables:
+    IFI_ROOT(Path): The project root directory.
+    _MARKERS_TO_GET_PROJ_ROOT(tuple[str, ...]): The markers to use to find the project root.
+    __all__: List of public functions and variables.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+_MARKERS_TO_GET_PROJ_ROOT = (".git", "pyproject.toml", "setup.cfg")
+
+
+def get_project_root(
+    package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
+) -> Path | None:
+    """Get the project root directory.
+
+    Args:
+        package_name(str): The name of the package to get the project root for.
+        markers(tuple[str, ...]): The markers to use to find the project root.
+    Returns:
+        Path | None: The project root directory.
+    """
+
+    # Priority 1: Environment variable
+    envname = os.getenv(f"{package_name.upper()}_ROOT")
+    if envname:
+        p = Path(envname).expanduser().resolve()
+        if p.exists():
+            return p
+
+    # Priority 2: Searching from package directory
+    current_path = Path(__file__).resolve()
+    current_dir = current_path if current_path.is_dir() else current_path.parent
+    dir_chain = [current_dir, *current_dir.parents]
+    root_dirs = [p for p in dir_chain if p.name.lower() == package_name.lower()]
+
+    if root_dirs:
+        return root_dirs[-1]  # The outermost ifi
+
+    # BELOW IS THE OLD CODE FOR FINDING THE IFIPACKAGE ROOT, KEEPING IT FOR REFERENCE
+    # ifi_parents = [p for p in ([current_dir] if current_dir.is_dir() and current_dir.name=='ifi' else [])
+    #                 + list(current_dir.parents) if p.name == 'ifi']
+    # IFI_ROOT = ifi_parents[-1] if ifi_parents else None
+
+    # Priority 3: Using markers
+    for p in dir_chain:
+        if any((p / m).exists() for m in markers):
+            return p
+
+    return None
+
+
+def add_project_root(
+    package_name: str = "ifi", markers: tuple[str, ...] = _MARKERS_TO_GET_PROJ_ROOT
+) -> None:
+    """Add the project root to the Python path.
+
+    Args:
+        package_name(str): The name of the package to add the project root for.
+        markers(tuple[str, ...]): The markers to use to find the project root.
+    Returns:
+        None
+    """
+    sys.path.append(str(get_project_root(package_name, markers)))
+
+
+# Calculate the projectroot once at module import time
+IFI_ROOT: Path | None = (
+    get_project_root("ifi") or Path(__file__).expanduser().resolve().parent
+)
+
+# Add the project root to the Python path
+add_project_root("ifi")
+
+
+def main(*args, **kwargs):
+    """Lazy import and call of main function to avoid circular imports."""
+    from .main import main as _main
+
+    return _main(*args, **kwargs)
+
+
+__all__ = ["IFI_ROOT", "get_project_root", "add_project_root", "main"]
+__version__ = "0.1.1"
+__title__ = "ifi"
+__author__ = "J. Wang"
+__license__ = "MIT"
+__project_url__ = "https://github.com/JonginWang/ifi"

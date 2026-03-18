@@ -1,0 +1,64 @@
+# IFI (Interferometer Data Analysis) - Project Configuration
+# Purpose: Tool configuration (Ruff, etc.). Packaging not enabled.
+#
+# Flake8 (replaced by Ruff): pycodestyle E/W, Pyflakes F, plugins (isort, bugbear, bandit).
+# Ruff reimplements these rules and is a drop-in replacement; CI uses Ruff only.
+
+[project]
+name = "ifi"
+version = "0.1.0"
+description = "Interferometer Data Analysis Automator"
+authors = [{ name = "J. Wang" }]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+# =============================================================================
+# Ruff Configuration
+# =============================================================================
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["ifi", "tests", "scripts", "benchmarks"]
+
+[tool.ruff.lint]
+# Covers flake8 (E,W,F) + isort + naming + pyupgrade + bugbear + simplify
+# S101: assert usage (enforced in prod; ignored in tests)
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes (same as flake8)
+    "I",      # isort (import order)
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "S101",   # assert detected (allow in tests only)
+]
+
+# E501: line-length handled by formatter; let format fix it
+# E402: module-level import not at top (needed for __init__.py, path setup)
+# E291: whitespace at the end of a lines; will be removed at the end of project
+# E291: whitespace at the empty lines
+ignore = [
+    "E501",
+    "E402",
+    "W291",
+    "W293",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401", "E402"]  # Unused import, module-level import not at top
+"**/conftest.py" = ["E402"]  # Module-level import not at top
+"scripts/**" = ["E402"]  # Module-level import not at top
+"benchmarks/**" = ["E402"]  # Module-level import not at top
+"tests/**" = ["S101"]  # Use of assert (pytest)
+
+[tool.ruff.lint.isort]
+known-first-party = ["ifi"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
