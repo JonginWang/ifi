@@ -78,6 +78,7 @@ def load_vest_data_for_shots(
         return vest_data_by_shot
 
     logging.info(f"{log_tag('ANALY','RUN')} Loading VEST data for shots: {flat_list.nums}")
+    shot_num = None
     try:
         for shot_num in flat_list.nums:
             vest_data_by_shot[shot_num] = (
@@ -89,8 +90,10 @@ def load_vest_data_for_shots(
         logging.error(
             f"{log_tag('ANALY','RUN')} Error loading VEST data for shot {shot_num}: {e}"
         )
-        vest_data_by_shot[shot_num] = {}
+        if shot_num is not None:
+            vest_data_by_shot[shot_num] = {}
     finally:
+        vest_db.disconnect()
         logging.info(f"{log_tag('ANALY','RUN')} Disconnected from VEST database.")
 
     return vest_data_by_shot

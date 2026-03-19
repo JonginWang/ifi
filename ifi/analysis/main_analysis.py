@@ -480,8 +480,11 @@ def main(argv: list[str] | None = None):
         logging.error(f"{log_tag('ANALY','MAIN')} Failed to initialize database controllers: {e}")
         return
 
-    # The main change is here: call run_analysis with the raw query
-    run_analysis(args.query, args, nas_db, vest_db)
+    try:
+        run_analysis(args.query, args, nas_db, vest_db)
+    finally:
+        nas_db.disconnect()
+        vest_db.disconnect()
 
 
 if __name__ == "__main__":
