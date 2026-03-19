@@ -6,6 +6,7 @@ Process-specific HDF5 naming helpers.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 import h5py
@@ -15,6 +16,7 @@ import pandas as pd
 from .io_h5 import (
     ensure_unique_name,
     h5_affixed_name,
+    make_cache_h5_key,
     h5_safe_name,
     normalize_source_name,
     parse_h5_affixed_name,
@@ -78,6 +80,33 @@ def find_existing_signal_group_name(raw_group: h5py.Group, source_name: str) -> 
     return None
 
 
+def make_raw_cache_group_name(source_name: str) -> str:
+    """Build deterministic raw-cache subgroup name."""
+    return make_cache_h5_key(normalize_source_name(source_name), prefix="sig")
+
+
+def make_raw_cache_filename(source_name: str, shot_num: int | None = None) -> str:
+    """Build per-source raw-cache filename within one shot results directory."""
+    canonical_source = normalize_source_name(source_name)
+    stem = str(Path(canonical_source).stem).strip()
+    stem = re.sub(r'[<>:"/\\|?*]+', "_", stem)
+    stem = re.sub(r"\s+", "_", stem).strip("._")
+    if not stem:
+        stem = make_cache_h5_key(canonical_source, prefix="src")
+    if shot_num is not None and stem == str(shot_num):
+        stem = f"{stem}_raw"
+    return f"{stem}.h5"
+
+
+def build_raw_cache_file_path(
+    results_dir: Path | str,
+    source_name: str,
+    shot_num: int | None = None,
+) -> Path:
+    """Build per-source raw-cache file path inside a shot results directory."""
+    return Path(results_dir) / make_raw_cache_filename(source_name, shot_num=shot_num)
+
+
 def ensure_time_indexed_df(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Index]:
     """Return a copy indexed by `TIME` and the corresponding time axis."""
     out = df.copy()
@@ -114,10 +143,13 @@ def append_source_stem_to_columns(df: pd.DataFrame, source_name: str) -> pd.Data
 
 __all__ = [
     "append_source_stem_to_columns",
+    "build_raw_cache_file_path",
     "update_group_attrs",
     "create_named_dataset",
     "ensure_time_column_df",
     "ensure_time_indexed_df",
+    "make_raw_cache_filename",
+    "make_raw_cache_group_name",
     "make_density_group_name",
     "parse_density_group_name",
     "find_existing_signal_group_name",

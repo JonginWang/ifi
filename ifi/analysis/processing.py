@@ -22,12 +22,38 @@ except ImportError as e:
 logger = LogManager().get_logger(__name__)
 
 
+def _interpolate_signal_non_finite(df: pd.DataFrame) -> pd.DataFrame:
+    """Interpolate non-finite gaps for numeric signal columns while preserving TIME."""
+    out = df.copy()
+    numeric_cols = [col for col in out.select_dtypes(include=np.number).columns if col != "TIME"]
+    if not numeric_cols:
+        return out
+
+    if "TIME" in out.columns and len(out["TIME"]) > 1:
+        time_index = pd.Index(out["TIME"].to_numpy(), name="TIME")
+        interpolated = out[numeric_cols].copy()
+        interpolated.index = time_index
+        interpolated = interpolated.interpolate(
+            method="index",
+            limit_direction="both",
+        )
+        out[numeric_cols] = interpolated.to_numpy()
+        return out
+
+    out[numeric_cols] = out[numeric_cols].interpolate(
+        method="linear",
+        limit_direction="both",
+        axis=0,
+    )
+    return out
+
+
 def refine_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Applies a series of cleaning and refining steps to the raw DataFrame.
 
-    This function rounds all numeric data to 10 decimal places and reconstructs the 'TIME' column to be a perfect arithmetic sequence.
-    It also removes any rows containing NaN values.
+    This function rounds numeric data, converts `Inf/-Inf` into `NaN`, reconstructs
+    the `TIME` column when possible, and drops columns that remain invalid.
 
     Args:
         df(pandas.DataFrame): The raw input DataFrame.
@@ -50,10 +76,37 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
         f"{log_tag('PROCS', 'REFIN')} Rounded numeric data to 10 decimal places."
     )
 
-    # 2. Reconstruct TIME column
+    # 2. Convert non-finite numeric values into NaN so downstream cleanup handles
+    # both NaN and Inf consistently.
+    if len(numeric_cols) > 0:
+        finite_mask = np.isfinite(refined_df[numeric_cols])
+        non_finite_count = int((~finite_mask).to_numpy().sum())
+        if non_finite_count:
+            refined_df[numeric_cols] = refined_df[numeric_cols].where(finite_mask, np.nan)
+            logger.warning(
+                f"{log_tag('PROCS', 'REFIN')} Replaced {non_finite_count} non-finite "
+                f"numeric value(s) with NaN."
+            )
+
+    # Preserve TIME as a valid axis by dropping rows that have invalid time stamps.
+    dropped_time_rows = 0
+    if "TIME" in refined_df.columns:
+        invalid_time_mask = refined_df["TIME"].isna()
+        dropped_time_rows = int(invalid_time_mask.sum())
+        if dropped_time_rows:
+            refined_df = refined_df.loc[~invalid_time_mask].copy()
+            logger.warning(
+                f"{log_tag('PROCS', 'REFIN')} Dropped {dropped_time_rows} row(s) with "
+                "invalid TIME values."
+            )
+
+    # 3. Interpolate signal non-finite values after TIME cleanup.
+    refined_df = _interpolate_signal_non_finite(refined_df)
+
+    # 4. Reconstruct TIME column
     if "TIME" in refined_df.columns and len(refined_df["TIME"]) > 1:
         # Calculate time resolution from the first few differences for stability
-        time_diffs = refined_df["TIME"].diff().dropna()
+        time_diffs = refined_df["TIME"].diff().replace([np.inf, -np.inf], np.nan).dropna()
         if not time_diffs.empty:
             time_resolution = time_diffs.head(100).mean()
             start_time = refined_df["TIME"].iloc[0]
@@ -73,23 +126,24 @@ def refine_data(df: pd.DataFrame) -> pd.DataFrame:
                 f"{log_tag('PROCS', 'REFIN')} Could not determine time resolution. Skipping TIME reconstruction."
             )
 
-    # 3. Drop rows with NaN values
+    # 5. Drop columns that remain invalid after refinement.
     initial_rows = len(refined_df)
     if refined_df.shape[1] > 4:
         col_to_drop = []
         for col in refined_df.columns[4:]:
-            if refined_df[col].isna().sum() > initial_rows//2:
+            if refined_df[col].isna().sum() > initial_rows // 2:
                 col_to_drop.append(col)
         refined_df.drop(columns=col_to_drop, inplace=True)
         logger.info(
             f"{log_tag('PROCS', 'REFIN')} Dropped {col_to_drop} with more than half of its rows are NaN. Shape: {refined_df.shape}."
         )
-    refined_df.dropna(axis=1,inplace=True)
+    refined_df.dropna(axis=1, inplace=True)
     final_rows = len(refined_df)
 
-    if initial_rows > final_rows:
+    if initial_rows > final_rows or dropped_time_rows:
         logger.info(
-            f"{log_tag('PROCS', 'REFIN')} Dropped {initial_rows - final_rows} rows with NaN values."
+            f"{log_tag('PROCS', 'REFIN')} Dropped {initial_rows - final_rows} row(s) "
+            "during refinement cleanup."
         )
 
     return refined_df

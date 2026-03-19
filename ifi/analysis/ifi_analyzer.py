@@ -41,7 +41,7 @@ def create_mock_args(**overrides: Any) -> Namespace:
         add_path=False,
         force_remote=False,
         vest_fields=[109, 101],
-        no_offset_removal=False,
+        no_offset_removal=True,
         offset_window=2001,
         baseline="ip",
         plot_raw=False,

@@ -215,7 +215,21 @@ class TestAnalysisModules(unittest.TestCase):
         # Test refinement
         df_refined = processing.refine_data(df_with_nan)
         self.assertFalse(df_refined.isnull().any().any())
-        self.assertEqual(len(df_refined), len(df_with_nan) - 11)  # 11 NaN values removed
+        self.assertEqual(len(df_refined), len(df_with_nan))
+        self.assertIn("SIGNAL", df_refined.columns)
+
+    def test_processing_refine_data_replaces_inf(self):
+        """Test data refinement handles Inf values as non-finite input."""
+        from ifi.analysis import processing
+
+        df_with_inf = self.df.copy()
+        df_with_inf.loc[10, "SIGNAL"] = np.inf
+        df_with_inf.loc[11, "SIGNAL"] = -np.inf
+
+        df_refined = processing.refine_data(df_with_inf)
+        numeric = df_refined.select_dtypes(include=np.number)
+        self.assertTrue(np.isfinite(numeric.to_numpy()).all())
+        self.assertIn("TIME", df_refined.columns)
     
     def test_processing_remove_offset(self):
         """Test offset removal."""

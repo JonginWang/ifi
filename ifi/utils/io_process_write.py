@@ -32,9 +32,11 @@ from .io_h5 import (
     normalize_source_name,
 )
 from .io_process_common import (
+    build_raw_cache_file_path,
     create_named_dataset,
     find_existing_signal_group_name,
     make_density_group_name,
+    make_raw_cache_group_name,
     parse_density_group_name,
     update_group_attrs,
 )
@@ -59,6 +61,34 @@ def _write_dataframe_datasets(parent: h5py.Group, df: pd.DataFrame) -> None:
             used_names=used_names,
             original_name=str(col),
         )
+
+
+def _cache_target_exists(cache_file: Path, group_name: str) -> bool:
+    """Return True when a per-source raw-cache file contains the target signal group."""
+    if not cache_file.exists():
+        return False
+    try:
+        with h5py.File(cache_file, "r") as cache_hf:
+            raw_group = cache_hf.get(H5_GROUP_RAWDATA)
+            return isinstance(raw_group, h5py.Group) and group_name in raw_group
+    except OSError:
+        return False
+
+
+def _write_inline_raw_signal_group(
+    raw_group: h5py.Group,
+    group_name: str,
+    signal_name: str,
+    signal_df: pd.DataFrame,
+) -> None:
+    signal_group = raw_group.create_group(group_name)
+    signal_group.attrs["original_name"] = str(signal_name)
+    signal_group.attrs["canonical_name"] = normalize_source_name(signal_name)
+
+    if hasattr(signal_df, "attrs") and signal_df.attrs:
+        update_group_attrs(signal_group, flatten_metadata_attrs(dict(signal_df.attrs)))
+
+    _write_dataframe_datasets(signal_group, signal_df)
 
 
 def _resolve_output_filename(shot_num: int, signals: dict | None) -> str:
@@ -146,6 +176,7 @@ def write_raw_signals_group(hf: h5py.File, signals: dict[str, pd.DataFrame]) -> 
     raw_group.attrs.pop("empty", None)
 
     used_names = set(raw_group.keys())
+    output_dir = hf.filename and Path(hf.filename).parent
     written = 0
     for signal_name, signal_df in signals.items():
         if not isinstance(signal_df, pd.DataFrame):
@@ -163,14 +194,28 @@ def write_raw_signals_group(hf: h5py.File, signals: dict[str, pd.DataFrame]) -> 
                 canonicalize_path=True,
             )
 
-        signal_group = raw_group.create_group(group_name)
-        signal_group.attrs["original_name"] = str(signal_name)
-        signal_group.attrs["canonical_name"] = normalize_source_name(signal_name)
+        shot_num = None
+        try:
+            shot_num = int(hf.attrs.get("shot_number"))
+        except (TypeError, ValueError):
+            shot_num = None
 
-        if hasattr(signal_df, "attrs") and signal_df.attrs:
-            update_group_attrs(signal_group, flatten_metadata_attrs(dict(signal_df.attrs)))
+        cache_group_name = make_raw_cache_group_name(str(signal_name))
+        cache_file = None
+        if output_dir is not None and shot_num not in (None, 0):
+            cache_file = build_raw_cache_file_path(output_dir, str(signal_name), shot_num=shot_num)
 
-        _write_dataframe_datasets(signal_group, signal_df)
+        if (
+            cache_file is not None
+            and Path(hf.filename).name != cache_file.name
+            and _cache_target_exists(cache_file, cache_group_name)
+        ):
+            raw_group[group_name] = h5py.ExternalLink(
+                cache_file.name,
+                f"/{H5_GROUP_RAWDATA}/{cache_group_name}",
+            )
+        else:
+            _write_inline_raw_signal_group(raw_group, group_name, str(signal_name), signal_df)
         written += 1
 
     if written == 0:

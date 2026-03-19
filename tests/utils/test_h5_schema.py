@@ -20,6 +20,7 @@ from ifi.utils.io_h5_inspect import (
     load_h5_data,
     validate_h5_schema,
 )
+from ifi.utils.io_process_common import build_raw_cache_file_path, make_raw_cache_group_name
 
 
 @pytest.fixture
@@ -146,5 +147,49 @@ def test_load_h5_data_integration_with_save_results(tmp_path):
     loaded_df = loaded["rawdata"]["test_file.csv"]
     assert "TIME" in loaded_df.columns
     assert "CH0" in loaded_df.columns
+
+
+def test_save_results_links_rawdata_to_existing_source_cache(tmp_path):
+    """When per-source raw cache exists, canonical results should link to it."""
+    base_dir = tmp_path / "results"
+    shot_num = 12345
+    results_dir = base_dir / str(shot_num)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    df_signals = pd.DataFrame(
+        {"TIME": np.linspace(0, 1, 8), "CH0": np.random.randn(8)}
+    )
+    source_name = "test_file.csv"
+    cache_file = build_raw_cache_file_path(results_dir, source_name, shot_num=shot_num)
+    cache_group_name = make_raw_cache_group_name(source_name)
+
+    with h5py.File(cache_file, "w") as cache_hf:
+        rawdata = cache_hf.create_group("rawdata")
+        sig_group = rawdata.create_group(cache_group_name)
+        sig_group.attrs["original_name"] = source_name
+        sig_group.attrs["canonical_name"] = source_name
+        sig_group.create_dataset("TIME", data=df_signals["TIME"].to_numpy())
+        ch0 = sig_group.create_dataset("CH0", data=df_signals["CH0"].to_numpy())
+        ch0.attrs["original_name"] = "CH0"
+
+    saved_path = save_results_to_hdf5(
+        str(results_dir),
+        shot_num,
+        {source_name: df_signals},
+        {},
+        {},
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
+
+    assert saved_path is not None
+    with h5py.File(saved_path, "r") as hf:
+        rawdata = hf["rawdata"]
+        assert len(rawdata) == 1
+        group_name = next(iter(rawdata.keys()))
+        link = rawdata.get(group_name, getlink=True)
+        assert isinstance(link, h5py.ExternalLink)
+        assert link.filename == cache_file.name
+        assert link.path == f"/rawdata/{cache_group_name}"
 
 

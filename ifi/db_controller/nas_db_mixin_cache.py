@@ -25,10 +25,10 @@ from ..utils.io_h5 import (
     ensure_unique_name,
     flatten_metadata_attrs,
     h5_safe_name,
-    make_cache_h5_key,
     normalize_source_name,
     unflatten_metadata_attrs,
 )
+from ..utils.io_process_common import build_raw_cache_file_path, make_raw_cache_group_name
 from ..utils.log_manager import log_tag
 from .nas_db_base import NasDBBase
 
@@ -53,16 +53,7 @@ class NasDBMixinCache(NasDBBase):
         """
         project_root = get_project_root()
         results_dir = project_root / "ifi" / "results" / str(shot_num)
-
-        canonical_source = normalize_source_name(source_name)
-        stem = str(Path(canonical_source).stem).strip()
-        stem = re.sub(r'[<>:"/\\|?*]+', "_", stem)
-        stem = re.sub(r"\s+", "_", stem).strip("._")
-        if not stem:
-            stem = make_cache_h5_key(canonical_source, prefix="src")
-        if stem == str(shot_num):
-            stem = f"{stem}_raw"
-        return results_dir / f"{stem}.h5"
+        return build_raw_cache_file_path(results_dir, source_name, shot_num=shot_num)
 
     def _load_single_raw_cache_h5(self, cache_file: Path, source_name: str) -> pd.DataFrame | None:
         """Load one source DataFrame from per-source raw cache H5."""
@@ -128,7 +119,7 @@ class NasDBMixinCache(NasDBBase):
         """Write one source DataFrame to per-source raw cache H5."""
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         canonical_source = normalize_source_name(source_name)
-        signal_group_name = make_cache_h5_key(canonical_source, prefix="sig")
+        signal_group_name = make_raw_cache_group_name(canonical_source)
 
         with h5py.File(cache_file, "a") as hf:
             raw_group = hf.require_group(H5_GROUP_RAWDATA)
