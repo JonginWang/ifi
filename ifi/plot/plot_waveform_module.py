@@ -17,6 +17,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from ..analysis.params.params_plot import FontStyle
+from ..utils.dsp_amplitude import compute_signal_envelope
 from ..utils.func_helper import merge_kwargs, normalize_call_args
 from .plot_common_module import apply_scaling, extract_metadata_info, prepare_time_data
 
@@ -31,9 +32,12 @@ def plot_waveforms_core(
     time_scale: str = "s",
     signal_scale: str = "V",
     trigger_time: float = 0.0,
+    plot_envelope: bool = False,
     subplots_kwargs: dict[str, Any] | None = None,
     plot_args: tuple[Any, ...] | list[Any] | None = None,
     plot_kwargs: dict[str, Any] | None = None,
+    envelope_kwargs: dict[str, Any] | None = None,
+    envelope_plot_kwargs: dict[str, Any] | None = None,
     grid_kwargs: dict[str, Any] | None = None,
     savefig_kwargs: dict[str, Any] | None = None,
 ) -> tuple[Figure, np.ndarray]:
@@ -66,9 +70,33 @@ def plot_waveforms_core(
 
     line_args = normalize_call_args(plot_args)
     line_kwargs = merge_kwargs(plot_kwargs)
+    envelope_options = merge_kwargs({"smooth_window_us": 20.0}, envelope_kwargs)
+    envelope_line_kwargs = merge_kwargs(
+        {"color": "tab:orange", "linestyle": "--", "linewidth": 1.5, "alpha": 0.9},
+        envelope_plot_kwargs,
+    )
     grid_options = merge_kwargs({"alpha": 0.3}, grid_kwargs)
     for i, (name, signal) in enumerate(signals_scaled.items()):
-        axes[i].plot(time_scaled, signal, *line_args, **line_kwargs)
+        axes[i].plot(time_scaled, signal, *line_args, label=str(name), **line_kwargs)
+        if plot_envelope:
+            raw_signal = np.asarray(signals[name], dtype=float)
+            envelope = compute_signal_envelope(time, raw_signal, **envelope_options)
+            _, scaled_envelope_map, _, _ = apply_scaling(
+                time,
+                {"envelope": envelope},
+                time_scale,
+                signal_scale,
+            )
+            scaled_envelope = scaled_envelope_map["envelope"]
+            if downsample > 1:
+                scaled_envelope = scaled_envelope[::downsample]
+            axes[i].plot(
+                time_scaled,
+                scaled_envelope,
+                label=f"{name} envelope",
+                **envelope_line_kwargs,
+            )
+            axes[i].legend()
         axes[i].set_ylabel(f"{name} {signal_label}", **FontStyle.label)
         axes[i].grid(True, **grid_options)
 

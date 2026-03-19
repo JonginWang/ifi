@@ -54,6 +54,7 @@ from .analysis_pipeline.file_phase import (
     refine_and_preprocess_signal,
 )
 from .analysis_pipeline.output_phase import (
+    export_envelope_outputs,
     merge_cached_results_with_bundles,
     plot_shot_outputs,
     save_shot_outputs,
@@ -247,6 +248,12 @@ def run_analysis(
             density_data=density_data,
             vest_ip_data=vest_ip_data,
         )
+        export_envelope_outputs(
+            shot_num=shot_num,
+            args=args,
+            shot_nas_data=shot_nas_data,
+            shot_interferometry_params=shot_interferometry_params,
+        )
         save_shot_outputs(
             shot_num=shot_num,
             args=args,
@@ -351,6 +358,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--plot", action="store_true", help="Show plots of the analysis results."
     )
     parser.add_argument(
+        "--plot_envelope",
+        action="store_true",
+        help="Overlay spike-robust envelopes on waveform plots.",
+    )
+    parser.add_argument(
         "--no_plot_block",
         action="store_true",
         help="""Don't block execution when showing plots. 
@@ -382,6 +394,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     # Analysis-specific flags
     parser.add_argument(
         "--density", action="store_true", help="Perform phase and density calculation."
+    )
+    parser.add_argument(
+        "--envelope",
+        action="store_true",
+        help="Export low-envelope probe segments as JSON files.",
     )
     parser.add_argument(
         "--freq",

@@ -18,8 +18,8 @@ from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 
 from ..analysis.params.params_plot import FontStyle
+from ..utils.dsp_amplitude import extract_probe_amplitudes_from_signals
 from ..utils.func_helper import merge_kwargs, normalize_call_args
-from ..utils.if_utils import extract_probe_amplitudes_from_signals
 from .plot_common_module import apply_scaling
 
 

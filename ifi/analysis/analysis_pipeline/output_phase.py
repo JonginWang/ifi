@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ...utils.if_utils import extract_probe_amplitudes_from_signals, get_frequency_df
+from ...utils.dsp_amplitude import export_probe_envelope_segments_json
+from ...utils.dsp_amplitude import extract_probe_amplitudes_from_signals
+from ...utils.if_utils import get_frequency_df
 from ...utils.io_process_common import parse_density_group_name
 from ...utils.io_process_write import save_results_to_hdf5
 from ...utils.log_manager import log_tag
@@ -105,11 +108,74 @@ def plot_shot_outputs(
             trigger_time=args.trigger_time,
             title_prefix=title_prefix,
             downsample=args.downsample,
+            plot_envelope=getattr(args, "plot_envelope", False),
             color_density_by_amplitude=args.color_density_by_amplitude,
             probe_amplitudes=plot_probe_amplitudes,
             amplitude_colormap=args.amplitude_colormap,
             amplitude_impedance=args.amplitude_impedance,
         )
+
+
+def _iter_envelope_probe_channels(params: dict[str, Any]) -> list[str]:
+    amp_probe_cols = params.get("amp_probe_cols")
+    if isinstance(amp_probe_cols, list) and amp_probe_cols:
+        return [str(col) for col in amp_probe_cols if isinstance(col, str)]
+
+    probe_cols = params.get("probe_cols", [])
+    return [str(col) for col in probe_cols if isinstance(col, str)]
+
+
+def export_envelope_outputs(
+    *,
+    shot_num: int,
+    args: argparse.Namespace,
+    shot_nas_data: dict[str, pd.DataFrame],
+    shot_interferometry_params: dict[str, dict[str, Any]],
+) -> None:
+    """Export low-envelope probe segments as per-channel JSON files."""
+    if not getattr(args, "envelope", False):
+        return
+
+    output_dir = Path(args.results_dir) / str(shot_num) / "envelope"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for basename, signal_df in shot_nas_data.items():
+        if not isinstance(signal_df, pd.DataFrame) or signal_df.empty:
+            continue
+
+        params = shot_interferometry_params.get(basename, {})
+        if not params:
+            continue
+
+        time_axis = (
+            signal_df["TIME"].to_numpy(dtype=float)
+            if "TIME" in signal_df.columns
+            else signal_df.index.to_numpy(dtype=float)
+        )
+        if len(time_axis) == 0:
+            continue
+
+        for probe_col in _iter_envelope_probe_channels(params):
+            if probe_col not in signal_df.columns:
+                continue
+
+            output_path = output_dir / f"{Path(basename).stem}_{probe_col}_envelope.json"
+            payload = export_probe_envelope_segments_json(
+                output_path,
+                channel_name=probe_col,
+                time_axis=time_axis,
+                signal=signal_df[probe_col].to_numpy(dtype=float),
+                threshold_ratio=0.7,
+                min_duration_us=100.0,
+                baseline_fraction=0.2,
+                include_samples=True,
+            )
+            payload["shot_num"] = int(shot_num)
+            payload["source_name"] = str(basename)
+            payload["meas_name"] = str(params.get("meas_name", ""))
+            payload["freq"] = float(params.get("freq_ghz", params.get("freq", float("nan"))))
+            output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            logging.info(f"{log_tag('ANALY','ENVL')} Saved envelope JSON: {output_path}")
 
 
 def save_shot_outputs(
@@ -172,6 +238,7 @@ def merge_cached_results_with_bundles(
 
 
 __all__ = [
+    "export_envelope_outputs",
     "merge_cached_results_with_bundles",
     "plot_shot_outputs",
     "save_shot_outputs",

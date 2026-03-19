@@ -320,6 +320,31 @@ class TestAnalysisModules(unittest.TestCase):
         
         self.assertIsNotNone(fig)
 
+    def test_plotter_waveform_envelope(self):
+        """Test waveform plotting with envelope overlay enabled."""
+        from ifi.plot import Plotter
+
+        plotter = Plotter()
+        fig, axes = plotter.plot_waveforms(
+            self.df,
+            title="Test Signal Envelope",
+            plot_envelope=True,
+            show_plot=False,
+        )
+
+        self.assertIsNotNone(fig)
+        self.assertGreaterEqual(len(axes[0].lines), 2)
+
+    def test_main_analysis_parser_envelope_flags(self):
+        """Test main analysis parser accepts envelope-related flags."""
+        from ifi.analysis.main_analysis import build_argument_parser
+
+        parser = build_argument_parser()
+        args = parser.parse_args(["45821", "--envelope", "--plot_envelope"])
+
+        self.assertTrue(args.envelope)
+        self.assertTrue(args.plot_envelope)
+
 class TestIntegration(unittest.TestCase):
     """Test integration between modules."""
     

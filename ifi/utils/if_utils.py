@@ -273,43 +273,6 @@ def get_frequency_df(
                 return df
     return default
 
-
-def extract_probe_amplitudes_from_signals(
-    density_df: pd.DataFrame,
-    signals_df: pd.DataFrame,
-    freq_ghz: float,
-) -> dict[str, np.ndarray]:
-    """
-    Extract probe amplitudes by matching density columns to signal columns.
-    """
-    probe_amplitudes: dict[str, np.ndarray] = {}
-    if density_df.empty or signals_df.empty:
-        return probe_amplitudes
-
-    freq_group = map_frequency_to_group(float(freq_ghz))
-
-    for density_col in density_df.columns:
-        if not str(density_col).startswith("ne_"):
-            continue
-
-        remaining = str(density_col)[3:]
-        signal_col = remaining.split("_")[0] if freq_group == 280.0 else remaining
-
-        if signal_col not in signals_df.columns:
-            continue
-
-        signal_data = signals_df[signal_col].dropna()
-        if len(signal_data) == 0:
-            continue
-
-        aligned_signal = signal_data.reindex(
-            density_df.index, method="nearest", limit=1
-        )
-        probe_amplitudes[str(density_col)] = np.abs(aligned_signal.values)
-
-    return probe_amplitudes
-
-
 def build_group_signal_column_name(
     freq_ghz: float,
     signal_name: str,
@@ -391,7 +354,6 @@ __all__ = [
     "assign_interferometry_params_to_shot",
     "build_frequency_groups_from_params",
     "extract_available_frequency_groups",
-    "extract_probe_amplitudes_from_signals",
     "build_combined_signals_by_frequency",
     "build_group_signal_column_name",
     "filter_frequency_groups",

@@ -74,6 +74,7 @@ def plot_shot_waveforms(
     results_dir: Path | str | None = None,
     shot_num: int | None = None,
     downsample: int = 100,
+    plot_envelope: bool = False,
 ) -> None:
     """Generate waveform plots for all available signals in a shot."""
     logger.info(f"{log_tag('PLOTS', 'WFDAT')} Generating waveform plots...")
@@ -88,6 +89,7 @@ def plot_shot_waveforms(
                 df,
                 title=f"Shot {shot_num} - {filename}",
                 downsample=downsample,
+                plot_envelope=plot_envelope,
                 show_plot=False,
             )
             output_path = waveform_dir / f"{filename}_waveforms.png"

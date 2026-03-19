@@ -43,6 +43,7 @@ if ($Help) {
     Write-Host "  .\run_analysis_smart.ps1 '45000:45010' --freq '280' --density --stft --save_data"
     Write-Host "  .\run_analysis_smart.ps1 --shot-list '45000:45010' '45020:45030' --freq '94 280' --density --stft --save_data"
     Write-Host "  .\run_analysis_smart.ps1 --freq '94 280' --density --stft --save_data --stft-cols '0 1 2'"
+    Write-Host "  .\run_analysis_smart.ps1 '45000:45010' --freq '94 280' --density --stft --envelope --plot_envelope --save_data"
     Write-Host ""
     Write-Host "Options:" -ForegroundColor Yellow
     Write-Host "  --shot-list RANGES          Space-separated shot ranges (colon for ranges, e.g., '45000:45010' '45020:45030')"
