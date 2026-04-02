@@ -40,6 +40,7 @@ def run_vest_shot_monitoring(
     xrange_s: tuple[float, float] = (0.28, 0.35),
     overwrite_local: bool = False,
     save_plots: bool = True,
+    plot_each: bool = False,
 ) -> dict[str, object]:
     xcoil = xcoil or [1, 5, 6, 10]
     results_root = Path(results_dir)
@@ -66,14 +67,27 @@ def run_vest_shot_monitoring(
         write_summary[shot_num] = payload["written"]
 
     if save_plots and shots:
-        save_vest_monitoring_plots(
-            shots=shots,
-            monitoring_by_shot=monitoring_by_shot,
-            mirnov_specs_by_shot=spectrograms_by_shot,
-            save_dir=results_root / str(shots[-1]) / "monitoring",
-            xrange_s=xrange_s,
-            overwrite=overwrite_local,
-        )
+        if plot_each:
+            for shot_num in shots:
+                save_vest_monitoring_plots(
+                    shots=[shot_num],
+                    monitoring_by_shot={shot_num: monitoring_by_shot.get(shot_num, {})},
+                    mirnov_specs_by_shot={shot_num: spectrograms_by_shot.get(shot_num, {})},
+                    save_dir=results_root / str(shot_num) / "monitoring",
+                    xrange_s=xrange_s,
+                    overwrite=overwrite_local,
+                    show_plots=True,
+                )
+        else:
+            save_vest_monitoring_plots(
+                shots=shots,
+                monitoring_by_shot=monitoring_by_shot,
+                mirnov_specs_by_shot=spectrograms_by_shot,
+                save_dir=results_root / str(shots[-1]) / "monitoring",
+                xrange_s=xrange_s,
+                overwrite=overwrite_local,
+                show_plots=False,
+            )
 
     return {
         "shots": shots,

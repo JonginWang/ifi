@@ -21,12 +21,14 @@ def _shot_text(shots: list[int]) -> str:
     return "-".join(map(str, shots))
 
 
-def _save_fig(fig, path: Path, overwrite: bool) -> None:
+def _save_fig(fig, path: Path, overwrite: bool, show: bool = False) -> None:
     if path.exists() and not overwrite:
         plt.close(fig)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight")
+    if show:
+        plt.show(block=True)
     plt.close(fig)
 
 
@@ -37,6 +39,7 @@ def _plot_multi_shot(
     xlim_ms: tuple[float, float],
     output_path: Path,
     overwrite: bool = False,
+    show: bool = False,
 ) -> None:
     fig, ax = plt.subplots(figsize=(7.0, 3.0))
     for shot, frame in shot_frames.items():
@@ -53,7 +56,7 @@ def _plot_multi_shot(
     handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.25), ncol=2)
-    _save_fig(fig, output_path, overwrite)
+    _save_fig(fig, output_path, overwrite, show=show)
 
 
 def _plot_tiled_multi_shot(
@@ -62,6 +65,7 @@ def _plot_tiled_multi_shot(
     xlim_ms: tuple[float, float],
     output_path: Path,
     overwrite: bool = False,
+    show: bool = False,
 ) -> None:
     first = next((df for df in shot_frames.values() if isinstance(df, pd.DataFrame) and not df.empty), None)
     if first is None:
@@ -85,7 +89,7 @@ def _plot_tiled_multi_shot(
                 ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.35), ncol=4)
     axes[-1].set_xlabel("Time [msec]", **FontStyle.label)
     fig.suptitle(title, **FontStyle.title)
-    _save_fig(fig, output_path, overwrite)
+    _save_fig(fig, output_path, overwrite, show=show)
 
 
 def _plot_mirnov_spectrograms(
@@ -93,6 +97,7 @@ def _plot_mirnov_spectrograms(
     xlim_ms: tuple[float, float],
     output_dir: Path,
     overwrite: bool = False,
+    show: bool = False,
 ) -> None:
     for shot, spec_map in mirnov_specs_by_shot.items():
         if not spec_map:
@@ -116,7 +121,7 @@ def _plot_mirnov_spectrograms(
             fig.colorbar(mesh, ax=ax)
         axes[-1].set_xlabel("Time [msec]", **FontStyle.label)
         fig.suptitle(f"Mirnov Spectrogram {shot}", **FontStyle.title)
-        _save_fig(fig, output_dir / f"MirnovSpectrogram_{shot}.png", overwrite)
+        _save_fig(fig, output_dir / f"MirnovSpectrogram_{shot}.png", overwrite, show=show)
 
 
 def save_vest_monitoring_plots(
@@ -126,6 +131,7 @@ def save_vest_monitoring_plots(
     save_dir: str | Path,
     xrange_s: tuple[float, float] = (0.28, 0.35),
     overwrite: bool = False,
+    show_plots: bool = False,
 ) -> None:
     set_plot_style()
     save_path = Path(save_dir)
@@ -140,7 +146,15 @@ def save_vest_monitoring_plots(
         ("diamagnetic_flux", "Diamagnetic Flux", "Diamagnetic Flux [mWb]", f"DiamagneticFlux_{shot_str}.png"),
     ]:
         frames = {shot: monitoring_by_shot.get(shot, {}).get(key, pd.DataFrame()) for shot in shots}
-        _plot_multi_shot(frames, title, ylabel, xlim_ms, save_path / filename, overwrite=overwrite)
+        _plot_multi_shot(
+            frames,
+            title,
+            ylabel,
+            xlim_ms,
+            save_path / filename,
+            overwrite=overwrite,
+            show=show_plots,
+        )
 
     for key, title, filename in [
         ("pf_current", "PF Coil Current", f"PF_Current_{shot_str}.png"),
@@ -150,13 +164,21 @@ def save_vest_monitoring_plots(
         ("limiter_current", "Limiter Current", f"LimiterCurrentMonitor_{shot_str}.png"),
     ]:
         frames = {shot: monitoring_by_shot.get(shot, {}).get(key, pd.DataFrame()) for shot in shots}
-        _plot_tiled_multi_shot(frames, title, xlim_ms, save_path / filename, overwrite=overwrite)
+        _plot_tiled_multi_shot(
+            frames,
+            title,
+            xlim_ms,
+            save_path / filename,
+            overwrite=overwrite,
+            show=show_plots,
+        )
 
     _plot_mirnov_spectrograms(
         mirnov_specs_by_shot=mirnov_specs_by_shot,
         xlim_ms=xlim_ms,
         output_dir=save_path,
         overwrite=overwrite,
+        show=show_plots,
     )
 
 

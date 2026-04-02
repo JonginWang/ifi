@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from ifi.utils.vest_fieldcode import load_vest_field_maps
 from ifi.utils.vest_monitoring import run_vest_shot_monitoring
@@ -79,3 +80,23 @@ def test_vest_field_map_260101_contains_monitoring_codes():
     by_id, _ = load_vest_field_maps()
     for field_id in (12, 27, 28, 103, 104, 219, 220, 232, 233, 234, 235, 259, 260, 261, 262):
         assert field_id in by_id
+
+
+def test_vest_monitoring_plot_each_saves_under_each_shot(tmp_path: Path, monkeypatch):
+    shots = [99991, 99992]
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(plt, "show", lambda *args, **kwargs: None)
+    payload = run_vest_shot_monitoring(
+        vest_db=_FakeVestDB(),
+        shots=shots,
+        results_dir=results_dir,
+        overwrite_local=True,
+        plot_each=True,
+    )
+
+    assert payload["shots"] == shots
+    for shot_num in shots:
+        shot_monitor_dir = results_dir / str(shot_num) / "monitoring"
+        assert shot_monitor_dir.exists()
+        assert (shot_monitor_dir / f"TF_current_{shot_num}.png").exists()
+        assert (shot_monitor_dir / f"MirnovSpectrogram_{shot_num}.png").exists()
