@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Interferometry parameter helpers
-================================
+=================================
 
 This module contains the functions for the IFI project.
 It includes the interferometry parameter helpers.
@@ -37,7 +37,9 @@ def _load_interferometry_config(config_path_str: str) -> configparser.ConfigPars
     return config
 
 
-def _get_interferometry_config(config_path: str | Path | None) -> configparser.ConfigParser:
+def _get_interferometry_config(
+    config_path: str | Path | None
+) -> configparser.ConfigParser:
     resolved_path = Path(config_path) if config_path is not None else get_default_interferometry_config_path()
     return _load_interferometry_config(str(resolved_path))
 

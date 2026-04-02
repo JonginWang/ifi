@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Plotting Utility Helpers
+Plotting Common Helpers
 ========================
 
-This module contains shared plotting utility helpers.
+This module contains shared plotting common helpers.
+It includes the functions for formatting unit to LaTeX,
+formatting signal scale label, preparing time data,
+and applying scaling.
 
 Key Features:
     - Normalize supported input types into (time, signals)
@@ -17,9 +20,16 @@ Date: 2025-01-16
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes as mplAxes
+from matplotlib.collections import LineCollection
+
+from ..utils.log_manager import LogManager
+
+logger = LogManager.get_logger(__name__)
 
 
 def format_unit_to_latex(unit: str) -> str:
@@ -151,3 +161,110 @@ def extract_metadata_info(data: pd.DataFrame | dict[str, np.ndarray] | np.ndarra
                 else:
                     metadata_parts.append(f"Resolution: {resolution:.3f} s")
     return " | ".join(metadata_parts) if metadata_parts else ""
+
+
+def colored_line(
+    x: list | np.ndarray,
+    y: list | np.ndarray,
+    c: list | np.ndarray,
+    ax: mplAxes,
+    autoscale_view: bool = True,
+    **lc_kwargs: dict[str, Any],
+) -> LineCollection | None:
+    """
+    Plot a line with a color specified along the line by a third value.
+
+    It does this by creating a collection of line segments. Each line segment is
+    made up of two straight lines each connecting the current (x, y) point to the
+    midpoints of the lines connecting the current point with its two neighbors.
+    This creates a smooth line with no gaps between the line segments.
+
+    Args:
+        x (list | np.ndarray): data points along the x-axis
+        y (list | np.ndarray): data points along the y-axis
+        c (list | np.ndarray): color values
+        ax (mplAxes): the axis to plot on
+        autoscale_view (bool): if True, autoscale the axis after adding the artist.
+        lc_kwargs (dict): additional arguments to pass to 
+            matplotlib.collections.LineCollection constructor. 
+            This should not include the array keyword argument because
+            that is set to the color argument. If provided, it will be overridden.
+    """
+    if "array" in lc_kwargs:
+        logger.warning('The provided "array" keyword argument will be overridden')
+
+    # Default the capstyle to butt so that the line segments smoothly line up
+    default_kwargs = {"capstyle": "butt"}
+    default_kwargs.update(lc_kwargs)
+
+    # Compute the midpoints of the line segments. Include the first and last points
+    # twice so we don't need any special syntax later to handle them.
+    x = np.asarray(x, dtype=float).reshape(-1)
+    y = np.asarray(y, dtype=float).reshape(-1)
+    c = np.asarray(c, dtype=float).reshape(-1)
+
+    if not (len(x) == len(y) == len(c)):
+        raise ValueError(
+            "colored_line requires x, y, and c to have the same length "
+            f"(got {len(x)}, {len(y)}, {len(c)})"
+        )
+
+    finite_mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(c)
+    removed_count = int(len(x) - np.count_nonzero(finite_mask))
+    if removed_count > 0:
+        logger.warning(
+            "colored_line removed %d non-finite point(s) from x/y/c inputs.",
+            removed_count,
+        )
+    x = x[finite_mask]
+    y = y[finite_mask]
+    c = c[finite_mask]
+
+    if len(x) == 0:
+        logger.warning("colored_line received no finite points after filtering.")
+        return None
+    if len(x) == 1:
+        logger.warning("colored_line received 1 finite point. Falling back to a single-color marker.")
+        ax.plot(x, y, linestyle="None", marker="o")
+        if autoscale_view:
+            ax.autoscale_view()
+        return None
+    if len(x) == 2:
+        logger.warning("colored_line received 2 finite points. Falling back to a single-color line.")
+        ax.plot(x, y)
+        if autoscale_view:
+            ax.autoscale_view()
+        return None
+
+    x_midpts = np.hstack((x[0], 0.5 * (x[1:] + x[:-1]), x[-1]))
+    y_midpts = np.hstack((y[0], 0.5 * (y[1:] + y[:-1]), y[-1]))
+
+    # Determine the start, middle, and end coordinate pair of each line segment.
+    # Use the reshape to add an extra dimension so each pair of points is in its
+    # own list. Then concatenate them to create:
+    # [
+    #   [(x1_start, y1_start), (x1_mid, y1_mid), (x1_end, y1_end)],
+    #   [(x2_start, y2_start), (x2_mid, y2_mid), (x2_end, y2_end)],
+    #   ...
+    # ]
+    coord_start = np.column_stack((x_midpts[:-1], y_midpts[:-1]))[:, np.newaxis, :]
+    coord_mid = np.column_stack((x, y))[:, np.newaxis, :]
+    coord_end = np.column_stack((x_midpts[1:], y_midpts[1:]))[:, np.newaxis, :]
+    segments = np.concatenate((coord_start, coord_mid, coord_end), axis=1)
+
+    lc = LineCollection(segments, **default_kwargs)
+    lc.set_array(c)  # set the colors of each segment
+    line = ax.add_collection(lc)
+    if autoscale_view:
+        ax.autoscale_view()
+    return line
+
+
+__all__ = [
+    "format_unit_to_latex",
+    "format_signal_scale_label",
+    "prepare_time_data",
+    "apply_scaling",
+    "extract_metadata_info",
+    "colored_line",
+]

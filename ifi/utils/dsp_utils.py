@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Facade exports for DSP-related utility helpers."""
+"""
+DSP Utilities
+==============
+
+Facade exports for DSP-related utility helpers.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from .dsp_amplitude import (
     compute_baseline_peak_mean,

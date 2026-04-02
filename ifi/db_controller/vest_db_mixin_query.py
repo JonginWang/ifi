@@ -28,7 +28,7 @@ class VestDBMixinQuery(VestDBBase):
         self._ensure_logger(component=__name__)
         if not (self.connection and self.connection.open) and not self.connect():
             self.logger.error(
-                f"{log_tag('VESTB', 'QLAST')} Failed to connect to the database."
+                f"{log_tag('VESTD', 'QLAST')} Failed to connect to the database."
             )
             return None
 
@@ -39,12 +39,12 @@ class VestDBMixinQuery(VestDBBase):
         if rows:
             next_shotnum = rows[0][0] + 1
             self.logger.info(
-                f"{log_tag('VESTB', 'QLAST')} Next shot number: {next_shotnum}"
+                f"{log_tag('VESTD', 'QLAST')} Next shot number: {next_shotnum}"
             )
             return next_shotnum
 
         self.logger.warning(
-            f"{log_tag('VESTB', 'QLAST')} Table 'shotDataWaveform_3' is empty or shotCode not found."
+            f"{log_tag('VESTD', 'QLAST')} Table 'shotDataWaveform_3' is empty or shotCode not found."
         )
         return 1
 
@@ -53,7 +53,7 @@ class VestDBMixinQuery(VestDBBase):
         self._ensure_logger(component=__name__)
         if not self.connect():
             self.logger.error(
-                f"{log_tag('VESTB', 'QEXST')} Failed to connect to database."
+                f"{log_tag('VESTD', 'QEXST')} Failed to connect to database."
             )
             return 0
 
@@ -95,13 +95,13 @@ class VestDBMixinQuery(VestDBBase):
         self._ensure_logger(component=__name__)
         if not self.connect():
             self.logger.error(
-                f"{log_tag('VESTB', 'LOAD')} Failed to connect to database."
+                f"{log_tag('VESTD', 'LOAD')} Failed to connect to database."
             )
             return {}
 
         if shot <= 29349:
             self.logger.warning(
-                f"{log_tag('VESTB', 'LOAD')} Shot {shot} is too old. "
+                f"{log_tag('VESTD', 'LOAD')} Shot {shot} is too old. "
                 "Only shots > 29349 in MySQL are supported in this version."
             )
             return {}
@@ -142,13 +142,13 @@ class VestDBMixinQuery(VestDBBase):
                 series = pd.Series(data_corr, index=time_corr, name=series_name)
                 grouped_series[rate_key].append(series)
                 self.logger.info(
-                    f"{log_tag('VESTB', 'LOAD')} Successfully loaded and processed Shot {shot} "
+                    f"{log_tag('VESTD', 'LOAD')} Successfully loaded and processed Shot {shot} "
                     f"Field {field} as '{series_name}' (Rate Group: {rate_key})."
                 )
 
             else:
                 self.logger.warning(
-                    f"{log_tag('VESTB', 'LOAD')} Shot {shot} field {field} not found in database."
+                    f"{log_tag('VESTD', 'LOAD')} Shot {shot} field {field} not found in database."
                 )
 
         if not grouped_series:
@@ -158,7 +158,7 @@ class VestDBMixinQuery(VestDBBase):
         for rate_key, series_list in grouped_series.items():
             final_dfs[rate_key] = pd.concat(series_list, axis=1)
             self.logger.info(
-                f"{log_tag('VESTB', 'LOAD')} Created DataFrame for "
+                f"{log_tag('VESTD', 'LOAD')} Created DataFrame for "
                 f"'{rate_key}' group with {len(series_list)} signal(s)."
             )
         return final_dfs
@@ -171,7 +171,7 @@ class VestDBMixinQuery(VestDBBase):
         if field_id in [101, 214, 140]:
             data = -data
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC')} Flipping sign for field_id {field_id}."
+                f"{log_tag('VESTD', 'PROC')} Flipping sign for field_id {field_id}."
             )
 
         sample_rate = 0.0
@@ -199,14 +199,14 @@ class VestDBMixinQuery(VestDBBase):
 
         if t_start is not None and t_end is not None and len(time) > 1:
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC')} High-speed DAQ "
+                f"{log_tag('VESTD', 'PROC')} High-speed DAQ "
                 f"({sample_rate:.0e} Hz) detected. Recalculating time axis"
             )
             new_time = np.linspace(t_start, t_end, len(time) + 1)
             time = new_time[:-1]
         else:
             self.logger.info(
-                f"{log_tag('VESTB', 'PROC')} Normal-speed DAQ detected. Using original time values."
+                f"{log_tag('VESTD', 'PROC')} Normal-speed DAQ detected. Using original time values."
             )
 
         return time, data, sample_rate

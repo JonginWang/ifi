@@ -22,15 +22,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ifi.analysis.params.params_plot import FontStyle
-from ifi.plot import (
+from ifi.analysis.spectrum import SpectrumAnalysis
+from ifi.db_controller.vest_db import VestDB
+from ifi.plots.plot import (
     Plotter,
     plot_shot_density_evolution,
     plot_shot_spectrograms,
     plot_shot_waveforms,
 )
-from ifi.analysis.spectrum import SpectrumAnalysis
-from ifi.db_controller.vest_db import VestDB
+from ifi.plots.style import FontStyle
 from ifi.utils.io_process_read import load_cached_shot_data
 from ifi.utils.log_manager import LogManager
 from ifi.utils.path_utils import ensure_dir_exists

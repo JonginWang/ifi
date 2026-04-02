@@ -10,41 +10,29 @@ Classes:
     Application: The main application class for the IFI application.
 """
 
-import tkinter as tk
-from tkinter import ttk, scrolledtext, filedialog
-from enum import Enum, auto
 import queue
 import threading
 import time
+import tkinter as tk
+from enum import Enum, auto
 from pathlib import Path
-from matplotlib.figure import Figure
+from tkinter import filedialog, scrolledtext, ttk
+
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
 from pynput import keyboard
-try:
-    from .. import get_project_root
-    from ..tek_controller.scope import TekScopeController
-    from ..db_controller.vest_db import VestDB
-    from ..gui.suffix_config import (
-        MachineSuffixConfig,
-        build_data_dict_from_channels,
-        load_suffix_config,
-    )
-    from ..gui.workers.vest_db_worker import VestDbPollingWorker
-    from ..utils.io_utils import read_waveform_file, save_waveform_to_csv
-    from ..analysis.params.params_plot import FontStyle
-except ImportError as e:
-    print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
-    from ifi import get_project_root
-    from ifi.tek_controller.scope import TekScopeController
-    from ifi.db_controller.vest_db import VestDB
-    from ifi.gui.suffix_config import (
-        MachineSuffixConfig,
-        build_data_dict_from_channels,
-        load_suffix_config,
-    )
-    from ifi.gui.workers.vest_db_worker import VestDbPollingWorker
-    from ifi.utils.io_utils import read_waveform_file, save_waveform_to_csv
-    from ifi.analysis.params.params_plot import FontStyle
+
+from .. import get_project_root
+from ..db_controller.vest_db import VestDB
+from ..gui.suffix_config import (
+    MachineSuffixConfig,
+    build_data_dict_from_channels,
+    load_suffix_config,
+)
+from ..gui.workers.vest_db_worker import VestDbPollingWorker
+from ..plots.style import FontStyle
+from ..tek_controller.scope import TekScopeController
+from ..utils.io_utils import read_waveform_file, save_waveform_to_csv
 
 
 class AppState(Enum):

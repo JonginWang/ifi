@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Vest Utilities
-==============
+===============
 
 This module contains the utilities for flattening the shot list for VEST query
 and loading the VEST field maps to match the field names.
@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .vest_codes import (
+from .vest_fieldcode import (
     default_vest_field_csv,
     format_vest_field_label,
     infer_field_meta,
@@ -27,7 +27,7 @@ from .vest_codes import (
 from .vest_postprocess import FlatShotList
 
 
-def parse_rate_hz_from_key(rate_key: str) -> float | None:
+def infer_sample_rate_from_key(rate_key: str) -> float | None:
     """
     Parse sample-rate key (e.g. `SR_25k`, `25k`) into Hz.
     In the case of `A.U.`, return 1.0 for unit-less rate.
@@ -89,7 +89,7 @@ __all__ = [
     "format_vest_field_label",
     "load_vest_field_maps",
     "infer_field_meta",
-    "parse_rate_hz_from_key",
+    "infer_sample_rate_from_key",
     "infer_sample_rate_from_index",
     "normalize_sr_group_name",
     "extract_analysis_attrs",

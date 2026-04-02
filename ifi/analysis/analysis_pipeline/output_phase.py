@@ -1,5 +1,13 @@
 ﻿#!/usr/bin/env python3
-"""Plot/save/final-merge helpers for run_analysis."""
+"""
+Plot/save/final-merge phase
+============================
+
+This module contains the "the plot/save/final-merge phase" for `run_analysis`.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 
@@ -12,13 +20,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ...utils.dsp_amplitude import export_probe_envelope_segments_json
-from ...utils.dsp_amplitude import extract_probe_amplitudes_from_signals
+from ...plots.plot import Plotter, interactive_plotting
+from ...utils.dsp_amplitude import (
+    export_probe_envelope_segments_json,
+    extract_probe_amplitudes_from_signals,
+)
 from ...utils.if_utils import get_frequency_df
 from ...utils.io_process_common import parse_density_group_name
 from ...utils.io_process_write import save_results_to_hdf5
 from ...utils.log_manager import log_tag
-from ... import plot as plots
 from ..workflow import (
     build_frequency_metadata_map,
     build_plot_overview_maps,
@@ -43,9 +53,9 @@ def plot_shot_outputs(
 
     logging.info(f"{log_tag('ANALY','RUN')} Generating plots...")
     title_prefix = f"Shot #{shot_num} - " if shot_num else ""
-    plotter = plots.Plotter()
+    plotter = Plotter()
 
-    with plots.interactive_plotting(
+    with interactive_plotting(
         show_plots=args.plot,
         save_dir=Path(args.results_dir) / str(shot_num) if args.save_plots else None,
         save_prefix=title_prefix,
@@ -66,13 +76,12 @@ def plot_shot_outputs(
                     title_prefix=title_prefix,
                 )
 
-        if args.no_plot_raw:
-            return
-
         plot_signals, plot_density = build_plot_overview_maps(
             combined_signals=combined_signals,
             density_data=density_data,
         )
+        if args.no_plot_raw:
+            plot_signals = {}
 
         plot_probe_amplitudes = None
         if (

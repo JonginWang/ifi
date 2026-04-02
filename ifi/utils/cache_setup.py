@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Cache Setup Utilities
-=====================
+======================
 
 Lightweight cache setup utilities.
 

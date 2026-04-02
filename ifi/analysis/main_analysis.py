@@ -21,6 +21,9 @@ Example:
     python main_analysis.py 45821 --stft --cwt --scheduler "single-threaded"
     python main_analysis.py 45821 --stft --cwt --scheduler "threads" --data_folders "data1,data2"
     python main_analysis.py 45821 --stft --cwt --scheduler "threads" --data_folders "data1,data2" --add_path
+
+Author: J. Wang
+Date: 2025-01-16
 """
 
 import argparse
@@ -371,7 +374,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no_plot_raw",
         action="store_true",
-        help="""Don't show the plots of the raw data.""",
+        help="""Don't show waveform/raw-signal plots. Density and VEST overview plots remain enabled.""",
     )
     parser.add_argument(
         "--no_plot_ft",
@@ -381,7 +384,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--downsample",
         type=int,
-        default=10,
+        default=100,
         help="Downsample factor for plotting to improve performance. Default: 10.",
     )
     parser.add_argument(

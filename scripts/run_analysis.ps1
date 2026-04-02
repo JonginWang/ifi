@@ -77,7 +77,7 @@ if ($Help) {
     Write-Host "  --cwt-cols INDICES           Column indices for CWT (space-separated in quotes)"
     Write-Host "                                Example: --cwt-cols '0 1'"
     Write-Host "  --no-plot-block              Non-blocking plot mode"
-    Write-Host "  --no-plot-raw                Don't plot raw data"
+    Write-Host "  --no-plot-raw                Don't plot waveform/raw-signal panels"
     Write-Host "  --no-plot-ft                 Don't plot time-frequency transforms"
     Write-Host "  --downsample FACTOR          Downsample factor for plotting (default: 10)"
     Write-Host "  --trigger-time SECONDS       Trigger time in seconds (default: 0.290)"

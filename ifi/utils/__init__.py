@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 IFI Utilities
-=============
+==============
 
 This module contains the functions for the IFI project.
 It includes the cache setup functions, common utilities,

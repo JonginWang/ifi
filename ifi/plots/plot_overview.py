@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Composed overview plotting helpers."""
+"""
+Composed overview plotting helpers.
+==================================
+
+This module contains the composed overview plotting helpers.
+It includes the functions for rendering the analysis overview.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 
@@ -8,9 +17,9 @@ from typing import Any
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from ..analysis.params.params_plot import FontStyle
-from .plot_density_module import render_overview_density
-from .plot_waveform_module import render_overview_waveforms
+from .plot_density import render_overview_density
+from .plot_waveform import render_overview_waveforms
+from .style import FontStyle
 
 
 def render_analysis_overview(
@@ -20,7 +29,7 @@ def render_analysis_overview(
     vest_data: pd.DataFrame | None = None,
     trigger_time: float = 0.0,
     title_prefix: str = "",
-    downsample: int = 10,
+    downsample: int = 100,
     color_density_by_amplitude: bool = False,
     probe_amplitudes: dict | None = None,
     amplitude_colormap: str = "coolwarm",

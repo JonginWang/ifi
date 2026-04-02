@@ -24,24 +24,24 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..analysis.params.params_plot import set_plot_style
 from ..analysis.spectrum import SpectrumAnalysis
 from ..utils.log_manager import LogManager, log_tag
-from .plot_density_module import plot_density_core
-from .plot_overview_module import plot_shot_overview_core, render_analysis_overview
+from .plot_density import plot_density_core
+from .plot_overview import plot_shot_overview_core, render_analysis_overview
 from .plot_runtime import interactive_plotting, setup_interactive_mode
-from .plot_shot_module import (
+from .plot_shot import (
     plot_shot_density_evolution,
     plot_shot_spectrograms,
     plot_shot_waveforms,
 )
-from .plot_timefreq_module import (
+from .plot_timefreq import (
     plot_response_core,
     plot_time_frequency_core,
     render_cwt_results,
     render_stft_results,
 )
-from .plot_waveform_module import plot_waveforms_core, render_signal_dict
+from .plot_waveform import plot_waveforms_core, render_signal_dict
+from .style import set_plot_style
 
 logger = LogManager().get_logger(__name__)
 
@@ -88,7 +88,7 @@ class Plotter:
         vest_data: pd.DataFrame | None = None,
         trigger_time: float = 0.0,
         title_prefix: str = "",
-        downsample: int = 10,
+        downsample: int = 100,
         color_density_by_amplitude: bool = False,
         probe_amplitudes: dict[str, np.ndarray] | None = None,
         amplitude_colormap: str = "coolwarm",

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Runtime/session environment for interactive mode
-================================================
+=================================================
 
 This module contains the runtime/session helpers for interactive mode.
 
 Author: Jongin Wang
-Date: 2026-03-19
+Date: 2025-01-16
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from pathlib import Path
 import matplotlib
 import matplotlib.pyplot as plt
 
-from ..analysis.params.params_plot import set_plot_style
 from ..utils.log_manager import LogManager, log_tag
 from ..utils.path_utils import ensure_dir_exists
+from .style import set_plot_style
 
 logger = LogManager().get_logger(__name__)
 

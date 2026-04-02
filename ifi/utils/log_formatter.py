@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Logging Formatter
-================
+==================
 
 This module contains the functions for logging formatter.
 It includes the "CustomFormatter" class for formatting log messages.
@@ -128,3 +128,8 @@ def log_tag(major: str, minor: str) -> str:
         return f"[{_fmt(major)}-{_fmt(minor)}]"
     except Exception:
         return "[UNKN -UNKN ]"
+
+__all__ = [
+    "CustomFormatter",
+    "log_tag",
+]

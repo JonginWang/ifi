@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Time-frequency plotting module
-=============================
+===============================
 
 Author: Jongin Wang
 Date: 2025-01-16
@@ -11,17 +11,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from scipy.signal import decimate
 
 from ..analysis.functions.power_conversion import pow2db
-from ..analysis.params.params_plot import FontStyle
 from ..analysis.spectrum import SpectrumAnalysis
 from ..utils.func_helper import merge_kwargs, normalize_call_args
-from .plot_common_module import prepare_time_data
+from .plot_common import prepare_time_data
+from .style import FontStyle
 
 if TYPE_CHECKING:
     from ..analysis.spectrum import SpectrumAnalysis
@@ -33,12 +35,13 @@ def plot_time_frequency_core(
     title: str = "Time-Frequency Analysis",
     save_path: str | None = None,
     show_plot: bool = True,
-    time_scale: str = "s",
+    time_scale: str = "ms",
     freq_scale: str = "MHz",
     power_scale: str = "dB",
     trigger_time: float = 0.0,
     downsample: int = 1,
-    analyzer: "SpectrumAnalysis" | None = None,
+    decimate_factor: int = 1,
+    analyzer: SpectrumAnalysis | None = None,
     subplots_kwargs: dict[str, Any] | None = None,
     mesh_kwargs: dict[str, Any] | None = None,
     ridge_plot_args: tuple[Any, ...] | list[Any] | None = None,
@@ -60,12 +63,31 @@ def plot_time_frequency_core(
     else:
         time, signals = prepare_time_data(data, fs)
         time = time + trigger_time
-        if downsample > 1:
-            time = time[::downsample]
-            signals = {k: v[::downsample] for k, v in signals.items()}
         n_signals = len(signals)
         if n_signals == 0:
             raise ValueError("No signals found in data.")
+        if downsample > 1:
+            warnings.warn(
+                "`downsample` in plot_time_frequency_core is deprecated for raw signal inputs. "
+                "Use `decimate_factor` for CWT preview reduction, or tune STFT parameters "
+                "(`nperseg`, `noverlap`, `nfft`) instead.",
+                stacklevel=2,
+            )
+        if method.lower() == "cwt" and decimate_factor > 1:
+            if fs is None:
+                raise ValueError("`fs` is required when `decimate_factor` is used for CWT input.")
+            time = time[::decimate_factor]
+            signals = {
+                name: decimate(signal, decimate_factor, zero_phase=True)
+                for name, signal in signals.items()
+            }
+            fs = fs / decimate_factor
+        elif method.lower() == "stft" and decimate_factor > 1:
+            warnings.warn(
+                "`decimate_factor` is ignored for STFT plots. "
+                "Adjust STFT parameters (`nperseg`, `noverlap`, `nfft`) to reduce output size.",
+                stacklevel=2,
+            )
 
     if time_scale == "ms":
         time_scale_factor, time_label = 1e3, "Time [ms]"
@@ -173,7 +195,7 @@ def plot_response_core(
     title: str = "Frequency Response",
     save_path: str | None = None,
     show_plot: bool = True,
-    freq_scale: str = "Hz",
+    freq_scale: str = "MHz",
     subplots_kwargs: dict[str, Any] | None = None,
     plot_args: tuple[Any, ...] | list[Any] | None = None,
     plot_kwargs: dict[str, Any] | None = None,
@@ -210,7 +232,7 @@ def plot_response_core(
 
 def render_stft_results(
     stft_results: dict,
-    analyzer: "SpectrumAnalysis" | None = None,
+    analyzer: SpectrumAnalysis | None = None,
     **kwargs: Any,
 ) -> None:
     """Render STFT result dictionary."""
@@ -245,7 +267,7 @@ def render_stft_results(
 
 def render_cwt_results(
     cwt_results: dict,
-    analyzer: "SpectrumAnalysis" | None = None,
+    analyzer: SpectrumAnalysis | None = None,
     **kwargs: Any,
 ) -> None:
     """Render CWT result dictionary."""

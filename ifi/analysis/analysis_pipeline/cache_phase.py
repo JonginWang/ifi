@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Cache validation phase
-======================
+=======================
 
 
 This module contains helpers of "the cache validation phase" for `run_analysis`.

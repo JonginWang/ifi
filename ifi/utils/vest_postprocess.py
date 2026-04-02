@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Vest Processing
-==============
+================
 
 This module contains the utilities for VEST post-processing,
 for flattening the shot list and converting the VEST data of 

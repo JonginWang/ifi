@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 DAQ/VISA waveform CSV/HDF5 conversion helpers
-=============================================
+==============================================
 
-This module contains the functions for DAQ/VISA waveform CSV/HDF5 conversion helpers.
-It includes the functions for saving waveform data to a CSV file and reading waveform data from a CSV file.
+This module contains the functions for DAQ/VISA waveform saving/reading helpers.
+It includes the functions for saving waveform data to a CSV file and
+reading waveform data from a CSV file and HDF5 file and WFM file.
 
 Author: J. Wang
 Date: 2025-01-16

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Vest Codes
-==========
+===========
 
 This module contains the utilities for Vest codes.
 

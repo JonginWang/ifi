@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Density plotting module
-=======================
-
+========================
 Author: Jongin Wang
 Date: 2025-01-16
 """
@@ -14,13 +13,40 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 
-from ..analysis.params.params_plot import FontStyle
+from ..analysis.functions.power_conversion import amp2db, mag2db
 from ..utils.dsp_amplitude import extract_probe_amplitudes_from_signals
 from ..utils.func_helper import merge_kwargs, normalize_call_args
-from .plot_common_module import apply_scaling
+from .plot_common import apply_scaling, colored_line
+from .style import FontStyle
+
+
+def _convert_amplitude_values(
+    amplitude: np.ndarray,
+    *,
+    amplitude_dbm: bool,
+    amplitude_unit: str,
+    amplitude_impedance: float,
+) -> tuple[np.ndarray, str]:
+    """Convert raw probe amplitude into colormap values and display unit."""
+    amp = np.abs(np.asarray(amplitude, dtype=float))
+    amp = np.where(np.isfinite(amp), amp, np.nan)
+    unit = str(amplitude_unit).strip()
+    scale = 1.0
+    if unit == "mV":
+        scale = 1e-3
+    elif unit == "uV":
+        scale = 1e-6
+    amplitude_volts = np.maximum(amp * scale, np.finfo(float).tiny)
+
+    if amplitude_dbm:
+        return amp2db(amplitude_volts, impedance=float(amplitude_impedance), dbm=True), "dBm"
+
+    if unit == "dB":
+        return mag2db(np.maximum(amp, np.finfo(float).tiny)), "dB"
+
+    return amp, unit or "V"
 
 
 def plot_density_core(
@@ -30,13 +56,13 @@ def plot_density_core(
     save_path: str | None = None,
     show_plot: bool = True,
     density_scale: str = "10^18 m^-3",
-    time_scale: str = "s",
+    time_scale: str = "ms",
     probe_amplitude: np.ndarray | dict[str, np.ndarray] | None = None,
     color_by_amplitude: bool = False,
     amplitude_colormap: str = "coolwarm",
     amplitude_impedance: float = 50,
     amplitude_dbm: bool = True,
-    amplitude_unit: str = "V",
+    amplitude_unit: str = "mV",
     subplots_kwargs: dict[str, Any] | None = None,
     plot_args: tuple[Any, ...] | list[Any] | None = None,
     plot_kwargs: dict[str, Any] | None = None,
@@ -89,6 +115,8 @@ def plot_density_core(
     fig, ax = plt.subplots(**merge_kwargs({"figsize": (12, 6)}, subplots_kwargs))
     line_args = normalize_call_args(plot_args)
     grid_options = merge_kwargs({"alpha": 0.3}, grid_kwargs)
+    color_mappable = None
+    color_label = None
     for name, data in density_scaled.items():
         line_kwargs = merge_kwargs({"label": name, "linewidth": 2}, plot_kwargs)
         min_len = min(len(time_scaled), len(data))
@@ -100,28 +128,38 @@ def plot_density_core(
             amp_plot = amp_array[:min_amp_len]
             time_plot = time_plot[:min_amp_len]
             data_plot = data_plot[:min_amp_len]
-            amp_pow = np.abs(amp_plot)
-            points = np.array([time_plot, data_plot]).T.reshape(-1, 1, 2)
-            segments = np.concatenate([points[:-1], points[1:]], axis=1)
-            lc = LineCollection(
-                segments,
+            amp_color, amp_unit = _convert_amplitude_values(
+                amp_plot,
+                amplitude_dbm=amplitude_dbm,
+                amplitude_unit=amplitude_unit,
+                amplitude_impedance=amplitude_impedance,
+            )
+            finite_amp = amp_color[np.isfinite(amp_color)]
+            if finite_amp.size == 0:
+                ax.plot(time_plot, data_plot, *line_args, **line_kwargs)
+                continue
+            line = colored_line(
+                time_plot,
+                data_plot,
+                amp_color,
+                ax,
+                autoscale_view=True,
                 **merge_kwargs(
                     {
                         "cmap": plt.get_cmap(amplitude_colormap),
-                        "norm": plt.Normalize(vmin=amp_pow.min(), vmax=amp_pow.max()),
+                        "norm": plt.Normalize(
+                            vmin=float(finite_amp.min()),
+                            vmax=float(finite_amp.max()),
+                        ),
+                        "linewidth": line_kwargs.get("linewidth", 2),
+                        "label": name,
                     },
                     line_collection_kwargs,
                 ),
             )
-            lc.set_array(amp_pow[:-1])
-            lc.set_linewidth(line_kwargs.get("linewidth", 2))
-            line = ax.add_collection(lc)
-            cbar = plt.colorbar(line, ax=ax, **merge_kwargs(colorbar_kwargs))
-            if amplitude_dbm:
-                amp_unit = "dBm" if amplitude_unit == "dBm" else "V"
-            else:
-                amp_unit = "dB" if amplitude_unit == "dB" else "V"
-            cbar.set_label(f"Probe Amplitude [{amp_unit}]", **FontStyle.label)
+            if color_mappable is None and line is not None:
+                color_mappable = line
+                color_label = f"Probe Amplitude [{amp_unit}]"
         else:
             ax.plot(time_plot, data_plot, *line_args, **line_kwargs)
 
@@ -129,6 +167,9 @@ def plot_density_core(
     ax.set_ylabel(f"LID {density_label}", **FontStyle.label)
     ax.set_title(title, **FontStyle.title)
     ax.grid(True, **grid_options)
+    if color_mappable is not None:
+        cbar = plt.colorbar(color_mappable, ax=ax, **merge_kwargs(colorbar_kwargs))
+        cbar.set_label(color_label or "Probe Amplitude", **FontStyle.label)
     if len(signals) > 1 and not color_by_amplitude:
         ax.legend()
     plt.tight_layout()

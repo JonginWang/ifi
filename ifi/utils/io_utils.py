@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 File I/O Utilities
-==================
+===================
 
 Compatibility facade for file I/O utilities.
 

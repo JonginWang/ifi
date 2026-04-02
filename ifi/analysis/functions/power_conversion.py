@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Power Conversion Functions
-==========================
+===========================
 
 This module contains the functions for power conversion.
 The functions are used in the main_analysis.py module.

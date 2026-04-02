@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Path Utilities
-==============
+===============
 
 This module contains the functions for path utilities.
 It includes the functions for ensuring a directory exists,

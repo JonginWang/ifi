@@ -8,19 +8,23 @@ Comprehensive test suite for plotting functions.
 # ============================================================================
 from pathlib import Path
 
-
 from ifi.utils.cache_setup import setup_project_cache
+
 cache_config = setup_project_cache()
 
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import time
 import logging
-from ifi.plot import Plotter
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 from ifi.analysis.spectrum import SpectrumAnalysis
-from ifi.utils.common import LogManager, ensure_dir_exists
-from ifi.analysis.params.params_plot import FontStyle
+from ifi.plots.plot import Plotter
+from ifi.plots.style import FontStyle
+from ifi.utils.log_manager import LogManager
+from ifi.utils.path_utils import ensure_dir_exists
+
 
 def setup_logging():
     """Setup logging for test execution."""
@@ -29,6 +33,7 @@ def setup_logging():
 
 # Pytest fixtures
 import pytest
+
 
 @pytest.fixture
 def logger():

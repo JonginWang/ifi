@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Target discovery and metadata loading helpers for run_analysis."""
+"""
+Target discovery and metadata loading phase
+============================================
+
+This module contains the "the target discovery and metadata loading phase" for `run_analysis`.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 

@@ -48,10 +48,10 @@ except ImportError as e:
     print(f"ifi.utils failed: {e}")
 
 try:
-    from ifi.plot import Plotter
-    print("ifi.plot imported successfully")
+    from ifi.plots.plot import Plotter
+    print("ifi.plots.plot imported successfully")
 except ImportError as e:
-    print(f"ifi.plot failed: {e}")
+    print(f"ifi.plots.plot failed: {e}")
 
 try:
     from ifi.db_controller.nas_db import NasDB

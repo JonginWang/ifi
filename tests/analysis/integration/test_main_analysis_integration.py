@@ -610,7 +610,7 @@ class TestPlotValidation:
             time_scale="ms",
             signal_scale="mV",
             trigger_time=0.290,
-            downsample=10,
+            downsample=100,
         )
         
         assert fig is not None

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Inspect HDF5 Structure
-======================
+=======================
 
 Inspect HDF5 file structure and print a tree.
 

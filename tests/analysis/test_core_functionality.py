@@ -7,19 +7,23 @@ Comprehensive test suite for IFI package core functionality.
 Tests all major modules and their interactions.
 """
 
-import sys
-import unittest
-import tempfile
 import shutil
+import sys
+import tempfile
+import unittest
+import warnings
+from argparse import Namespace
 from pathlib import Path
-import numpy as np
-import pandas as pd
 from unittest.mock import Mock, patch
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from ifi.utils.cache_setup import force_disable_jit, setup_project_cache
+from ifi.utils.io_utils import save_results_to_hdf5
 from ifi.utils.log_manager import LogManager
 from ifi.utils.path_utils import ensure_str_path, resource_path
-from ifi.utils.cache_setup import setup_project_cache, force_disable_jit
-from ifi.utils.io_utils import save_results_to_hdf5
 
 # Initialize logging for tests
 LogManager(level="DEBUG")
@@ -147,7 +151,7 @@ ssh_connect_timeout = 10.0
 dumping_folder = ./cache
 max_load_size_gb = 1.0
 
-[VestDB]
+[VEST_DB]
 host = localhost
 user = test
 password = test
@@ -158,7 +162,7 @@ field_label_file = test_labels.csv
         with open(self.config_file, 'w') as f:
             f.write(config_content)
     
-    @patch('ifi.db_controller.nas_db.paramiko.SSHClient')
+    @patch('ifi.db_controller.nas_db_mixin_setup.paramiko.SSHClient')
     def test_nas_db_initialization(self, mock_ssh):
         """Test NasDB initialization."""
         from ifi.db_controller.nas_db import NasDB
@@ -178,7 +182,7 @@ field_label_file = test_labels.csv
             # If neither is set, that's also acceptable for this test
             pass
     
-    @patch('ifi.db_controller.vest_db.pymysql.connect')
+    @patch('ifi.db_controller.vest_db_mixin_setup.pymysql.connect')
     def test_vest_db_initialization(self, mock_connect):
         """Test VestDB initialization."""
         from ifi.db_controller.vest_db import VestDB
@@ -295,7 +299,7 @@ class TestAnalysisModules(unittest.TestCase):
     
     def test_plotter_basic(self):
         """Test basic plotting functionality."""
-        from ifi.plot import Plotter
+        from ifi.plots.plot import Plotter
         
         plotter = Plotter()
         
@@ -322,7 +326,7 @@ class TestAnalysisModules(unittest.TestCase):
 
     def test_plotter_waveform_envelope(self):
         """Test waveform plotting with envelope overlay enabled."""
-        from ifi.plot import Plotter
+        from ifi.plots.plot import Plotter
 
         plotter = Plotter()
         fig, axes = plotter.plot_waveforms(
@@ -344,6 +348,93 @@ class TestAnalysisModules(unittest.TestCase):
 
         self.assertTrue(args.envelope)
         self.assertTrue(args.plot_envelope)
+
+    def test_colored_line_filters_nonfinite_points(self):
+        """Test colored_line removes non-finite inputs and returns a collection."""
+        from ifi.plots.plot_common import colored_line
+
+        fig, ax = plt.subplots()
+        line = colored_line(
+            [0.0, 1.0, np.nan, 2.0, 3.0],
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [0.1, 0.2, 0.3, np.inf, 0.5],
+            ax,
+        )
+
+        self.assertIsNotNone(line)
+        self.assertEqual(len(ax.collections), 1)
+        plt.close(fig)
+
+    def test_plot_time_frequency_cwt_decimate_factor(self):
+        """Test raw CWT plotting decimates signal and sampling rate consistently."""
+        from ifi.plots.plot_timefreq import plot_time_frequency_core
+
+        class DummyAnalyzer:
+            def __init__(self):
+                self.last_len = None
+                self.last_fs = None
+
+            def compute_cwt(self, signal, fs, **kwargs):
+                self.last_len = len(signal)
+                self.last_fs = fs
+                freqs = np.linspace(1.0, 10.0, 8)
+                wx = np.ones((len(freqs), len(signal)), dtype=float)
+                return freqs, wx
+
+        analyzer = DummyAnalyzer()
+        signal = np.sin(2 * np.pi * 10 * self.t)
+
+        fig, _ = plot_time_frequency_core(
+            signal,
+            method="cwt",
+            fs=float(self.fs),
+            analyzer=analyzer,
+            decimate_factor=4,
+            show_plot=False,
+        )
+
+        self.assertEqual(analyzer.last_len, len(signal[::4]))
+        self.assertEqual(analyzer.last_fs, self.fs / 4)
+        plt.close(fig)
+
+    def test_plot_time_frequency_stft_ignores_decimate_factor(self):
+        """Test raw STFT plotting ignores decimate_factor and warns explicitly."""
+        from ifi.plots.plot_timefreq import plot_time_frequency_core
+
+        class DummyAnalyzer:
+            def __init__(self):
+                self.last_len = None
+                self.last_fs = None
+
+            def compute_stft(self, signal, fs, **kwargs):
+                self.last_len = len(signal)
+                self.last_fs = fs
+                freqs = np.linspace(0.0, 100.0, 16)
+                times = np.linspace(0.0, 1.0, 12)
+                zxx = np.ones((len(freqs), len(times)), dtype=float)
+                return freqs, times, zxx
+
+            def find_freq_ridge(self, sxx, freqs, method="stft"):
+                return np.full(sxx.shape[1], freqs[len(freqs) // 2], dtype=float)
+
+        analyzer = DummyAnalyzer()
+        signal = np.sin(2 * np.pi * 10 * self.t)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            fig, _ = plot_time_frequency_core(
+                signal,
+                method="stft",
+                fs=float(self.fs),
+                analyzer=analyzer,
+                decimate_factor=4,
+                show_plot=False,
+            )
+
+        self.assertEqual(analyzer.last_len, len(signal))
+        self.assertEqual(analyzer.last_fs, self.fs)
+        self.assertTrue(any("ignored for STFT plots" in str(w.message) for w in caught))
+        plt.close(fig)
 
 class TestIntegration(unittest.TestCase):
     """Test integration between modules."""
@@ -400,6 +491,74 @@ class TestIntegration(unittest.TestCase):
         
         self.assertEqual(len(results), 4)
         self.assertEqual(results, (0, 2, 4, 6))
+
+    def test_no_plot_raw_keeps_density_overview(self):
+        """Test `--no_plot_raw` disables waveform overview only, not density overview."""
+        from ifi.analysis.analysis_pipeline.output_phase import plot_shot_outputs
+
+        args = Namespace(
+            plot=True,
+            save_plots=False,
+            no_plot_block=True,
+            no_plot_ft=True,
+            no_plot_raw=True,
+            trigger_time=0.0,
+            downsample=10,
+            results_dir=self.temp_dir,
+            plot_envelope=False,
+            color_density_by_amplitude=False,
+            amplitude_colormap="coolwarm",
+            amplitude_impedance=50.0,
+        )
+        combined_signals = {
+            94.0: pd.DataFrame(
+                {
+                    "TIME": np.linspace(0.0, 1e-3, 8),
+                    "SIG": np.linspace(0.0, 1.0, 8),
+                }
+            )
+        }
+        density_data = {
+            "freq_94G": pd.DataFrame(
+                {
+                    "TIME": np.linspace(0.0, 1e-3, 8),
+                    "ne_056": np.linspace(1.0, 2.0, 8),
+                }
+            )
+        }
+        vest_df = pd.DataFrame({"Ip_raw ([V])": np.linspace(0.0, 1.0, 8)})
+
+        class DummyContext:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        plotter = Mock()
+
+        with patch(
+            "ifi.analysis.analysis_pipeline.output_phase.Plotter",
+            return_value=plotter,
+        ), patch(
+            "ifi.analysis.analysis_pipeline.output_phase.interactive_plotting",
+            return_value=DummyContext(),
+        ):
+            plot_shot_outputs(
+                shot_num=12345,
+                args=args,
+                shot_stft_data={},
+                shot_cwt_data={},
+                combined_signals=combined_signals,
+                density_data=density_data,
+                vest_ip_data=vest_df,
+            )
+
+        plotter.plot_analysis_overview.assert_called_once()
+        overview_args = plotter.plot_analysis_overview.call_args.args
+        self.assertEqual(overview_args[0], 12345)
+        self.assertEqual(overview_args[1], {})
+        self.assertEqual(set(overview_args[2].keys()), {"Density (94 GHz)"})
 
 class TestErrorHandling(unittest.TestCase):
     """Test error handling and edge cases."""

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Function Helper
-===============
+================
 
 This module contains the functions for function helper.
 It includes the "assign_kwargs" decorator for injecting 

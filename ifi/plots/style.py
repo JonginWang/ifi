@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Params Plot
+Plot style
 ===========
 
-This module contains functions and classes for setting up the plot style for the IFI package.
+This module contains functions and classes for setting up the plot style.
 
 - TeX convention for math: use LaTeX-style strings (e.g. r'$\\omega$') in labels;
   with tex=False (default), matplotlib's mathtext renders these quickly without

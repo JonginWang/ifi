@@ -389,7 +389,7 @@ echo   --cwt-cols INDICES           Column indices for CWT (space-separated in q
 echo                                Example: --cwt-cols "0 1"
 echo                                Single value: --cwt-cols "1"
 echo   --no-plot-block              Non-blocking plot mode
-echo   --no-plot-raw                Don't plot raw data
+echo   --no-plot-raw                Don't plot waveform/raw-signal panels
 echo   --no-plot-ft                 Don't plot time-frequency transforms
 echo   --downsample FACTOR          Downsample factor for plotting (default: 10)
 echo   --trigger-time SECONDS       Trigger time in seconds (default: 0.290)

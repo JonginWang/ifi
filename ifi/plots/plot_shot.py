@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-"""Shot-level plotting helpers that save figures to the results tree."""
+"""
+Shot-level plotting module
+===========================
+
+This module contains the "the shot-level plotting module" for the IFI package.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from .plot_density_module import plot_density_core
-from .plot_timefreq_module import plot_time_frequency_core
-from .plot_waveform_module import plot_waveforms_core
 from ..analysis.spectrum import SpectrumAnalysis
 from ..utils.log_manager import LogManager, log_tag
 from ..utils.path_utils import ensure_dir_exists
+from .plot_density import plot_density_core
+from .plot_timefreq import plot_time_frequency_core
+from .plot_waveform import plot_waveforms_core
 
 logger = LogManager().get_logger(__name__)
 
@@ -123,9 +131,9 @@ def plot_shot_spectrograms(
         for col in signal_cols[:max_channels]:
             try:
                 fig, _ = plot_time_frequency_core(
-                    df[col].values[::100],
+                    df[col].values,
                     method="stft",
-                    fs=fs / 100,
+                    fs=fs,
                     title=f"Shot {shot_num} - {filename} - {col}",
                     show_plot=False,
                     analyzer=analyzer,

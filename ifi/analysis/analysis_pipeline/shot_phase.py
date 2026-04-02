@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Shot-level post-processing context helpers for run_analysis."""
+"""
+Shot-level post-processing context phase
+========================================
+
+This module contains the "the shot-level post-processing context phase" for `run_analysis`.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 

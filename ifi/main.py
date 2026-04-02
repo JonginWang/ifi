@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
 Main GUI Entry Point
-====================
+=====================
 
 This module is the entry point for the IFI application.
 It is used to run the GUI application.
+
+Author: J. Wang
+Date: 2025-01-16
 """
 
 import tkinter as tk

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 HDF5 I/O Utilities
-==================
+===================
 
 This module contains the functions for HDF5 I/O utilities.
 It includes the functions for HDF5 structure naming/sanitization and metadata attrs helpers.
@@ -15,8 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping  # noqa: UP035
+from typing import Any
 
 import numpy as np
 

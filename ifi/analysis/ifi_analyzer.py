@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Interactive-friendly wrapper around the main IFI analysis CLI."""
+"""
+IFI Analyzer
+=============
+
+This module contains the interactive-friendly wrapper around the main IFI analysis CLI.
+It includes the functions for creating a default analysis namespace,
+running the analysis with a prepared namespace object,
+and normalizing the CLI arguments.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 
@@ -14,7 +25,8 @@ import matplotlib.pyplot as plt
 from ..db_controller.nas_db import NasDB
 from ..db_controller.vest_db import VestDB
 from ..utils.log_manager import LogManager
-from .main_analysis import build_argument_parser, main as main_analysis_main, run_analysis
+from .main_analysis import build_argument_parser, run_analysis
+from .main_analysis import main as main_analysis_main
 
 LogManager(level="DEBUG")
 
@@ -51,7 +63,7 @@ def create_mock_args(**overrides: Any) -> Namespace:
         no_plot_raw=False,
         no_plot_ft=False,
         trigger_time=0.290,
-        downsample=10,
+        downsample=100,
         color_density_by_amplitude=False,
         amplitude_colormap="coolwarm",
         amplitude_impedance=50.0,

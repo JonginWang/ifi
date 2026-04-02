@@ -1,9 +1,10 @@
 ﻿#!/usr/bin/env python3
 """
-Signal Utilities (Filter)
-=========================
+Filter utilities
+=================
 
-This module provides utilities for filtering signals.
+This module provides utilities for filtering signals 
+using the remez (Parks-McClellan) algorithm.
 
 Author: J. Wang
 Date: 2025-01-16
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import freqz, remez
 
-from ...plot import Plotter
+from ...plots.plot import Plotter
 from ...utils.log_manager import LogManager, log_tag
 from .remezord import remezord
 

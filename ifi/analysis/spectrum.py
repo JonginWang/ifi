@@ -268,8 +268,9 @@ class SpectrumAnalysis:
         if dynamic_kwargs.get("nperseg") is None:
             n = signal.shape[-1]
             # Aim ~1/64 of signal length, clamp between 512 and 8192
-            nperseg_dyn = max(1<<9, min(1<<16, max(1<<8, n // 1<<6)))
+            nperseg_dyn = max(1 << 9, min(1 << 16, max(1 << 8, n // (1 << 6))))
             nperseg_dyn = _round_pow2(nperseg_dyn)
+            nperseg_dyn = min(nperseg_dyn, n)
             dynamic_kwargs["nperseg"] = nperseg_dyn
         
         # Determine mfft (FFT size) based on frequency resolution requirement
@@ -289,24 +290,25 @@ class SpectrumAnalysis:
         # Target: dt <= 250 μs
         if dynamic_kwargs.get("noverlap") is None and dynamic_kwargs.get("nperseg") is not None:
             target_dt_max = 250e-6  # 250 μs
-            hop_length_target = int(np.floor(fs * target_dt_max))
+            hop_length_target = max(1, int(np.floor(fs * target_dt_max)))
             nperseg = dynamic_kwargs["nperseg"]
             
             # hop_length cannot exceed nperseg (must be at least 1)
             # If hop_length_target > nperseg, we need to increase nperseg or accept worse time resolution
             # For now, we'll use the maximum hop_length possible (nperseg - 1) and ensure minimum overlap
-            hop_length_max = min(hop_length_target, nperseg - 1)
+            hop_length_max = max(1, min(hop_length_target, nperseg - 1))
             
             # Calculate noverlap from hop_length
             # hop_length = nperseg - noverlap, so noverlap = nperseg - hop_length
             noverlap_dyn = max(0, nperseg - hop_length_max)
             
             # Ensure reasonable overlap (at least 25% overlap for smoothness)
-            min_overlap = int(nperseg * 0.25)
+            min_overlap = min(int(nperseg * 0.25), nperseg - 1)
             noverlap_dyn = max(noverlap_dyn, min_overlap)
+            noverlap_dyn = min(noverlap_dyn, nperseg - 1)
             
             # Recalculate hop_length from final noverlap to ensure consistency
-            final_hop_length = nperseg - noverlap_dyn
+            final_hop_length = max(1, nperseg - noverlap_dyn)
             actual_dt = final_hop_length / fs
             
             # Log warning if time resolution requirement cannot be met
@@ -411,8 +413,9 @@ class SpectrumAnalysis:
         # Determine nperseg (window size) based on signal length
         if dynamic_kwargs.get("nperseg") is None:
             n = signal.shape[-1]
-            nperseg_dyn = max(1<<9, min(1<<16, max(1<<8, n // 1<<6)))
+            nperseg_dyn = max(1 << 9, min(1 << 16, max(1 << 8, n // (1 << 6))))
             nperseg_dyn = _round_pow2(nperseg_dyn)
+            nperseg_dyn = min(nperseg_dyn, n)
             dynamic_kwargs["nperseg"] = nperseg_dyn
         
         # Determine mfft (FFT size) based on frequency resolution requirement
@@ -432,24 +435,25 @@ class SpectrumAnalysis:
         # Target: dt <= 250 μs
         if dynamic_kwargs.get("noverlap") is None and dynamic_kwargs.get("nperseg") is not None:
             target_dt_max = 250e-6  # 250 μs
-            hop_length_target = int(np.floor(fs * target_dt_max))
+            hop_length_target = max(1, int(np.floor(fs * target_dt_max)))
             nperseg = dynamic_kwargs["nperseg"]
             
             # hop_length cannot exceed nperseg (must be at least 1)
             # If hop_length_target > nperseg, we need to increase nperseg or accept worse time resolution
             # For now, we'll use the maximum hop_length possible (nperseg - 1) and ensure minimum overlap
-            hop_length_max = min(hop_length_target, nperseg - 1)
+            hop_length_max = max(1, min(hop_length_target, nperseg - 1))
             
             # Calculate noverlap from hop_length
             # hop_length = nperseg - noverlap, so noverlap = nperseg - hop_length
             noverlap_dyn = max(0, nperseg - hop_length_max)
             
             # Ensure reasonable overlap (at least 25% overlap for smoothness)
-            min_overlap = int(nperseg * 0.25)
+            min_overlap = min(int(nperseg * 0.25), nperseg - 1)
             noverlap_dyn = max(noverlap_dyn, min_overlap)
+            noverlap_dyn = min(noverlap_dyn, nperseg - 1)
             
             # Recalculate hop_length from final noverlap to ensure consistency
-            final_hop_length = nperseg - noverlap_dyn
+            final_hop_length = max(1, nperseg - noverlap_dyn)
             actual_dt = final_hop_length / fs
             
             # Log warning if time resolution requirement cannot be met

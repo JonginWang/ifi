@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Waveform plotting module
-========================
+=========================
 
 Author: Jongin Wang
 Date: 2025-01-16
@@ -16,17 +16,17 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from ..analysis.params.params_plot import FontStyle
 from ..utils.dsp_amplitude import compute_signal_envelope
 from ..utils.func_helper import merge_kwargs, normalize_call_args
-from .plot_common_module import apply_scaling, extract_metadata_info, prepare_time_data
+from .plot_common import apply_scaling, extract_metadata_info, prepare_time_data
+from .style import FontStyle
 
 
 def plot_waveforms_core(
     data: pd.DataFrame | dict[str, np.ndarray] | np.ndarray,
     fs: float | None = None,
     title: str = "Waveforms",
-    downsample: int = 1,
+    downsample: int = 10,
     save_path: str | None = None,
     show_plot: bool = True,
     time_scale: str = "s",

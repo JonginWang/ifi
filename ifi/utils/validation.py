@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Input Validation Utilities
-=========================
+===========================
 
 This module provides standardized input validation functions for the IFI package.
 

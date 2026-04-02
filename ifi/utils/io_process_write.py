@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Post-processing HDF5 write utilities
-====================================
+=====================================
 
-Result save and append helpers for analysis outputs when post-processing.
+This module contains the functions for post-processing HDF5 write utilities.
+It includes the functions for writing results to an HDF5 file.
 
 Author: J. Wang
 Date: 2025-01-16
@@ -45,9 +46,9 @@ from .vest_utils import (
     extract_analysis_attrs,
     infer_field_meta,
     infer_sample_rate_from_index,
+    infer_sample_rate_from_key,
     load_vest_field_maps,
     normalize_sr_group_name,
-    parse_rate_hz_from_key,
 )
 
 
@@ -241,7 +242,7 @@ def write_structured_vest_groups(
             del vest_root[sr_group_name]
         sr_group = vest_root.create_group(sr_group_name)
 
-        sample_rate = parse_rate_hz_from_key(rate_key) or infer_sample_rate_from_index(rate_df.index)
+        sample_rate = infer_sample_rate_from_key(rate_key) or infer_sample_rate_from_index(rate_df.index)
         if sample_rate is not None:
             sr_group.attrs["sample_rate"] = float(sample_rate)
         if len(rate_df.index) > 0:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Parallel compute and aggregation helpers
-========================================
+=========================================
 
 This module contains helpers of "the parallel compute and aggregation phase" for
 `run_analysis`.
@@ -17,8 +17,9 @@ import logging
 import re
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import dask
 import pandas as pd

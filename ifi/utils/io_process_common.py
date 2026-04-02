@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-Process-specific HDF5 naming helpers.
+Process-specific HDF5 naming helpers
+=====================================
+
+This module contains the functions for process-specific HDF5 naming helpers.
+It includes the functions for creating named datasets, updating group attrs,
+and finding existing signal group names.
+
+Author: J. Wang
+Date: 2025-01-16
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import h5py
@@ -16,8 +24,8 @@ import pandas as pd
 from .io_h5 import (
     ensure_unique_name,
     h5_affixed_name,
-    make_cache_h5_key,
     h5_safe_name,
+    make_cache_h5_key,
     normalize_source_name,
     parse_h5_affixed_name,
 )
@@ -31,11 +39,12 @@ def update_group_attrs(group: h5py.Group, attrs: dict[str, Any]) -> None:
 def create_named_dataset(
     parent: h5py.Group,
     name: str,
-    data: np.ndarray,
+    data: np.ndarray | pd.Series | pd.DataFrame,
     *,
     used_names: set[str],
     original_name: str,
 ) -> h5py.Dataset:
+    """Create a named dataset in an HDF5 group."""
     safe_name = ensure_unique_name(h5_safe_name(name), used_names)
     dset = parent.create_dataset(safe_name, data=data)
     dset.attrs["original_name"] = str(original_name)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Post-processing HDF5 read utilities
-===================================
+====================================
 
-Result read helpers for analysis outputs when post-processing.
+This module contains the functions for post-processing HDF5 read utilities.
+It includes the functions for loading results from an HDF5 file.
 
 Author: J. Wang
 Date: 2025-01-16

@@ -229,14 +229,16 @@ class LogManager:
             f"\n{log_tag('LOGS','UPDAT')} Log level updated to: {new_level}\n"
         )
 
-    def get_logger(self, name: str = None, level: str = None) -> logging.Logger:
+    def get_logger(
+        self, name: str | None = None, level: str | None = None
+    ) -> logging.Logger:
         """
         Get a logger with a specific name and level.
         This allows different parts of the application to have different log levels.
 
         Args:
-            name(str): Logger name (e.g., 'ifi.analysis', 'ifi.test')
-            level(str): Log level for this specific logger
+            name(str | None): Logger name (e.g., 'ifi.analysis', 'ifi.test')
+            level(str | None): Log level for this specific logger
 
         Returns:
             Logger instance
@@ -304,3 +306,8 @@ class LogManager:
             ide_logger.addHandler(ide_handler)
 
         return ide_logger
+
+__all__ = [
+    "LogManager",
+    "log_tag",
+]

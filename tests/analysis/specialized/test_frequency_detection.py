@@ -22,10 +22,11 @@ sys.path.insert(0, str(project_root))
 
 import numpy as np
 import pandas as pd
-from ifi.plot import Plotter
-from ifi.utils.log_manager import LogManager
+
+from ifi.plots.plot import Plotter
 from ifi.utils.cache_setup import setup_project_cache
 from ifi.utils.if_utils import assign_interferometry_params_to_shot
+from ifi.utils.log_manager import LogManager
 
 # Setup cache and logging
 setup_project_cache()
@@ -61,21 +62,21 @@ def test_frequency_detection():
             actual_group = actual_freq
         
         print(f"\n  File: {filename}")
-        print(f"    Config frequency: {actual_freq} GHz")
-        print(f"    Expected frequency: {expected_freq} GHz")
-        print(f"    Expected group: {expected_group} GHz")
-        print(f"    Actual group: {actual_group} GHz")
+        print(f"\tConfig frequency: {actual_freq} GHz")
+        print(f"\tExpected frequency: {expected_freq} GHz")
+        print(f"\tExpected group: {expected_group} GHz")
+        print(f"\tActual group: {actual_group} GHz")
         
         if abs(actual_freq - expected_freq) < 0.1:
-            print(f"    [OK] Frequency matches expected value")
+            print(f"\t[OK] Frequency matches expected value")
         else:
-            print(f"    [FAIL] Frequency mismatch!")
+            print(f"\t[FAIL] Frequency mismatch!")
             all_passed = False
         
         if abs(actual_group - expected_group) < 0.1:
-            print(f"    [OK] Group mapping correct")
+            print(f"\t[OK] Group mapping correct")
         else:
-            print(f"    [FAIL] Group mapping incorrect!")
+            print(f"\t[FAIL] Group mapping incorrect!")
             all_passed = False
     
     if all_passed:
@@ -127,11 +128,11 @@ def test_cwt_plot_data_structure():
     }
     
     print(f"  Created CWT data structure:")
-    print(f"    File: test_file.csv")
-    print(f"    Channel: CH0")
-    print(f"    Frequency range: {freq_CWT.min()/1e6:.2f} - {freq_CWT.max()/1e6:.2f} MHz")
-    print(f"    Time range: {time_CWT.min()*1e6:.2f} - {time_CWT.max()*1e6:.2f} 關s")
-    print(f"    CWT matrix shape: {CWT_matrix.shape}")
+    print(f"\tFile: test_file.csv")
+    print(f"\tChannel: CH0")
+    print(f"\tFrequency range: {freq_CWT.min()/1e6:.2f} - {freq_CWT.max()/1e6:.2f} MHz")
+    print(f"\tTime range: {time_CWT.min()*1e6:.2f} - {time_CWT.max()*1e6:.2f} 關s")
+    print(f"\tCWT matrix shape: {CWT_matrix.shape}")
     
     # Test if plot_cwt can handle this structure
     print("\nTesting plot_cwt function...")
@@ -181,9 +182,9 @@ def test_frequency_grouping_logic():
         print(f"  {freq_ghz} GHz ??{group_freq} GHz group (expected: {expected_group} GHz)")
         
         if abs(group_freq - expected_group) < 0.1:
-            print(f"    [OK]")
+            print(f"\t[OK]")
         else:
-            print(f"    [FAIL] Expected {expected_group} GHz, got {group_freq} GHz")
+            print(f"\t[FAIL] Expected {expected_group} GHz, got {group_freq} GHz")
             all_passed = False
     
     if all_passed:

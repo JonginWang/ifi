@@ -15,10 +15,12 @@ from .if_utils import map_frequency_to_group
 
 
 def _as_float_array(values: pd.Series | np.ndarray | list[float]) -> np.ndarray:
+    """Convert input values to a float numpy array."""
     return np.asarray(values, dtype=float).reshape(-1)
 
 
 def _odd_kernel_size(kernel_size: int) -> int:
+    """Ensure kernel size is odd."""
     size = max(1, int(kernel_size))
     return size if size % 2 == 1 else size + 1
 
@@ -27,6 +29,7 @@ def _window_samples_from_time_axis(
     time_axis: np.ndarray,
     window_us: float | None,
 ) -> int:
+    """Calculate window samples from time axis and window duration in us."""
     if window_us is None or window_us <= 0 or len(time_axis) < 2:
         return 1
     dt = float(np.nanmedian(np.diff(time_axis)))
@@ -36,6 +39,7 @@ def _window_samples_from_time_axis(
 
 
 def _resolve_signal_column_name(density_col: str, signals_df: pd.DataFrame, freq_ghz: float) -> str | None:
+    """Resolve signal column name from density column name."""
     remaining = str(density_col)[3:]
     signal_col = remaining.split("_")[0] if map_frequency_to_group(float(freq_ghz)) == 280.0 else remaining
     return signal_col if signal_col in signals_df.columns else None

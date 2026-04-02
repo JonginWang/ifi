@@ -24,11 +24,12 @@ from typing import TYPE_CHECKING
 import h5py
 import pandas as pd
 
-from ..utils.io_h5 import H5_GROUP_VEST
+from .io_h5 import H5_GROUP_VEST
 from .io_process_write import (
     write_raw_signals_group,
     write_structured_vest_groups,
 )
+from .log_formatter import log_tag
 
 if TYPE_CHECKING:
     from ..db_controller.nas_db import NasDB
@@ -67,7 +68,7 @@ def _match_suffix(filename: str, suffix_tokens: set[str]) -> bool:
     if not suffix_tokens:
         return True
     stem = Path(filename).stem
-    parts = re.split(r"[_\-.]+", stem)
+    parts = re.split(r"[_\-.]+", stem) # **underscore**, hyphen, or period
     parts_upper = {p.upper() for p in parts if p}
     return any(tok in parts_upper for tok in suffix_tokens)
 
@@ -100,41 +101,41 @@ def append_vest_to_hdf5(
 def _append_vest_for_shot(
     shot_num: int,
     h5_path: Path,
-    vest_db: "VestDB",
+    vest_db: VestDB,
     vest_fields: list[int],
 ) -> int:
     if not vest_fields:
         return 0
     vest_groups = vest_db.load_shot(shot=shot_num, fields=vest_fields)
     if not vest_groups:
-        print(f"[VEST][SKIP] {shot_num}: no VEST data for fields {vest_fields}")
+        print(f"{log_tag('VESTA','SKIP')} {shot_num}: no VEST data for fields {vest_fields}")
         return 0
     written = append_vest_to_hdf5(h5_path=h5_path, shot_num=shot_num, vest_data=vest_groups)
-    print(f"[VEST][OK] {shot_num}: appended {written} dataset(s)")
+    print(f"{log_tag('VESTA','OK')} {shot_num}: appended {written} dataset(s)")
     return written
 
 
 def _append_nas_for_shot(
     shot_num: int,
     h5_path: Path,
-    nas_db: "NasDB",
+    nas_db: NasDB,
     suffix_tokens: set[str],
     force_remote: bool = False,
 ) -> int:
     nas_data = nas_db.load_shot(query=shot_num, force_remote=force_remote)
     if not nas_data:
-        print(f"[NAS][SKIP] {shot_num}: no NAS/cache data")
+        print(f"{log_tag('NASDA','SKIP')} {shot_num}: no NAS/cache data")
         return 0
 
     filtered = {
         name: df for name, df in nas_data.items() if _match_suffix(name, suffix_tokens)
     }
     if not filtered:
-        print(f"[NAS][SKIP] {shot_num}: no data matched suffix filter {sorted(suffix_tokens)}")
+        print(f"{log_tag('NASDA','SKIP')} {shot_num}: no data matched suffix filter {sorted(suffix_tokens)}")
         return 0
 
     written = append_signals_to_hdf5(h5_path=h5_path, signals=filtered)
-    print(f"[NAS][OK] {shot_num}: appended {written} signal group(s)")
+    print(f"{log_tag('NASDA','OK')} {shot_num}: appended {written} signal group(s)")
     return written
 
 
@@ -202,7 +203,7 @@ def main() -> int:
             total_shots += 1
             h5_path = results_dir / str(shot_num) / f"{shot_num}.h5"
             if not h5_path.exists():
-                print(f"[SKIP] {shot_num}: no h5 file at {h5_path}")
+                print(f"{log_tag('DAPND','SKIP')} {shot_num}: no h5 file at {h5_path}")
                 continue
 
             changed = 0

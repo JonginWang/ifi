@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Post-processing HDF5 files I/O Utilities
-========================================
+=========================================
 
 Compatibility facade for post-processing HDF5 read/write helpers.
 

@@ -31,7 +31,7 @@ class VestDBMixinConfig(VestDBBase):
         self.field_labels: dict[int, str] = {}
         if csv_path is None or not csv_path.exists():
             self.logger.warning(
-                f"{log_tag('VESTB', 'CONFIG')} VEST field label file not specified or not found. "
+                f"{log_tag('VESTD', 'CONFIG')} VEST field label file not specified or not found. "
                 "Column names will be field IDs."
             )
             return
@@ -44,7 +44,7 @@ class VestDBMixinConfig(VestDBBase):
             for field_id, meta in by_id.items()
         }
         self.logger.info(
-            f"{log_tag('VESTB', 'CONFIG')} Successfully loaded {len(self.field_labels)} "
+            f"{log_tag('VESTD', 'CONFIG')} Successfully loaded {len(self.field_labels)} "
             f"VEST field labels from {csv_path}."
         )
 
@@ -53,7 +53,7 @@ class VestDBMixinConfig(VestDBBase):
         config_file = Path(config_path)
         if not config_file.exists():
             self.logger.error(
-                f"{log_tag('VESTB', 'CONFG')} Configuration file not found at '{config_path}'."
+                f"{log_tag('VESTD', 'CONFG')} Configuration file not found at '{config_path}'."
             )
             raise FileNotFoundError(
                 f"Configuration file not found at '{config_path}'.\n"
@@ -94,11 +94,11 @@ class VestDBMixinConfig(VestDBBase):
 
             ssh_key_path = Path(ssh_cfg.get("ssh_pkey_path")).expanduser()
             self.logger.info(
-                f"{log_tag('VESTB', 'CONFIG')} SSH key path resolved to: {ssh_key_path}"
+                f"{log_tag('VESTD', 'CONFIG')} SSH key path resolved to: {ssh_key_path}"
             )
             if not ssh_key_path.exists():
                 self.logger.warning(
-                    f"{log_tag('VESTB', 'CONFIG')} SSH private key file does not exist at '{ssh_key_path}'!"
+                    f"{log_tag('VESTD', 'CONFIG')} SSH private key file does not exist at '{ssh_key_path}'!"
                 )
 
             self.ssh_config = {
@@ -131,7 +131,7 @@ class VestDBMixinConnection(VestDBBase):
             return True
 
         self.logger.info(
-            f"{log_tag('VESTB', 'CONN')} Attempting direct connection to VEST DB..."
+            f"{log_tag('VESTD', 'CONN')} Attempting direct connection to VEST DB..."
         )
         try:
             self.connection = pymysql.connect(
@@ -139,34 +139,34 @@ class VestDBMixinConnection(VestDBBase):
             )
             if self.connection.open:
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN')} Direct connection successful."
+                    f"{log_tag('VESTD', 'CONN')} Direct connection successful."
                 )
                 return True
         except pymysql.Error as err:
             self.logger.warning(
-                f"{log_tag('VESTB', 'CONN')} Direct connection failed: {err}"
+                f"{log_tag('VESTD', 'CONN')} Direct connection failed: {err}"
             )
             if not self.tunnel_enabled:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN')} SSH tunnel is disabled. Cannot proceed."
+                    f"{log_tag('VESTD', 'CONN')} SSH tunnel is disabled. Cannot proceed."
                 )
                 return False
             self.logger.info(
-                f"{log_tag('VESTB', 'CONN')} Direct connection failed. Now attempting fallback to SSH tunnel."
+                f"{log_tag('VESTD', 'CONN')} Direct connection failed. Now attempting fallback to SSH tunnel."
             )
 
         self.logger.info(
-            f"{log_tag('VESTB', 'CONN')} Falling back to SSH tunnel connection..."
+            f"{log_tag('VESTD', 'CONN')} Falling back to SSH tunnel connection..."
         )
         for attempt in range(self.ssh_max_retries):
             try:
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN')} Attempt {attempt + 1}/{self.ssh_max_retries}..."
+                    f"{log_tag('VESTD', 'CONN')} Attempt {attempt + 1}/{self.ssh_max_retries}..."
                 )
                 self.tunnel = SSHTunnelForwarder(**self.ssh_config)
                 self.tunnel.start()
                 self.logger.info(
-                    f"{log_tag('VESTB', 'CONN')} SSH tunnel established (localhost:{self.tunnel.local_bind_port})."
+                    f"{log_tag('VESTD', 'CONN')} SSH tunnel established (localhost:{self.tunnel.local_bind_port})."
                 )
 
                 tunneled_cfg = self.db_connection_args.copy()
@@ -176,36 +176,36 @@ class VestDBMixinConnection(VestDBBase):
 
                 if self.connection.open:
                     self.logger.info(
-                        f"{log_tag('VESTB', 'CONN')} MySQL connection through tunnel successful."
+                        f"{log_tag('VESTD', 'CONN')} MySQL connection through tunnel successful."
                     )
                     return True
 
             except BaseSSHTunnelForwarderError as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN')} SSH Tunnel Error on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTD', 'CONN')} SSH Tunnel Error on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()
             except pymysql.Error as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN')} MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
+                    f"{log_tag('VESTD', 'CONN')} MySQL Connection Error (via Tunnel) on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()
             except Exception as e:
                 self.logger.error(
-                    f"{log_tag('VESTB', 'CONN')} Unexpected error during "
+                    f"{log_tag('VESTD', 'CONN')} Unexpected error during "
                     f"SSH tunnel connection on attempt {attempt + 1}: {e}",
                     exc_info=True,
                 )
                 self.disconnect()
 
             if attempt < self.ssh_max_retries - 1:
-                self.logger.info(f"{log_tag('VESTB', 'CONN')} Retrying in 3 seconds...")
+                self.logger.info(f"{log_tag('VESTD', 'CONN')} Retrying in 3 seconds...")
                 time.sleep(3)
 
         self.logger.error(
-            f"{log_tag('VESTB', 'CONN')} Failed to establish a database connection."
+            f"{log_tag('VESTD', 'CONN')} Failed to establish a database connection."
         )
         return False
 
@@ -214,12 +214,12 @@ class VestDBMixinConnection(VestDBBase):
         self._ensure_logger(component=__name__)
         if self.connection and self.connection.open:
             self.connection.close()
-            self.logger.info(f"{log_tag('VESTB', 'DISC')} MySQL connection closed.")
+            self.logger.info(f"{log_tag('VESTD', 'DISC')} MySQL connection closed.")
         self.connection = None
 
         if self.tunnel and self.tunnel.is_active:
             self.tunnel.stop()
-            self.logger.info(f"{log_tag('VESTB', 'DISC')} SSH tunnel closed.")
+            self.logger.info(f"{log_tag('VESTD', 'DISC')} SSH tunnel closed.")
         self.tunnel = None
 
     def __enter__(self):
@@ -233,7 +233,7 @@ class VestDBMixinConnection(VestDBBase):
         """Execute SQL query and return all rows."""
         self._ensure_logger(component=__name__)
         if not (self.connection and self.connection.open):
-            self.logger.error(f"{log_tag('VESTB', 'QRY')} Not connected to the database.")
+            self.logger.error(f"{log_tag('VESTD', 'QRY')} Not connected to the database.")
             return None
 
         try:
@@ -244,14 +244,14 @@ class VestDBMixinConnection(VestDBBase):
                     cursor.execute(sql_query)
                 results = cursor.fetchall()
                 self.logger.info(
-                    f"{log_tag('VESTB', 'QRY')} Query executed successfully. Returned {len(results)} rows."
+                    f"{log_tag('VESTD', 'QRY')} Query executed successfully. Returned {len(results)} rows."
                 )
                 return results
         except pymysql.Error as e:
-            self.logger.error(f"{log_tag('VESTB', 'QRY')} Database query error: {e}")
+            self.logger.error(f"{log_tag('VESTD', 'QRY')} Database query error: {e}")
             return None
         except Exception as e:
             self.logger.error(
-                f"{log_tag('VESTB', 'QRY')} Unexpected error during query execution: {e}"
+                f"{log_tag('VESTD', 'QRY')} Unexpected error during query execution: {e}"
             )
             return None

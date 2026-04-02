@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from ifi.analysis.phi2ne import PhaseConverter
-from ifi.plot import Plotter
 from ifi.analysis.spectrum import SpectrumAnalysis
+from ifi.plots.plot import Plotter
 from ifi.utils.cache_setup import setup_project_cache
 from ifi.utils.if_utils import assign_interferometry_params_to_shot
 from ifi.utils.log_manager import LogManager

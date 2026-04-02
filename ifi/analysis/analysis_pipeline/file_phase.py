@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Per-file load/process helpers for main_analysis."""
+"""
+Per-file load/process phase
+============================
+
+This module contains the "the per-file load/process phase" for `run_analysis`.
+
+Author: J. Wang
+Date: 2025-01-16
+"""
 
 from __future__ import annotations
 
