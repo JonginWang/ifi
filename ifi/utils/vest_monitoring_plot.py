@@ -21,14 +21,24 @@ def _shot_text(shots: list[int]) -> str:
     return "-".join(map(str, shots))
 
 
-def _save_fig(fig, path: Path, overwrite: bool, show: bool = False) -> None:
+def _save_fig(
+    fig,
+    path: Path,
+    overwrite: bool,
+    show: bool = False,
+    auto_close_sec: float | None = None,
+) -> None:
     if path.exists() and not overwrite:
         plt.close(fig)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight")
     if show:
-        plt.show(block=True)
+        if auto_close_sec is not None and auto_close_sec > 0:
+            plt.show(block=False)
+            plt.pause(float(auto_close_sec))
+        else:
+            plt.show(block=True)
     plt.close(fig)
 
 
@@ -40,6 +50,7 @@ def _plot_multi_shot(
     output_path: Path,
     overwrite: bool = False,
     show: bool = False,
+    auto_close_sec: float | None = None,
 ) -> None:
     fig, ax = plt.subplots(figsize=(7.0, 3.0))
     for shot, frame in shot_frames.items():
@@ -56,7 +67,7 @@ def _plot_multi_shot(
     handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.25), ncol=2)
-    _save_fig(fig, output_path, overwrite, show=show)
+    _save_fig(fig, output_path, overwrite, show=show, auto_close_sec=auto_close_sec)
 
 
 def _plot_tiled_multi_shot(
@@ -66,6 +77,7 @@ def _plot_tiled_multi_shot(
     output_path: Path,
     overwrite: bool = False,
     show: bool = False,
+    auto_close_sec: float | None = None,
 ) -> None:
     first = next((df for df in shot_frames.values() if isinstance(df, pd.DataFrame) and not df.empty), None)
     if first is None:
@@ -89,7 +101,7 @@ def _plot_tiled_multi_shot(
                 ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.35), ncol=4)
     axes[-1].set_xlabel("Time [msec]", **FontStyle.label)
     fig.suptitle(title, **FontStyle.title)
-    _save_fig(fig, output_path, overwrite, show=show)
+    _save_fig(fig, output_path, overwrite, show=show, auto_close_sec=auto_close_sec)
 
 
 def _plot_mirnov_spectrograms(
@@ -98,6 +110,7 @@ def _plot_mirnov_spectrograms(
     output_dir: Path,
     overwrite: bool = False,
     show: bool = False,
+    auto_close_sec: float | None = None,
 ) -> None:
     for shot, spec_map in mirnov_specs_by_shot.items():
         if not spec_map:
@@ -121,7 +134,13 @@ def _plot_mirnov_spectrograms(
             fig.colorbar(mesh, ax=ax)
         axes[-1].set_xlabel("Time [msec]", **FontStyle.label)
         fig.suptitle(f"Mirnov Spectrogram {shot}", **FontStyle.title)
-        _save_fig(fig, output_dir / f"MirnovSpectrogram_{shot}.png", overwrite, show=show)
+        _save_fig(
+            fig,
+            output_dir / f"MirnovSpectrogram_{shot}.png",
+            overwrite,
+            show=show,
+            auto_close_sec=auto_close_sec,
+        )
 
 
 def save_vest_monitoring_plots(
@@ -132,6 +151,7 @@ def save_vest_monitoring_plots(
     xrange_s: tuple[float, float] = (0.28, 0.35),
     overwrite: bool = False,
     show_plots: bool = False,
+    auto_close_sec: float | None = None,
 ) -> None:
     set_plot_style()
     save_path = Path(save_dir)
@@ -154,6 +174,7 @@ def save_vest_monitoring_plots(
             save_path / filename,
             overwrite=overwrite,
             show=show_plots,
+            auto_close_sec=auto_close_sec,
         )
 
     for key, title, filename in [
@@ -171,6 +192,7 @@ def save_vest_monitoring_plots(
             save_path / filename,
             overwrite=overwrite,
             show=show_plots,
+            auto_close_sec=auto_close_sec,
         )
 
     _plot_mirnov_spectrograms(
@@ -179,6 +201,7 @@ def save_vest_monitoring_plots(
         output_dir=save_path,
         overwrite=overwrite,
         show=show_plots,
+        auto_close_sec=auto_close_sec,
     )
 
 

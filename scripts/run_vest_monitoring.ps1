@@ -29,6 +29,7 @@ if ($Help) {
     Write-Host "  .\run_vest_monitoring.ps1 '47807'"
     Write-Host "  .\run_vest_monitoring.ps1 '47807:47840'"
     Write-Host "  .\run_vest_monitoring.ps1 '47805 47807 47808' --plot_each"
+    Write-Host "  .\run_vest_monitoring.ps1 '47805 47807 47808' --plot_each --auto_close_sec 2"
     Write-Host "  .\run_vest_monitoring.ps1 '47807:47840' --xrange '0.28 0.35' --xcoil '1 5 6 10'"
     Write-Host ""
     Write-Host "Options:" -ForegroundColor Yellow
@@ -40,6 +41,7 @@ if ($Help) {
     Write-Host "  --overwrite_local     Overwrite local monitoring outputs"
     Write-Host "  --no_save_plots       Skip PNG save"
     Write-Host "  --plot_each           Process plots shot-by-shot and save under each results/<shot>/monitoring"
+    Write-Host "  --auto_close_sec N    With --plot_each, close each figure automatically after N seconds"
     Write-Host "  --help                Show this help message"
     Write-Host ""
     exit 0

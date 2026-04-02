@@ -58,6 +58,15 @@ def main() -> int:
             "and shows figures shot-by-shot."
         ),
     )
+    parser.add_argument(
+        "--auto_close_sec",
+        type=float,
+        default=None,
+        help=(
+            "When used with --plot_each, show each figure non-blocking and "
+            "close it automatically after the given seconds."
+        ),
+    )
     args = parser.parse_args()
 
     shots = FlatShotList([args.query]).nums
@@ -76,6 +85,7 @@ def main() -> int:
             overwrite_local=args.overwrite_local,
             save_plots=not args.no_save_plots,
             plot_each=args.plot_each,
+            auto_close_sec=args.auto_close_sec,
         )
     finally:
         vest_db.disconnect()

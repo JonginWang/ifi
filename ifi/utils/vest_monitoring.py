@@ -41,6 +41,7 @@ def run_vest_shot_monitoring(
     overwrite_local: bool = False,
     save_plots: bool = True,
     plot_each: bool = False,
+    auto_close_sec: float | None = None,
 ) -> dict[str, object]:
     xcoil = xcoil or [1, 5, 6, 10]
     results_root = Path(results_dir)
@@ -77,6 +78,7 @@ def run_vest_shot_monitoring(
                     xrange_s=xrange_s,
                     overwrite=overwrite_local,
                     show_plots=True,
+                    auto_close_sec=auto_close_sec,
                 )
         else:
             save_vest_monitoring_plots(
@@ -87,6 +89,7 @@ def run_vest_shot_monitoring(
                 xrange_s=xrange_s,
                 overwrite=overwrite_local,
                 show_plots=False,
+                auto_close_sec=auto_close_sec,
             )
 
     return {
