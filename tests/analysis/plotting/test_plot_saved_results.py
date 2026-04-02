@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 
 from ifi.plots.plot_density import resolve_density_time_data
-from ifi.plots.plot_saved_results import SavedSeriesRequest, extract_time_and_series
+from ifi.plots.plot_saved_results import (
+    SavedSeriesRequest,
+    best_vest_series,
+    extract_time_and_series,
+    raw_sources_by_frequency,
+)
 
 
 def test_extract_time_and_series_prefers_density_time_column():
@@ -82,3 +87,30 @@ def test_resolve_density_time_data_falls_back_from_range_index_to_raw_time():
     )
 
     np.testing.assert_allclose(resolved, np.array([0.01, 0.02, 0.03]))
+
+
+def test_raw_sources_by_frequency_can_infer_from_source_name_without_attrs():
+    raw_df_94 = pd.DataFrame({"TIME": np.array([0.01, 0.02]), "CH0": np.array([1.0, 2.0])})
+    raw_df_280 = pd.DataFrame({"TIME": np.array([0.01, 0.02]), "CH0": np.array([1.0, 2.0])})
+    results = {
+        "rawdata": {
+            "47807_056.csv": raw_df_94,
+            "47807_ALL.csv": raw_df_280,
+        }
+    }
+
+    grouped = raw_sources_by_frequency(results)
+    assert 94.0 in grouped
+    assert 280.0 in grouped
+
+
+def test_best_vest_series_accepts_bracket_variants():
+    vest_df = pd.DataFrame({"Ip_raw [[V]]": np.array([1.0, 2.0, 3.0])})
+    results = {"vestdata": {"25k": vest_df}}
+
+    selected = best_vest_series(results)
+
+    assert selected is not None
+    assert selected.group == "vest"
+    assert selected.source == "25k"
+    assert selected.column == "Ip_raw [[V]]"

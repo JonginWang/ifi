@@ -17,7 +17,7 @@ from matplotlib.figure import Figure
 
 from ..analysis.functions.power_conversion import amp2db, mag2db
 from ..utils.dsp_amplitude import extract_probe_amplitudes_from_signals
-from ..utils.if_utils import map_frequency_to_group
+from ..utils.if_utils import map_frequency_to_group, parse_frequency_group_from_signal_name
 from ..utils.func_helper import merge_kwargs, normalize_call_args
 from ..utils.io_process_common import parse_density_group_name
 from .plot_common import apply_scaling, colored_line
@@ -215,7 +215,10 @@ def _time_from_raw_fallback(
         inferred_freq = parse_density_group_name(str(density_name))
     if inferred_freq is None and "freq" in getattr(density_df, "attrs", {}):
         try:
-            inferred_freq = map_frequency_to_group(float(density_df.attrs["freq"]))
+            inferred_freq = float(density_df.attrs["freq"])
+            if inferred_freq > 1.0e6:
+                inferred_freq /= 1.0e9
+            inferred_freq = map_frequency_to_group(inferred_freq)
         except (TypeError, ValueError):
             inferred_freq = None
     if inferred_freq is None:
@@ -229,10 +232,26 @@ def _time_from_raw_fallback(
         try:
             raw_group = map_frequency_to_group(float(raw_freq))
         except (TypeError, ValueError):
+            raw_group = None
+        if raw_group is None:
             continue
         if raw_group == inferred_freq:
             same_freq_sources.append(raw_df)
 
+    if not same_freq_sources:
+        for source_name, raw_df in signals_dict.items():
+            if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+                continue
+            raw_group = parse_frequency_group_from_signal_name(str(source_name))
+            if raw_group == inferred_freq:
+                same_freq_sources.append(raw_df)
+
+    if not same_freq_sources:
+        for raw_df in signals_dict.values():
+            if isinstance(raw_df, pd.DataFrame) and not raw_df.empty:
+                if "TIME" in raw_df.columns or _is_meaningful_time_index(raw_df):
+                    same_freq_sources.append(raw_df)
+                    break
     if not same_freq_sources:
         return None
 

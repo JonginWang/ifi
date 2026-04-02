@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from ..utils.dsp_amplitude import compute_signal_envelope
-from ..utils.if_utils import map_frequency_to_group
+from ..utils.if_utils import map_frequency_to_group, parse_frequency_group_from_signal_name
 from ..utils.io_process_read import load_results_from_hdf5
 from .plot_density import resolve_density_time_data
 from .plot_waveform import load_envelope_payload, shade_envelope_segments
@@ -217,11 +217,19 @@ def raw_sources_by_frequency(results: dict) -> dict[float, list[tuple[str, pd.Da
     for source_name, df in resolve_payload(results, "raw").items():
         freq = normalize_freq_ghz(getattr(df, "attrs", {}).get("freq"))
         if freq is None:
+            freq = parse_frequency_group_from_signal_name(str(source_name))
+        if freq is None:
             continue
         grouped.setdefault(freq, []).append((str(source_name), df))
     for freq in grouped:
         grouped[freq] = sorted(grouped[freq], key=lambda item: item[0])
     return grouped
+
+
+def _normalize_label(text: str) -> str:
+    normalized = re.sub(r"[\[\]\(\)\{\}_/\\]+", " ", str(text).lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
 
 
 def numeric_signal_columns(df: pd.DataFrame) -> list[str]:
@@ -298,16 +306,21 @@ def _find_94_source_pair(
 
 def best_vest_series(results: dict) -> SavedSeriesRequest | None:
     vest_payload = resolve_payload(results, "vest")
-    preferred_columns = ("Ip [kA]", "Ip_raw ([V])", "Ip")
-    for column_name in preferred_columns:
+    preferred_patterns = (
+        ("ip ka", "Ip [kA]"),
+        ("ip raw v", "Ip"),
+        ("ip", "Ip"),
+    )
+    for pattern, label in preferred_patterns:
         for source_name, df in vest_payload.items():
-            if column_name in df.columns:
-                return SavedSeriesRequest(
-                    group="vest",
-                    source=str(source_name),
-                    column=column_name,
-                    label="Ip [kA]" if "kA" in column_name else "Ip",
-                )
+            for column_name in df.columns:
+                if pattern in _normalize_label(str(column_name)):
+                    return SavedSeriesRequest(
+                        group="vest",
+                        source=str(source_name),
+                        column=str(column_name),
+                        label=label,
+                    )
     for source_name, df in vest_payload.items():
         for col in df.columns:
             if "ip" in str(col).lower():
