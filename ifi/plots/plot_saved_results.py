@@ -19,8 +19,8 @@ import pandas as pd
 
 from ..utils.dsp_amplitude import compute_signal_envelope
 from ..utils.if_utils import map_frequency_to_group
-from ..utils.io_process_common import parse_density_group_name
 from ..utils.io_process_read import load_results_from_hdf5
+from .plot_density import resolve_density_time_data
 from .plot_waveform import load_envelope_payload, shade_envelope_segments
 from .style import FontStyle
 
@@ -639,7 +639,16 @@ def extract_time_and_series(
             f"Available: {list(df.columns)}"
         )
 
-    if "TIME" in df.columns:
+    if request.group == "density":
+        time = pd.Series(
+            resolve_density_time_data(
+                df,
+                density_name=matched_source,
+                signals_dict=results.get("rawdata", {}),
+            ),
+            copy=False,
+        )
+    elif "TIME" in df.columns:
         time = pd.Series(df["TIME"], copy=False)
     else:
         time = pd.Series(df.index, copy=False)

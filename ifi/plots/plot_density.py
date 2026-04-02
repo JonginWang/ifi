@@ -17,7 +17,9 @@ from matplotlib.figure import Figure
 
 from ..analysis.functions.power_conversion import amp2db, mag2db
 from ..utils.dsp_amplitude import extract_probe_amplitudes_from_signals
+from ..utils.if_utils import map_frequency_to_group
 from ..utils.func_helper import merge_kwargs, normalize_call_args
+from ..utils.io_process_common import parse_density_group_name
 from .plot_common import apply_scaling, colored_line
 from .style import FontStyle
 
@@ -187,6 +189,90 @@ def _infer_freq_from_density_df(df: pd.DataFrame) -> float:
     return 94.0
 
 
+def _is_meaningful_time_index(df: pd.DataFrame) -> bool:
+    if not hasattr(df, "index"):
+        return False
+    if isinstance(df.index, pd.RangeIndex):
+        return False
+    try:
+        numeric_index = pd.to_numeric(pd.Series(df.index, copy=False), errors="coerce")
+    except Exception:
+        return False
+    return bool(numeric_index.notna().any())
+
+
+def _time_from_raw_fallback(
+    density_df: pd.DataFrame,
+    *,
+    density_name: str | None = None,
+    signals_dict: dict[str, pd.DataFrame] | None = None,
+) -> np.ndarray | None:
+    if not signals_dict:
+        return None
+
+    inferred_freq = None
+    if density_name:
+        inferred_freq = parse_density_group_name(str(density_name))
+    if inferred_freq is None and "freq" in getattr(density_df, "attrs", {}):
+        try:
+            inferred_freq = map_frequency_to_group(float(density_df.attrs["freq"]))
+        except (TypeError, ValueError):
+            inferred_freq = None
+    if inferred_freq is None:
+        inferred_freq = _infer_freq_from_density_df(density_df)
+
+    same_freq_sources: list[pd.DataFrame] = []
+    for raw_df in signals_dict.values():
+        if not isinstance(raw_df, pd.DataFrame) or raw_df.empty:
+            continue
+        raw_freq = getattr(raw_df, "attrs", {}).get("freq")
+        try:
+            raw_group = map_frequency_to_group(float(raw_freq))
+        except (TypeError, ValueError):
+            continue
+        if raw_group == inferred_freq:
+            same_freq_sources.append(raw_df)
+
+    if not same_freq_sources:
+        return None
+
+    target_len = len(density_df)
+    for raw_df in same_freq_sources:
+        if "TIME" in raw_df.columns and len(raw_df["TIME"]) == target_len:
+            return pd.to_numeric(raw_df["TIME"], errors="coerce").to_numpy()
+        if _is_meaningful_time_index(raw_df) and len(raw_df.index) == target_len:
+            return pd.to_numeric(pd.Series(raw_df.index, copy=False), errors="coerce").to_numpy()
+
+    candidate = same_freq_sources[0]
+    if "TIME" in candidate.columns and len(candidate["TIME"]) >= target_len:
+        return pd.to_numeric(candidate["TIME"], errors="coerce").iloc[:target_len].to_numpy()
+    if _is_meaningful_time_index(candidate) and len(candidate.index) >= target_len:
+        numeric_index = pd.to_numeric(pd.Series(candidate.index, copy=False), errors="coerce")
+        return numeric_index.iloc[:target_len].to_numpy()
+    return None
+
+
+def resolve_density_time_data(
+    density_df: pd.DataFrame,
+    *,
+    density_name: str | None = None,
+    signals_dict: dict[str, pd.DataFrame] | None = None,
+) -> np.ndarray:
+    """Resolve the best available time axis for density plotting."""
+    if "TIME" in density_df.columns:
+        return pd.to_numeric(density_df["TIME"], errors="coerce").to_numpy()
+    if _is_meaningful_time_index(density_df):
+        return pd.to_numeric(pd.Series(density_df.index, copy=False), errors="coerce").to_numpy()
+    raw_time = _time_from_raw_fallback(
+        density_df,
+        density_name=density_name,
+        signals_dict=signals_dict,
+    )
+    if raw_time is not None:
+        return raw_time
+    return np.arange(len(density_df), dtype=float)
+
+
 def _auto_probe_amplitudes(
     density_df: pd.DataFrame,
     signals_dict: dict[str, pd.DataFrame] | None,
@@ -219,11 +305,11 @@ def render_overview_density(
         if df is None or df.empty:
             continue
         try:
-            time_data = None
-            if hasattr(df, "index") and df.index.name == "TIME":
-                time_data = df.index.values
-            elif "TIME" in df.columns:
-                time_data = df["TIME"].values
+            time_data = resolve_density_time_data(
+                df,
+                density_name=name,
+                signals_dict=signals_dict,
+            )
 
             plot_probe_amp = None
             if color_density_by_amplitude:

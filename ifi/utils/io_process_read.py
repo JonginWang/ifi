@@ -142,6 +142,11 @@ def _load_density(hf: h5py.File) -> pd.DataFrame | dict[str, pd.DataFrame] | Non
         if freq_density_data:
             freq_key = _density_freq_key_from_group(str(sub_name), sub_obj)
             freq_df = pd.DataFrame(freq_density_data)
+            if "TIME" in freq_df.columns:
+                time_col = pd.to_numeric(freq_df["TIME"], errors="coerce")
+                freq_df["TIME"] = time_col
+                if time_col.notna().any():
+                    freq_df.index = pd.Index(time_col.to_numpy(), name="TIME")
             freq_df.attrs.update(_decode_group_attrs(sub_obj))
             structured_density[freq_key] = freq_df
     return structured_density or None

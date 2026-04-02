@@ -64,6 +64,14 @@ def _write_dataframe_datasets(parent: h5py.Group, df: pd.DataFrame) -> None:
         )
 
 
+def _write_dataframe_with_time(parent: h5py.Group, df: pd.DataFrame) -> None:
+    """Write a DataFrame and persist its effective time axis as `TIME`."""
+    df_to_write = df.copy()
+    if "TIME" not in df_to_write.columns:
+        df_to_write.insert(0, "TIME", np.asarray(df.index))
+    _write_dataframe_datasets(parent, df_to_write)
+
+
 def _cache_target_exists(cache_file: Path, group_name: str) -> bool:
     """Return True when a per-source raw-cache file contains the target signal group."""
     if not cache_file.exists():
@@ -164,11 +172,11 @@ def _write_density_group(
                 freq_group,
                 extract_analysis_attrs((density_meta_by_freq or {}).get(meta_key)),
             )
-            _write_dataframe_datasets(freq_group, freq_df)
+            _write_dataframe_with_time(freq_group, freq_df)
         return
 
     if isinstance(density_data, pd.DataFrame) and not density_data.empty:
-        _write_dataframe_datasets(density_group, density_data)
+        _write_dataframe_with_time(density_group, density_data)
 
 
 def write_raw_signals_group(hf: h5py.File, signals: dict[str, pd.DataFrame]) -> int:

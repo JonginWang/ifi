@@ -31,6 +31,26 @@ def _parse_int_list(text: str) -> list[int]:
     return [int(tok) for tok in str(text).replace(",", " ").split() if tok]
 
 
+def _resolve_query_text(positional_query: list[str], query_opt: str | None) -> str:
+    if query_opt and str(query_opt).strip():
+        return str(query_opt).strip()
+    return " ".join(str(token).strip() for token in positional_query if str(token).strip()).strip()
+
+
+def _normalize_query_items(query_text: str) -> list[str]:
+    text = str(query_text).strip()
+    if not text:
+        return []
+    if ":" in text and "," not in text and " " not in text:
+        return [text]
+    items: list[str] = []
+    for chunk in text.replace(",", " ").split():
+        token = chunk.strip()
+        if token:
+            items.append(token)
+    return items
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -41,7 +61,17 @@ def main() -> int:
             "per-shot monitoring plots under each results/<shot>/monitoring."
         )
     )
-    parser.add_argument("query", help='Shot query, e.g. "47805 47807 47808" or "47807:47840"')
+    parser.add_argument(
+        "query",
+        nargs="*",
+        help='Shot query, e.g. "47805 47807 47808" or "47807:47840"',
+    )
+    parser.add_argument(
+        "--query",
+        dest="query_opt",
+        default=None,
+        help="Shot query override, same format as positional query.",
+    )
     parser.add_argument("--config", default="ifi/config.ini")
     parser.add_argument("--results_dir", default="ifi/results")
     parser.add_argument("--xrange", default="0.28 0.35")
@@ -69,7 +99,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    shots = FlatShotList([args.query]).nums
+    query_text = _resolve_query_text(args.query, args.query_opt)
+    shots = FlatShotList(_normalize_query_items(query_text)).nums if query_text else []
     if not shots:
         raise SystemExit("No valid shots parsed from query.")
 

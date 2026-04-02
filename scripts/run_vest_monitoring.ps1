@@ -53,13 +53,26 @@ if ($args.Count -lt 1) {
     exit 1
 }
 
-$query = $args[0]
+$queryTokens = @()
 $pythonArgs = @()
-if ($args.Count -gt 1) {
-    $pythonArgs = $args[1..($args.Count - 1)]
+$seenOption = $false
+foreach ($arg in $args) {
+    if (-not $seenOption -and -not $arg.StartsWith("-")) {
+        $queryTokens += $arg
+        continue
+    }
+    $seenOption = $true
+    $pythonArgs += $arg
 }
 
-$Command = "python scripts/run_vest_monitoring.py `"$query`" $($pythonArgs -join ' ')"
+if ($queryTokens.Count -eq 0) {
+    Write-Host "ERROR: No query specified." -ForegroundColor Red
+    & $MyInvocation.MyCommand.Path -Help
+    exit 1
+}
+
+$query = $queryTokens -join ' '
+$Command = "python scripts/run_vest_monitoring.py --query `"$query`" $($pythonArgs -join ' ')"
 Write-Host "Executing: $Command" -ForegroundColor Gray
 Write-Host ""
 

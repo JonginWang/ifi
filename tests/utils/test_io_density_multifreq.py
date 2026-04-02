@@ -29,8 +29,14 @@ def test_save_load_multifrequency_density_dict(tmp_path):
     signal_df.attrs["n_path"] = 2
     signal_df.attrs["meas_name"] = "94GHz Interferometer"
     density_data = {
-        "freq_94G": pd.DataFrame({"ne_CH1_45821_056": np.random.randn(64)}),
-        "freq_280G": pd.DataFrame({"ne_CH1_45821_ALL": np.random.randn(64)}),
+        "freq_94G": pd.DataFrame(
+            {"ne_CH1_45821_056": np.random.randn(64)},
+            index=signal_df["TIME"].to_numpy(),
+        ),
+        "freq_280G": pd.DataFrame(
+            {"ne_CH1_45821_ALL": np.random.randn(64)},
+            index=signal_df["TIME"].to_numpy(),
+        ),
     }
     density_meta = {
         94.0: {
@@ -80,3 +86,13 @@ def test_save_load_multifrequency_density_dict(tmp_path):
     assert "freq_280G" in loaded["density"]
     assert "ne_CH1_45821_056" in loaded["density"]["freq_94G"].columns
     assert "ne_CH1_45821_ALL" in loaded["density"]["freq_280G"].columns
+    assert "TIME" in loaded["density"]["freq_94G"].columns
+    assert "TIME" in loaded["density"]["freq_280G"].columns
+    np.testing.assert_allclose(
+        loaded["density"]["freq_94G"]["TIME"].to_numpy(),
+        signal_df["TIME"].to_numpy(),
+    )
+    np.testing.assert_allclose(
+        loaded["density"]["freq_280G"]["TIME"].to_numpy(),
+        signal_df["TIME"].to_numpy(),
+    )
