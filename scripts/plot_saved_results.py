@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from dataclasses import replace
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -20,13 +21,26 @@ from ifi.plots.plot_saved_results import (
 )
 from ifi.plots.style import set_plot_style
 from ifi.utils.io_process_read import load_results_from_hdf5
+from ifi.utils.vest_postprocess import FlatShotList
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Plot stacked traces from saved canonical IFI HDF5 results.",
     )
-    parser.add_argument("shot_num", nargs="?", type=int, help="Shot number to load.")
+    parser.add_argument(
+        "query",
+        nargs="?",
+        type=str,
+        help="Shot query to load, e.g. '47807', '47807 47808', or '47807:47840'.",
+    )
+    parser.add_argument(
+        "--query",
+        dest="query_opt",
+        type=str,
+        default=None,
+        help="Shot query override, same format as positional query.",
+    )
     parser.add_argument(
         "--config",
         type=str,
@@ -86,41 +100,94 @@ def main(argv: list[str] | None = None) -> int:
 
     set_plot_style()
 
-    shot_num = args.shot_num
+    shot_query = args.query_opt or args.query
     load_results_dir = str(args.results_dir)
     if config is not None:
         plot_sections = [
             name for name in config.sections()
             if name.lower().endswith(".plot") and "shot_num" in config[name]
         ]
-        if shot_num is None and plot_sections:
-            shot_num = int(config[plot_sections[0]].get("shot_num"))
         if plot_sections:
             load_results_dir = config[plot_sections[0]].get("results_dir", load_results_dir)
 
-    if shot_num is None:
-        parser.error("shot_num is required, either positionally or via [plot]/[fig*.plot] shot_num in --config.")
+    shot_numbers: list[int]
+    if shot_query:
+        shot_numbers = FlatShotList([shot_query]).nums
+    elif config is not None:
+        plot_sections = [
+            name for name in config.sections()
+            if name.lower().endswith(".plot") and "shot_num" in config[name]
+        ]
+        shot_numbers = []
+        if plot_sections:
+            shot_numbers = [int(config[plot_sections[0]].get("shot_num"))]
+    else:
+        shot_numbers = []
 
-    if args.list and config is None:
-        results = load_results_from_hdf5(int(shot_num), base_dir=load_results_dir)
+    if not shot_numbers:
+        parser.error(
+            "A shot query is required, either positionally/--query or via [fig*.plot] shot_num in --config."
+        )
+
+    if args.list and config is None and len(shot_numbers) == 1:
+        results = load_results_from_hdf5(int(shot_numbers[0]), base_dir=load_results_dir)
         if not results:
-            print(f"Failed to load results for shot {shot_num}.")
+            print(f"Failed to load results for shot {shot_numbers[0]}.")
             return 1
         print_available_series(results)
         return 0
 
-    results = load_results_from_hdf5(int(shot_num), base_dir=load_results_dir)
-    if not results:
-        print(f"Failed to load results for shot {shot_num}.")
-        return 1
+    exit_code = 0
+    for idx, shot_num in enumerate(shot_numbers):
+        results = load_results_from_hdf5(int(shot_num), base_dir=load_results_dir)
+        if not results:
+            print(f"Failed to load results for shot {shot_num}.")
+            exit_code = 1
+            continue
 
-    figure_requests = load_figure_requests(args, config, results=results)
-    return run_saved_results_plot(
-        figure_requests=figure_requests,
-        results=results,
-        shot_num=int(shot_num),
-        results_dir=load_results_dir,
-    )
+        if args.list:
+            print(f"=== Shot {shot_num} ===")
+            print_available_series(results)
+            continue
+
+        args_for_shot = replace(args) if hasattr(args, "__dataclass_fields__") else argparse.Namespace(**vars(args))
+        args_for_shot.shot_num = int(shot_num)
+        args_for_shot.query = str(shot_num)
+        args_for_shot.query_opt = None
+        figure_requests = load_figure_requests(args_for_shot, config, results=results)
+
+        if len(shot_numbers) > 1:
+            adjusted_requests = []
+            for request in figure_requests:
+                save_path = request.save
+                if save_path:
+                    save_obj = Path(save_path)
+                    stem = save_obj.stem
+                    if "{shot_num}" in save_path:
+                        save_path = save_path.replace("{shot_num}", str(shot_num))
+                    else:
+                        save_path = str(save_obj.with_name(f"{stem}_{shot_num}{save_obj.suffix}"))
+                adjusted_requests.append(
+                    replace(
+                        request,
+                        shot_num=int(shot_num),
+                        save=save_path,
+                        title=(request.title or f"Shot {shot_num}") if request.title is None else f"{request.title} ({shot_num})",
+                    )
+                )
+            figure_requests = adjusted_requests
+
+        result_code = run_saved_results_plot(
+            figure_requests=figure_requests,
+            results=results,
+            shot_num=int(shot_num),
+            results_dir=load_results_dir,
+        )
+        exit_code = max(exit_code, result_code)
+        if len(shot_numbers) > 1 and idx < len(shot_numbers) - 1:
+            print()
+
+    return exit_code
 
 
 if __name__ == "__main__":
