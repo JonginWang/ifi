@@ -22,9 +22,14 @@ from .. import IFI_ROOT
 def default_vest_field_csv() -> Path:
     """Return the default VEST field metadata CSV path in this codebase."""
     if IFI_ROOT is not None and isinstance(IFI_ROOT, Path):  # noqa: F823
-        return IFI_ROOT / "db_controller" / "shotdata_field_250725.csv"
+        repo_candidate = IFI_ROOT / "ifi" / "db_controller" / "shotdata_field_260101.csv"
+        if repo_candidate.exists():
+            return repo_candidate
+        package_candidate = IFI_ROOT / "db_controller" / "shotdata_field_260101.csv"
+        if package_candidate.exists():
+            return package_candidate
     fallback_root = Path(__file__).resolve().parent.parent
-    return fallback_root / "db_controller" / "shotdata_field_250725.csv"
+    return fallback_root / "db_controller" / "shotdata_field_260101.csv"
 
 
 def format_vest_field_label(field_name: str, field_unit: str) -> str:

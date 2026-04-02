@@ -37,6 +37,7 @@ from .io_utils import (
 from .log_manager import LogManager, log_tag
 from .path_utils import ensure_dir_exists, ensure_str_path, normalize_to_forward_slash
 from .vest_utils import FlatShotList
+from .vest_utils import run_vest_shot_monitoring
 
 # def setup_project_cache():
 #     """Lazy import of setup_project_cache to avoid circular imports."""
@@ -61,4 +62,5 @@ __all__ = [
     "ensure_str_path",
     "normalize_to_forward_slash",
     "FlatShotList",
+    "run_vest_shot_monitoring",
 ]

@@ -83,6 +83,57 @@ def extract_analysis_attrs(params_in_attrs: dict[str, Any] | None) -> dict[str, 
     return attrs
 
 
+def load_vest_series_map(*args, **kwargs):
+    from .vest_monitoring_data import load_vest_series_map as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def compute_monitoring_frames(*args, **kwargs):
+    from .vest_monitoring_data import compute_monitoring_frames as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def compute_mirnov_spectrograms(*args, **kwargs):
+    from .vest_monitoring_data import compute_mirnov_spectrograms as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def append_monitoring_frames_to_h5(*args, **kwargs):
+    from .vest_monitoring_data import append_monitoring_frames_to_h5 as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def append_mirnov_spectrograms_to_h5(*args, **kwargs):
+    from .vest_monitoring_data import append_mirnov_spectrograms_to_h5 as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def run_vest_monitoring_data_pipeline(*args, **kwargs):
+    from .vest_monitoring_data import run_vest_monitoring_data_pipeline as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def save_vest_monitoring_plots(*args, **kwargs):
+    from .vest_monitoring_plot import save_vest_monitoring_plots as _impl
+
+    return _impl(*args, **kwargs)
+
+
+def run_vest_shot_monitoring(*args, **kwargs):
+    from .vest_monitoring import run_vest_shot_monitoring as _impl
+
+    return _impl(*args, **kwargs)
+
+
+MONITORING_ROOT = "vest_monitoring"
+
+
 __all__ = [
     "FlatShotList",
     "default_vest_field_csv",
@@ -93,4 +144,13 @@ __all__ = [
     "infer_sample_rate_from_index",
     "normalize_sr_group_name",
     "extract_analysis_attrs",
+    "MONITORING_ROOT",
+    "load_vest_series_map",
+    "compute_monitoring_frames",
+    "compute_mirnov_spectrograms",
+    "append_monitoring_frames_to_h5",
+    "append_mirnov_spectrograms_to_h5",
+    "save_vest_monitoring_plots",
+    "run_vest_monitoring_data_pipeline",
+    "run_vest_shot_monitoring",
 ]

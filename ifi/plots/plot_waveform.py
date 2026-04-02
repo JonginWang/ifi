@@ -9,7 +9,9 @@ Date: 2025-01-16
 
 from __future__ import annotations
 
+import json
 from typing import Any
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,6 +22,71 @@ from ..utils.dsp_amplitude import compute_signal_envelope
 from ..utils.func_helper import merge_kwargs, normalize_call_args
 from .plot_common import apply_scaling, extract_metadata_info, prepare_time_data
 from .style import FontStyle
+
+
+def load_envelope_payload(
+    *,
+    shot_num: int,
+    results_dir: str | Path,
+    source_name: str,
+    column_name: str,
+) -> dict[str, Any] | None:
+    """Load saved envelope-segment JSON for one raw signal channel if it exists."""
+    json_path = (
+        Path(results_dir)
+        / str(shot_num)
+        / "envelope"
+        / f"{Path(source_name).stem}_{column_name}_envelope.json"
+    )
+    if not json_path.exists():
+        return None
+    try:
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def shade_envelope_segments(
+    ax: plt.Axes,
+    payload: dict[str, Any] | None,
+    *,
+    time_factor: float = 1.0,
+    base_color: str = "gray",
+    base_alpha: float = 0.10,
+    highlight_color: str = "gold",
+    highlight_alpha: float = 0.18,
+) -> None:
+    """Shade saved low-envelope intervals and highlight the longest interval."""
+    if not isinstance(payload, dict):
+        return
+    segments = payload.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return
+
+    longest = max(
+        segments,
+        key=lambda item: float(item.get("duration_us", 0.0)),
+        default=None,
+    )
+    longest_key = (
+        float(longest.get("start_time", np.nan)),
+        float(longest.get("end_time", np.nan)),
+    ) if isinstance(longest, dict) else None
+
+    for segment in segments:
+        try:
+            start = float(segment["start_time"]) * time_factor
+            end = float(segment["end_time"]) * time_factor
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = (
+            float(segment.get("start_time", np.nan)),
+            float(segment.get("end_time", np.nan)),
+        )
+        if key == longest_key:
+            ax.axvspan(start, end, color=highlight_color, alpha=highlight_alpha, zorder=0)
+        else:
+            ax.axvspan(start, end, color=base_color, alpha=base_alpha, zorder=0)
 
 
 def plot_waveforms_core(
@@ -140,3 +207,12 @@ def render_signal_dict(data_dict: dict[str, pd.DataFrame], **kwargs: Any) -> Non
     """Render all signals from a name->DataFrame mapping."""
     for name, df in data_dict.items():
         plot_waveforms_core(df, title=name, **kwargs)
+
+
+__all__ = [
+    "load_envelope_payload",
+    "plot_waveforms_core",
+    "render_overview_waveforms",
+    "render_signal_dict",
+    "shade_envelope_segments",
+]

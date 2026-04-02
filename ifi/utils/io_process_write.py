@@ -228,6 +228,9 @@ def write_structured_vest_groups(
     vest_root: h5py.Group,
     shot_num: int,
     vest_by_rate: dict[str, pd.DataFrame],
+    *,
+    replace_rate_groups: bool = True,
+    overwrite_datasets: bool = True,
 ) -> int:
     """Write structured sample-rate grouped VEST datasets."""
     field_by_id, label_to_id = load_vest_field_maps()
@@ -238,9 +241,13 @@ def write_structured_vest_groups(
             continue
 
         sr_group_name = normalize_sr_group_name(rate_key)
-        if sr_group_name in vest_root:
+        if replace_rate_groups and sr_group_name in vest_root:
             del vest_root[sr_group_name]
-        sr_group = vest_root.create_group(sr_group_name)
+        sr_group = (
+            vest_root.create_group(sr_group_name)
+            if sr_group_name not in vest_root
+            else vest_root[sr_group_name]
+        )
 
         sample_rate = infer_sample_rate_from_key(rate_key) or infer_sample_rate_from_index(rate_df.index)
         if sample_rate is not None:
@@ -261,6 +268,10 @@ def write_structured_vest_groups(
                 dataset_base = f"shot_{shot_num}_{field_id}"
             else:
                 dataset_base = f"shot_{shot_num}_{h5_safe_name(str(col))}"
+            if dataset_base in sr_group:
+                if not overwrite_datasets:
+                    continue
+                del sr_group[dataset_base]
             dset = create_named_dataset(
                 sr_group,
                 dataset_base,
