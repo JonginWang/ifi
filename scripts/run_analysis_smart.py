@@ -1,27 +1,21 @@
 ﻿#!/usr/bin/env python3
 """
 Smart Analysis Runner
-=====================
-Automatically determines execution strategy based on file counts per shot.
+======================
 
-This script:
+Automatically determines execution strategy based on file counts per shot.
 1. Takes a shot range (e.g., 45000:45010) as input
 2. Queries NAS DB to find existing shot numbers and their file counts
 3. Executes analysis one shot at a time to isolate result output per shot
 
 
 Usage:
-    python scripts/run_analysis_smart.py 45000:45010 [additional args...]
-    python scripts/run_analysis_smart.py 45000:45010 --freq 280 --density --stft --save_data
-
-Example:
     python scripts/run_analysis_smart.py 45000:45010 --freq 280 --density --stft --stft_cols 0 1 --save_plots --save_data --color_density_by_amplitude --vest_fields 102 109 101 144 214 171
 """
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
-from typing import List, Tuple
 
 # Add project root to path (must be done before importing IFI modules)
 project_root = Path(__file__).parent.parent
@@ -31,12 +25,13 @@ sys.path.insert(0, str(project_root))
 try:
     from ifi import get_project_root
     from ifi.db_controller.nas_db import NasDB
+    from ifi.utils.vest_postprocess import FlatShotList, normalize_shot_query_items
 except ImportError as e:
     print(f"Failed to import ifi modules: {e}. Ensure project root is in PYTHONPATH.")
     sys.exit(1)
 
 
-def parse_shot_range(range_str: str) -> List[int]:
+def parse_shot_range(range_str: str) -> list[int]:
     """
     Parse a shot range string into a list of shot numbers.
     
@@ -63,7 +58,7 @@ def parse_shot_range(range_str: str) -> List[int]:
     return list(range(start, end + 1))
 
 
-def get_file_counts_for_shots(nas_db: NasDB, shot_numbers: List[int]) -> dict[int, int]:
+def get_file_counts_for_shots(nas_db: NasDB, shot_numbers: list[int]) -> dict[int, int]:
     """
     Query NAS DB to get file counts for each shot number.
     
@@ -94,7 +89,7 @@ def get_file_counts_for_shots(nas_db: NasDB, shot_numbers: List[int]) -> dict[in
     return file_counts
 
 
-def group_shots_for_execution(file_counts: dict[int, int]) -> List[Tuple[List[int], str]]:
+def group_shots_for_execution(file_counts: dict[int, int]) -> list[tuple[list[int], str]]:
     """
     Group shots for isolated execution.
     
@@ -122,7 +117,7 @@ def group_shots_for_execution(file_counts: dict[int, int]) -> List[Tuple[List[in
     return execution_groups
 
 
-def format_shot_query(shot_numbers: List[int]) -> str:
+def format_shot_query(shot_numbers: list[int]) -> str:
     """
     Format a list of shot numbers into a query string for main_analysis.
     
@@ -145,7 +140,7 @@ def format_shot_query(shot_numbers: List[int]) -> str:
             return ",".join(map(str, sorted_shots))
 
 
-def run_analysis_for_group(shot_numbers: List[int], additional_args: List[str], project_root: Path) -> int:
+def run_analysis_for_group(shot_numbers: list[int], additional_args: list[str], project_root: Path) -> int:
     """
     Run analysis for a group of shot numbers.
     
@@ -180,7 +175,7 @@ def run_analysis_for_group(shot_numbers: List[int], additional_args: List[str], 
     return result.returncode
 
 
-def process_shot_range(shot_range_str: str, additional_args: List[str], project_root: Path, nas_db: NasDB) -> Tuple[bool, List[Tuple[int, List[int], int]]]:
+def process_shot_range(shot_range_str: str, additional_args: list[str], project_root: Path, nas_db: NasDB) -> tuple[bool, list[tuple[int, list[int], int]]]:
     """
     Process a single shot range and return execution results.
     
@@ -266,6 +261,16 @@ Examples:
     )
     
     parser.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "Shot query in the same format accepted by ifi_analyzer, e.g. "
+            "'45821', '45821 47809', '45821,47809', '45821:45825', or '45821:45825:2'."
+        ),
+    )
+
+    parser.add_argument(
         "--shot-list",
         nargs="+",
         help="One or more shot ranges (e.g., '45000:45010' '45020:45030'). "
@@ -282,7 +287,9 @@ Examples:
     ]
     
     # Determine shot ranges to process
-    if args.shot_list:
+    if args.query:
+        shot_ranges = [str(shot) for shot in FlatShotList(normalize_shot_query_items(args.query)).nums]
+    elif args.shot_list:
         shot_ranges = args.shot_list
     else:
         # Check if first positional argument is a shot range (backward compatibility)

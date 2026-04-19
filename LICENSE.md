@@ -35,7 +35,7 @@ This project uses or is derived from the following third-party libraries:
    - Copyright: Thorsten Kranz et al.
    - License text: See `LICENSE` in this repository.
       - License text: See `LICENSE` in this repository.
-2. **signalProcessing**
+3. **signalProcessing**
    - License: GNU General Public License v3.0
    - Copyright: Dominik Rueß.
    - License text: See `LICENSE` in this repository.

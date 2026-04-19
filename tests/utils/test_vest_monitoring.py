@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from scripts.run_vest_monitoring import _normalize_query_items, _resolve_query_text
+from scripts.run_vest_monitoring import _resolve_query_text
 from ifi.utils.vest_fieldcode import load_vest_field_maps
 from ifi.utils.vest_monitoring import run_vest_shot_monitoring
+from ifi.utils.vest_postprocess import normalize_shot_query_items
 
 
 class _FakeVestDB:
@@ -106,6 +107,6 @@ def test_vest_monitoring_plot_each_saves_under_each_shot(tmp_path: Path, monkeyp
 def test_run_vest_monitoring_query_normalization():
     assert _resolve_query_text(["48710", "48720"], None) == "48710 48720"
     assert _resolve_query_text([], "48710:48720") == "48710:48720"
-    assert _normalize_query_items("48710 48720") == ["48710", "48720"]
-    assert _normalize_query_items("48710,48720") == ["48710", "48720"]
-    assert _normalize_query_items("48710:48720") == ["48710:48720"]
+    assert normalize_shot_query_items("48710 48720") == ["48710", "48720"]
+    assert normalize_shot_query_items("48710,48720") == ["48710", "48720"]
+    assert normalize_shot_query_items("48710:48720") == ["48710:48720"]

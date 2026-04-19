@@ -11,7 +11,6 @@ Date: 2025-01-16
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import h5py
@@ -28,7 +27,10 @@ from ..utils.io_h5 import (
     normalize_source_name,
     unflatten_metadata_attrs,
 )
-from ..utils.io_process_common import build_raw_cache_file_path, make_raw_cache_group_name
+from ..utils.io_process_common import (
+    build_raw_cache_file_path,
+    make_raw_cache_group_name,
+)
 from ..utils.log_manager import log_tag
 from .nas_db_base import NasDBBase
 

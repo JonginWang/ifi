@@ -13,6 +13,30 @@ Date: 2025-01-16
 
 from __future__ import annotations
 
+import re
+
+_SHOT_QUERY_TEXT_RE = re.compile(r"^[\d\s,:]+$")
+
+
+def is_shot_query_text(text: str) -> bool:
+    """Return True when a string looks like a shot query rather than a file path."""
+    normalized = str(text).strip()
+    if not normalized:
+        return False
+    if "/" in normalized or "\\" in normalized:
+        return False
+    return bool(_SHOT_QUERY_TEXT_RE.fullmatch(normalized))
+
+
+def normalize_shot_query_items(query_text: str) -> list[str]:
+    """Split a shot query string into FlatShotList-ready tokens."""
+    normalized = str(query_text).strip()
+    if not normalized:
+        return []
+    if ":" in normalized and "," not in normalized and " " not in normalized:
+        return [normalized]
+    return [token for token in re.split(r"[\s,]+", normalized) if token]
+
 
 class FlatShotList:
     """
@@ -70,6 +94,10 @@ class FlatShotList:
                 continue
 
             if isinstance(item, str):
+                if is_shot_query_text(item) and ("," in item or " " in item):
+                    stack = normalize_shot_query_items(item) + stack
+                    continue
+
                 if ":" in item:
                     try:
                         parts = list(map(int, item.split(":")))
@@ -94,4 +122,6 @@ class FlatShotList:
 
 __all__ = [
     "FlatShotList",
+    "is_shot_query_text",
+    "normalize_shot_query_items",
 ]

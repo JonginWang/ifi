@@ -16,7 +16,7 @@ import pandas as pd
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from ifi.utils.vest_postprocess import FlatShotList
+from ifi.utils.vest_postprocess import FlatShotList, normalize_shot_query_items
 
 
 def _resolve_query_text(positional_query: list[str], query_opt: str | None) -> str:
@@ -25,19 +25,10 @@ def _resolve_query_text(positional_query: list[str], query_opt: str | None) -> s
     return " ".join(str(token).strip() for token in positional_query if str(token).strip()).strip()
 
 
-def _normalize_query_items(query_text: str) -> list[str]:
-    text = str(query_text).strip()
-    if not text:
-        return []
-    if ":" in text and "," not in text and " " not in text:
-        return [text]
-    return [token for token in text.replace(",", " ").split() if token.strip()]
-
-
 def _parse_shots(query_text: str) -> list[int]:
     if not query_text:
         return []
-    return FlatShotList(_normalize_query_items(query_text)).nums
+    return FlatShotList(normalize_shot_query_items(query_text)).nums
 
 
 def _load_longest_duration_us(envelope_dir: Path) -> float:

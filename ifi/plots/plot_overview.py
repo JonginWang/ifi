@@ -30,6 +30,7 @@ def render_analysis_overview(
     trigger_time: float = 0.0,
     title_prefix: str = "",
     downsample: int = 100,
+    plot_envelope: bool = False,
     color_density_by_amplitude: bool = False,
     probe_amplitudes: dict | None = None,
     amplitude_colormap: str = "coolwarm",
@@ -50,6 +51,7 @@ def render_analysis_overview(
         trigger_time=trigger_time,
         downsample=downsample,
         warn_fn=wave_warn_fn,
+        plot_envelope=plot_envelope,
         **kwargs,
     )
     render_overview_density(

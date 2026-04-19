@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 from ifi.db_controller.vest_db import VestDB
 from ifi.utils.log_manager import LogManager
 from ifi.utils.vest_monitoring import run_vest_shot_monitoring
-from ifi.utils.vest_postprocess import FlatShotList
+from ifi.utils.vest_postprocess import FlatShotList, normalize_shot_query_items
 
 logger = LogManager().get_logger(__name__, level="INFO")
 
@@ -35,20 +35,6 @@ def _resolve_query_text(positional_query: list[str], query_opt: str | None) -> s
     if query_opt and str(query_opt).strip():
         return str(query_opt).strip()
     return " ".join(str(token).strip() for token in positional_query if str(token).strip()).strip()
-
-
-def _normalize_query_items(query_text: str) -> list[str]:
-    text = str(query_text).strip()
-    if not text:
-        return []
-    if ":" in text and "," not in text and " " not in text:
-        return [text]
-    items: list[str] = []
-    for chunk in text.replace(",", " ").split():
-        token = chunk.strip()
-        if token:
-            items.append(token)
-    return items
 
 
 def main() -> int:
@@ -100,7 +86,7 @@ def main() -> int:
     args = parser.parse_args()
 
     query_text = _resolve_query_text(args.query, args.query_opt)
-    shots = FlatShotList(_normalize_query_items(query_text)).nums if query_text else []
+    shots = FlatShotList(normalize_shot_query_items(query_text)).nums if query_text else []
     if not shots:
         raise SystemExit("No valid shots parsed from query.")
 

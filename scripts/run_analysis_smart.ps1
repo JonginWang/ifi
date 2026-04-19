@@ -65,17 +65,25 @@ if ($Help) {
 # Get all arguments (PowerShell $args contains all positional arguments)
 $allArgsList = $args
 
-# Parse arguments to handle --shot-list and passthrough
+# Parse arguments to handle --query, --shot-list and passthrough
 $shotRanges = @()
 $pythonArgs = @()
 $i = 0
 $singleRange = $null
+$query = $null
 
 # Process all arguments
 while ($i -lt $allArgsList.Count) {
     $arg = $allArgsList[$i]
     
-    if ($arg -eq "--shot-list" -or $arg -eq "--shot_list") {
+    if ($arg -eq "--query" -or $arg -eq "-query") {
+        $i++
+        if ($i -lt $allArgsList.Count) {
+            $query = $allArgsList[$i]
+            $i++
+        }
+        continue
+    } elseif ($arg -eq "--shot-list" -or $arg -eq "--shot_list") {
         # Collect shot ranges until next -- option
         $i++
         while ($i -lt $allArgsList.Count -and -not $allArgsList[$i].StartsWith("--")) {
@@ -87,7 +95,12 @@ while ($i -lt $allArgsList.Count) {
         # Help already handled above
         $i++
         continue
-    } elseif ($arg -eq "--freq" -or $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols") {
+    } elseif (
+        $arg -eq "--freq" -or
+        $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or
+        $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols" -or
+        $arg -eq "--vest-fields" -or $arg -eq "--vest_fields"
+    ) {
         # Handle options that accept comma-separated values
         $i++
         if ($i -lt $allArgsList.Count) {
@@ -131,7 +144,10 @@ $pythonScript = Join-Path $scriptDir "run_analysis_smart.py"
 $allArgs = @()
 
 # Determine shot ranges
-if ($shotRanges.Count -gt 0) {
+if ($query) {
+    $allArgs += "--query"
+    $allArgs += $query
+} elseif ($shotRanges.Count -gt 0) {
     # Multiple ranges via --shot-list argument
     $allArgs += "--shot-list"
     $allArgs += $shotRanges
@@ -152,6 +168,8 @@ Write-Host "====================================================================
 Write-Host "Smart Analysis Runner" -ForegroundColor Green
 if ($shotRanges.Count -gt 0) {
     Write-Host "Shot Ranges: $($shotRanges -join ', ')" -ForegroundColor Yellow
+} elseif ($query) {
+    Write-Host "Shot Query: $query" -ForegroundColor Yellow
 } elseif ($singleRange) {
     Write-Host "Shot Range: $singleRange" -ForegroundColor Yellow
 } else {

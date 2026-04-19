@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -21,7 +21,7 @@ from ifi.plots.plot_saved_results import (
 )
 from ifi.plots.style import set_plot_style
 from ifi.utils.io_process_read import load_results_from_hdf5
-from ifi.utils.vest_postprocess import FlatShotList
+from ifi.utils.vest_postprocess import FlatShotList, normalize_shot_query_items
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
     shot_numbers: list[int]
     if shot_query:
-        shot_numbers = FlatShotList([shot_query]).nums
+        shot_numbers = FlatShotList(normalize_shot_query_items(shot_query)).nums
     elif config is not None:
         plot_sections = [
             name for name in config.sections()
