@@ -47,6 +47,7 @@ def create_mock_args(**overrides: Any) -> Namespace:
         query=["45821"],
         freq=[94.0, 280.0],
         density=True,
+        flip_density=False,
         envelope=False,
         plot=False,
         plot_envelope=False,

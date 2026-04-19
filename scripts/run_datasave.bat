@@ -370,6 +370,7 @@ echo                                Example: --cwt-cols "0 1"
 echo                                Single value: --cwt-cols "1"
 echo   --downsample FACTOR          Downsample factor for plotting (default: 10)
 echo   --trigger-time SECONDS       Trigger time in seconds (default: 0.290)
+echo   --flip-density               Flip density sign during phase-to-density calculation
 echo   --color-density-by-amplitude Color-code density plots by amplitude
 echo   --amplitude-colormap MAP     Colormap for amplitude (default: coolwarm)
 echo   --amplitude-impedance OHMS   System impedance in ohms (default: 50.0)

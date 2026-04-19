@@ -31,16 +31,28 @@ set "SHOT_LIST="
 set "ARGS="
 set "USE_SINGLE_RANGE=0"
 set "SINGLE_RANGE="
+set "QUERY="
 
 :parse_args
 if "%~1"=="" goto :run_script
 if "%~1"=="--help" (
     goto :show_help
 )
+if "%~1"=="--query" (
+    shift
+    if "%~1"=="" (
+        echo WARNING: --query option specified but no value provided. Skipping --query option.
+        goto :parse_args
+    )
+    set "QUERY=--query %~1"
+    set "USE_SINGLE_RANGE=1"
+    shift
+    goto :parse_args
+)
 if "%~1"=="--shot-list" (
     REM Collect shot list values
     set "SHOT_LIST="
-    set "USE_SINGLE_RANGE=0"
+    set "USE_SINGLE_RANGE=1"
     shift
     :collect_shots
     if "%~1"=="" goto :parse_args
@@ -194,12 +206,15 @@ echo ===========================================================================
 REM Build command
 set "CMD=python "%~dp0run_analysis_smart.py""
 
-if "!USE_SINGLE_RANGE!"=="1" (
-    echo Shot Range: !SINGLE_RANGE!
-    set "CMD=!CMD! !SINGLE_RANGE!"
+if not "!QUERY!"=="" (
+    echo Shot Query: !QUERY!
+    set "CMD=!CMD! !QUERY!"
 ) else if not "!SHOT_LIST!"=="" (
     echo Shot Ranges: !SHOT_LIST!
     set "CMD=!CMD! !SHOT_LIST!"
+) else if not "!SINGLE_RANGE!"=="" (
+    echo Shot Range: !SINGLE_RANGE!
+    set "CMD=!CMD! !SINGLE_RANGE!"
 ) else (
     echo Using example shot list (use --shot-list to override)
     echo.
@@ -251,6 +266,7 @@ echo                               If not provided, uses example list from scrip
 echo   --freq FREQ                 Filter frequencies (space-separated in quotes, e.g., "94 280")
 echo   --stft-cols INDICES         Column indices for STFT (space-separated in quotes, e.g., "0 1 2")
 echo   --cwt-cols INDICES          Column indices for CWT (space-separated in quotes, e.g., "0 1")
+echo   --flip-density              Flip density sign during phase-to-density calculation
 echo   All other arguments are passed to the Python script
 echo   --help                      Show this help message
 echo.

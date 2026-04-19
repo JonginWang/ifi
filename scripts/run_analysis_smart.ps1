@@ -51,6 +51,7 @@ if ($Help) {
     Write-Host "  --freq FREQ                 Filter frequencies (space-separated in quotes, e.g., '94 280')"
     Write-Host "  --stft-cols INDICES         Column indices for STFT (space-separated in quotes, e.g., '0 1 2')"
     Write-Host "  --cwt-cols INDICES          Column indices for CWT (space-separated in quotes, e.g., '0 1')"
+    Write-Host "  --flip-density              Flip density sign during phase-to-density calculation"
     Write-Host "  All other arguments are passed directly to the Python script"
     Write-Host "  --help                     Show this help message"
     Write-Host ""
@@ -127,7 +128,12 @@ while ($i -lt $allArgsList.Count) {
             $i--
         }
         continue
-    } elseif (-not $arg.StartsWith("--") -and $null -eq $singleRange) {
+    } elseif (
+        -not $arg.StartsWith("--") -and
+        $null -eq $singleRange -and
+        $null -eq $query -and
+        $shotRanges.Count -eq 0
+    ) {
         # First non-option argument is the shot range
         $singleRange = $arg
         $i++

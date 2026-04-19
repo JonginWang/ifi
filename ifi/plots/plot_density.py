@@ -55,6 +55,7 @@ def plot_density_core(
     density_data: pd.DataFrame | dict[str, np.ndarray] | np.ndarray,
     time_data: np.ndarray | None = None,
     title: str = "Density Results",
+    downsample: int = 1,
     save_path: str | None = None,
     show_plot: bool = True,
     density_scale: str = "10^18 m^-3",
@@ -74,6 +75,7 @@ def plot_density_core(
     savefig_kwargs: dict[str, Any] | None = None,
 ) -> tuple[Figure, np.ndarray]:
     """Core density plotting implementation."""
+    downsample = max(1, int(downsample))
     if isinstance(density_data, pd.DataFrame):
         if time_data is None and hasattr(density_data, "index"):
             time_data = density_data.index.values
@@ -97,6 +99,9 @@ def plot_density_core(
     _, density_scaled, _, density_label = apply_scaling(
         time_data, signals, time_scale, density_scale
     )
+    if downsample > 1:
+        time_scaled = time_scaled[::downsample]
+        density_scaled = {name: np.asarray(data)[::downsample] for name, data in density_scaled.items()}
 
     amplitude_data = None
     if color_by_amplitude and probe_amplitude is not None:
@@ -126,6 +131,8 @@ def plot_density_core(
         data_plot = data[:min_len]
         if color_by_amplitude and amplitude_data is not None and name in amplitude_data:
             amp_array = amplitude_data[name]
+            if downsample > 1:
+                amp_array = amp_array[::downsample]
             min_amp_len = min(len(amp_array), min_len)
             amp_plot = amp_array[:min_amp_len]
             time_plot = time_plot[:min_amp_len]
@@ -316,6 +323,7 @@ def render_overview_density(
     signals_dict: dict[str, pd.DataFrame] | None,
     amplitude_colormap: str,
     amplitude_impedance: float,
+    downsample: int,
     warn_fn: Any,
     **kwargs: Any,
 ) -> None:
@@ -345,6 +353,7 @@ def render_overview_density(
                 df,
                 time_data=time_data,
                 title=f"{title_prefix}{name}",
+                downsample=downsample,
                 show_plot=True,
                 probe_amplitude=plot_probe_amp,
                 color_by_amplitude=color_density_by_amplitude,

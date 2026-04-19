@@ -62,6 +62,7 @@ def render_analysis_overview(
         signals_dict=signals_dict,
         amplitude_colormap=amplitude_colormap,
         amplitude_impedance=amplitude_impedance,
+        downsample=downsample,
         warn_fn=density_warn_fn,
         **kwargs,
     )

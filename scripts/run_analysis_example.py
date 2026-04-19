@@ -59,6 +59,7 @@ logger = LogManager().get_logger(__name__, level="INFO")
 #   - downsample: Downsample factor for plotting (int, default: 10)
 #   - trigger_time: Trigger time in seconds (float, default: 0.290)
 #   - density: Enable density calculation (bool)
+#   - flip_density: Flip density sign during phase-to-density calculation (bool)
 #   - freq: Filter to specific frequency groups (list of float: [94.0] or [280.0] or [94.0, 280.0])
 #   - vest_fields: VEST DB field IDs to load (list of int)
 #   - baseline: Baseline correction mode ("ip" or "trig")
@@ -223,6 +224,7 @@ def create_analysis_args(config: dict[str, Any]) -> argparse.Namespace:
     args.stft = config.get("stft", False)
     args.cwt = config.get("cwt", False)
     args.density = config.get("density", False)
+    args.flip_density = config.get("flip_density", False)
     args.plot = config.get("plot", False)
 
     # STFT/CWT parameters

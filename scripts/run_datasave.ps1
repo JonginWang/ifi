@@ -78,6 +78,7 @@ if ($Help) {
     Write-Host "  --trigger-time SECONDS       Trigger time in seconds (default: 0.290)"
     Write-Host "  --envelope                   Export low-envelope probe segments to JSON"
     Write-Host "  --plot_envelope              Overlay signal envelope on waveform plots"
+    Write-Host "  --flip-density               Flip density sign during phase-to-density calculation"
     Write-Host "  --color-density-by-amplitude Color-code density plots by amplitude"
     Write-Host "  --amplitude-colormap MAP     Colormap for amplitude (default: coolwarm)"
     Write-Host "  --amplitude-impedance OHMS   System impedance in ohms (default: 50.0)"
@@ -133,7 +134,12 @@ while ($i -lt $allArgsList.Count) {
         # Help already handled above
         $i++
         continue
-    } elseif ($arg -eq "--freq" -or $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols") {
+    } elseif (
+        $arg -eq "--freq" -or
+        $arg -eq "--stft-cols" -or $arg -eq "--stft_cols" -or
+        $arg -eq "--cwt-cols" -or $arg -eq "--cwt_cols" -or
+        $arg -eq "--vest-fields" -or $arg -eq "--vest_fields"
+    ) {
         # Handle options that accept comma or space-separated values
         $i++
         if ($i -lt $allArgsList.Count) {

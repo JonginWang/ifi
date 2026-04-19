@@ -31,6 +31,14 @@ except ImportError as e:
     sys.exit(1)
 
 
+def parse_shot_query(query_text: str) -> list[int]:
+    """Parse a shot query using the shared IFI shot-list parser."""
+    shot_numbers = FlatShotList(normalize_shot_query_items(query_text)).nums
+    if not shot_numbers:
+        raise ValueError(f"Invalid shot query format: {query_text}")
+    return shot_numbers
+
+
 def parse_shot_range(range_str: str) -> list[int]:
     """
     Parse a shot range string into a list of shot numbers.
@@ -41,21 +49,10 @@ def parse_shot_range(range_str: str) -> list[int]:
     Returns:
         List of shot numbers
     """
-    if ":" not in range_str:
-        try:
-            return [int(range_str)]
-        except ValueError:
-            raise ValueError(f"Invalid shot range format: {range_str}")
-    
-    parts = range_str.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"Invalid shot range format: {range_str}. Expected 'start:end'")
-    
-    start, end = int(parts[0]), int(parts[1])
-    if start > end:
-        raise ValueError(f"Invalid range: start ({start}) > end ({end})")
-    
-    return list(range(start, end + 1))
+    try:
+        return parse_shot_query(range_str)
+    except ValueError as exc:
+        raise ValueError(f"Invalid shot range format: {range_str}") from exc
 
 
 def get_file_counts_for_shots(nas_db: NasDB, shot_numbers: list[int]) -> dict[int, int]:
@@ -288,7 +285,7 @@ Examples:
     
     # Determine shot ranges to process
     if args.query:
-        shot_ranges = [str(shot) for shot in FlatShotList(normalize_shot_query_items(args.query)).nums]
+        shot_ranges = [str(shot) for shot in parse_shot_query(args.query)]
     elif args.shot_list:
         shot_ranges = args.shot_list
     else:

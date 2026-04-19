@@ -399,6 +399,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--density", action="store_true", help="Perform phase and density calculation."
     )
     parser.add_argument(
+        "--flip_density",
+        "--flip-density",
+        dest="flip_density",
+        action="store_true",
+        help="Flip the phase sign before density conversion during density calculation.",
+    )
+    parser.add_argument(
         "--envelope",
         action="store_true",
         help="Export low-envelope probe segments as JSON files.",

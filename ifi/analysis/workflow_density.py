@@ -109,6 +109,7 @@ def calculate_density_data_by_frequency(
         return density_data
 
     phase_converter = phi2ne.PhaseConverter()
+    flip_density = bool(getattr(args, "flip_density", False))
 
     for freq_ghz, freq_data in freq_combined_signals.items():
         logging.info(
@@ -192,7 +193,7 @@ def calculate_density_data_by_frequency(
 
                     probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                     phase, _ = phase_converter.calc_phase_cdm(
-                        ref_signal, probe_signal, fs, f_center
+                        ref_signal, probe_signal, fs, f_center, isflip=flip_density
                     )
                     density_col_name = f"ne_{probe_col}_{basename}"
                     freq_density_data[density_col_name] = phase_converter.phase_to_density(
@@ -227,7 +228,11 @@ def calculate_density_data_by_frequency(
                         continue
                     probe_signal = freq_data[probe_col_name].dropna().to_numpy()
                     phase = phase_converter.calc_phase_fpga(
-                        ref_signal, probe_signal, time_axis, probe_signal, isflip=False
+                        ref_signal,
+                        probe_signal,
+                        time_axis,
+                        probe_signal,
+                        isflip=flip_density,
                     )
                     density_col_name = f"ne_{probe_col}_{basename}"
                     freq_density_data[density_col_name] = phase_converter.phase_to_density(
@@ -262,7 +267,9 @@ def calculate_density_data_by_frequency(
 
                 i_signal = freq_data[i_col_name].dropna().to_numpy()
                 q_signal = freq_data[q_col_name].dropna().to_numpy()
-                phase, _ = phase_converter.calc_phase_iq(i_signal, q_signal)
+                phase, _ = phase_converter.calc_phase_iq(
+                    i_signal, q_signal, isflip=flip_density
+                )
                 freq_density_data[f"ne_IQ_{basename}"] = phase_converter.phase_to_density(
                     phase, analysis_params=params
                 )
