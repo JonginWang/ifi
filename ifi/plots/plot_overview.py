@@ -64,6 +64,7 @@ def render_analysis_overview(
         amplitude_impedance=amplitude_impedance,
         downsample=downsample,
         warn_fn=density_warn_fn,
+        trigger_time=trigger_time,
         **kwargs,
     )
 
@@ -80,7 +81,7 @@ def render_analysis_overview(
         return
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    time_vest = vest_data.index.values + trigger_time
+    time_vest = vest_data.index.values
     ax.plot(time_vest * 1000, vest_data[ip_col].values, "r-", linewidth=2)
     ax.set_xlabel("Time [ms]")
     ax.set_ylabel(f"{ip_col}")

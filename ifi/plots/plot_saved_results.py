@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from ..utils.dsp_amplitude import compute_signal_envelope
@@ -665,10 +666,15 @@ def extract_time_and_series(
         time = pd.Series(df["TIME"], copy=False)
     else:
         time = pd.Series(df.index, copy=False)
-    time = pd.to_numeric(time, errors="coerce") + float(trigger_time)
-    values = pd.to_numeric(df[request.column], errors="coerce")
-    mask = time.notna() & values.notna()
-    return time[mask], values[mask]
+    time_values = pd.to_numeric(time, errors="coerce").to_numpy(dtype=float)
+    if request.group != "vest":
+        time_values = time_values + float(trigger_time)
+    value_values = pd.to_numeric(df[request.column], errors="coerce").to_numpy(dtype=float)
+    min_len = min(len(time_values), len(value_values))
+    time_values = time_values[:min_len]
+    value_values = value_values[:min_len]
+    mask = np.isfinite(time_values) & np.isfinite(value_values)
+    return pd.Series(time_values[mask]), pd.Series(value_values[mask])
 
 
 def plot_saved_axis(

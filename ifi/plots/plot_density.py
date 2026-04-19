@@ -60,6 +60,7 @@ def plot_density_core(
     show_plot: bool = True,
     density_scale: str = "10^18 m^-3",
     time_scale: str = "ms",
+    trigger_time: float = 0.0,
     probe_amplitude: np.ndarray | dict[str, np.ndarray] | None = None,
     color_by_amplitude: bool = False,
     amplitude_colormap: str = "coolwarm",
@@ -92,7 +93,7 @@ def plot_density_core(
             time_data = np.arange(len(density_data))
         signals = {"Density": np.asarray(density_data)}
 
-    time_data = np.asarray(time_data)
+    time_data = np.asarray(time_data, dtype=float) + float(trigger_time)
     time_scaled, _, time_label, _ = apply_scaling(
         time_data, {"dummy": np.zeros_like(time_data)}, time_scale
     )
@@ -325,6 +326,7 @@ def render_overview_density(
     amplitude_impedance: float,
     downsample: int,
     warn_fn: Any,
+    trigger_time: float = 0.0,
     **kwargs: Any,
 ) -> None:
     """Render density section for analysis overview."""
@@ -354,6 +356,7 @@ def render_overview_density(
                 time_data=time_data,
                 title=f"{title_prefix}{name}",
                 downsample=downsample,
+                trigger_time=trigger_time,
                 show_plot=True,
                 probe_amplitude=plot_probe_amp,
                 color_by_amplitude=color_density_by_amplitude,
