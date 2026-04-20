@@ -30,6 +30,8 @@ from .io_h5 import (
 )
 from .io_process_common import make_density_group_name, parse_density_group_name
 
+H5_GROUP_VEST_MONITORING = "vest_monitoring"
+
 
 def _decode_group_attrs(
     group: h5py.Group,
@@ -200,6 +202,44 @@ def _load_vest(hf: h5py.File) -> dict[str, pd.DataFrame]:
     return vest_by_rate
 
 
+def _load_vest_monitoring(hf: h5py.File) -> dict[str, pd.DataFrame]:
+    """Load VEST monitoring post-processed frames from `/vest_monitoring`."""
+    root = hf.get(H5_GROUP_VEST_MONITORING)
+    if root is None or not isinstance(root, h5py.Group):
+        return {}
+
+    frames: dict[str, pd.DataFrame] = {}
+    for frame_name in root.keys():
+        frame_group = root[frame_name]
+        if not isinstance(frame_group, h5py.Group):
+            continue
+        if str(frame_name) == "mirnov_spectrogram":
+            continue
+
+        columns: dict[str, np.ndarray] = {}
+        time_ms = None
+        for ds_name in frame_group.keys():
+            dset = frame_group[ds_name]
+            if not isinstance(dset, h5py.Dataset):
+                continue
+            if str(ds_name) == "time_ms":
+                time_ms = np.asarray(dset[:], dtype=float)
+                continue
+            col_name = dset.attrs.get("original_name", ds_name)
+            columns[str(col_name)] = np.asarray(dset[:])
+
+        if not columns:
+            continue
+
+        frame = pd.DataFrame(columns)
+        if time_ms is not None and len(time_ms) == len(frame):
+            frame.index = pd.Index(time_ms, name="time_ms")
+        frame.attrs.update(_decode_group_attrs(frame_group))
+        frame.attrs.setdefault("index_unit", "ms")
+        frames[str(frame_name)] = frame
+    return frames
+
+
 def load_results_from_hdf5(shot_num: int, base_dir: str = "results") -> dict | None:
     """Load results from canonical `base_dir/<shot>/<shot>.h5`."""
     results_dir = Path(base_dir) / str(shot_num)
@@ -245,6 +285,10 @@ def load_results_from_hdf5(shot_num: int, base_dir: str = "results") -> dict | N
             vestdata = _load_vest(hf)
             if vestdata:
                 results["vestdata"] = vestdata
+
+            monitoring = _load_vest_monitoring(hf)
+            if monitoring:
+                results["monitoring"] = monitoring
     except Exception as e:
         print(f"Failed to load results from {canonical_h5}: {e}")
 

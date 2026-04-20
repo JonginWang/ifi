@@ -119,7 +119,8 @@ def test_saved_results_trigger_time_applies_to_raw_and_density_not_vest():
     time_axis = np.array([0.0, 0.1, 0.2])
     results = {
         "rawdata": {
-            "raw_source": pd.DataFrame({"TIME": time_axis, "CH1": [1.0, 2.0, 3.0]})
+            "raw_source": pd.DataFrame({"TIME": time_axis, "CH1": [1.0, 2.0, 3.0]}),
+            "shot_ALL.csv": pd.DataFrame({"TIME": time_axis, "CH1": [13.0, 14.0, 15.0]}),
         },
         "density": {
             "freq_94G": pd.DataFrame(
@@ -130,6 +131,9 @@ def test_saved_results_trigger_time_applies_to_raw_and_density_not_vest():
         "vestdata": {
             "25k": pd.DataFrame({"Ip": [7.0, 8.0, 9.0]}, index=time_axis)
         },
+        "monitoring": {
+            "plasma_current": pd.DataFrame({"Ip": [10.0, 11.0, 12.0]}, index=time_axis * 1000.0)
+        },
     }
 
     raw_time, _ = extract_time_and_series(
@@ -139,7 +143,7 @@ def test_saved_results_trigger_time_applies_to_raw_and_density_not_vest():
     )
     density_time, _ = extract_time_and_series(
         results,
-        SavedSeriesRequest("density", "freq_94G", "ne_CH1", "ne_CH1"),
+        SavedSeriesRequest("density", "freq_94G", "auto", "Density"),
         trigger_time=0.290,
     )
     vest_time, _ = extract_time_and_series(
@@ -147,7 +151,19 @@ def test_saved_results_trigger_time_applies_to_raw_and_density_not_vest():
         SavedSeriesRequest("vest", "25k", "Ip", "Ip"),
         trigger_time=0.290,
     )
+    monitoring_time, _ = extract_time_and_series(
+        results,
+        SavedSeriesRequest("monitoring", "plasma_current", "Ip", "Ip"),
+        trigger_time=0.290,
+    )
+    _, raw_all_values = extract_time_and_series(
+        results,
+        SavedSeriesRequest("raw", "*_ALL.csv", "CH1", "280G Probe"),
+        trigger_time=0.290,
+    )
 
     assert np.allclose(raw_time.to_numpy(), time_axis + 0.290)
     assert np.allclose(density_time.to_numpy(), time_axis + 0.290)
     assert np.allclose(vest_time.to_numpy(), time_axis)
+    assert np.allclose(monitoring_time.to_numpy(), time_axis)
+    assert np.allclose(raw_all_values.to_numpy(), [13.0, 14.0, 15.0])

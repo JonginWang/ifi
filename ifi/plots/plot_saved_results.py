@@ -9,6 +9,7 @@ files, including optional envelope overlay and saved low-envelope interval shadi
 from __future__ import annotations
 
 import configparser
+import fnmatch
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,6 +153,7 @@ def print_available_series(results: dict) -> None:
         ("raw", "rawdata"),
         ("density", "density"),
         ("vest", "vestdata"),
+        ("monitoring", "monitoring"),
     ):
         payload = results.get(key, {})
         if isinstance(payload, dict):
@@ -191,10 +193,12 @@ def resolve_payload(results: dict, group: str) -> dict[str, pd.DataFrame]:
         "density": "density",
         "vest": "vestdata",
         "vestdata": "vestdata",
+        "monitoring": "monitoring",
+        "vest_monitoring": "monitoring",
     }
     result_key = key_map.get(group)
     if result_key is None:
-        raise KeyError(f"Unsupported group '{group}'. Use raw, density, or vest.")
+        raise KeyError(f"Unsupported group '{group}'. Use raw, density, vest, or monitoring.")
     payload = results.get(result_key, {})
     if not isinstance(payload, dict):
         raise KeyError(f"No mapping payload found for group '{group}'.")
@@ -630,12 +634,32 @@ def extract_time_and_series(
 
     if request.source == "auto":
         matched_source = next(
-            (source_name for source_name, df in payload.items() if request.column in df.columns),
+            (
+                source_name
+                for source_name, df in payload.items()
+                if request.column in df.columns or str(request.column).lower() == "auto"
+            ),
             None,
         )
         if matched_source is None:
             raise KeyError(
                 f"Column '{request.column}' not found in any source for group '{request.group}'."
+            )
+    elif any(token in request.source for token in "*?[]"):
+        matched_source = next(
+            (
+                source_name
+                for source_name, df in payload.items()
+                if fnmatch.fnmatch(str(source_name), request.source)
+                and (request.column in df.columns or str(request.column).lower() == "auto")
+            ),
+            None,
+        )
+        if matched_source is None:
+            raise KeyError(
+                f"Source pattern '{request.source}' did not match a source with column "
+                f"'{request.column}' in group '{request.group}'. "
+                f"Available sources: {list(payload.keys())}"
             )
     else:
         matched_source = request.source
@@ -647,7 +671,24 @@ def extract_time_and_series(
         )
 
     df = payload[matched_source]
-    if request.column not in df.columns:
+    matched_column = request.column
+    if str(matched_column).lower() == "auto":
+        preferred_prefixes = {
+            "density": ("ne_",),
+            "monitoring": ("Ip", "H_alpha", "OI", "CH"),
+        }.get(request.group, ())
+        numeric_cols = numeric_signal_columns(df)
+        matched_column = next(
+            (
+                col
+                for prefix in preferred_prefixes
+                for col in numeric_cols
+                if str(col).startswith(prefix)
+            ),
+            numeric_cols[0] if numeric_cols else request.column,
+        )
+
+    if matched_column not in df.columns:
         raise KeyError(
             f"Column '{request.column}' not found in {request.group}:{matched_source}. "
             f"Available: {list(df.columns)}"
@@ -662,14 +703,18 @@ def extract_time_and_series(
             ),
             copy=False,
         )
+    elif request.group == "monitoring" and "time_ms" in df.columns:
+        time = pd.Series(df["time_ms"], copy=False) / 1000.0
+    elif request.group == "monitoring":
+        time = pd.Series(df.index, copy=False) / 1000.0
     elif "TIME" in df.columns:
         time = pd.Series(df["TIME"], copy=False)
     else:
         time = pd.Series(df.index, copy=False)
     time_values = pd.to_numeric(time, errors="coerce").to_numpy(dtype=float)
-    if request.group != "vest":
+    if request.group not in {"vest", "monitoring"}:
         time_values = time_values + float(trigger_time)
-    value_values = pd.to_numeric(df[request.column], errors="coerce").to_numpy(dtype=float)
+    value_values = pd.to_numeric(df[matched_column], errors="coerce").to_numpy(dtype=float)
     min_len = min(len(time_values), len(value_values))
     time_values = time_values[:min_len]
     value_values = value_values[:min_len]

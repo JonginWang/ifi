@@ -66,7 +66,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "One subplot specification. Repeat per axis. "
             "Each axis accepts one or more series separated by ';'. "
             "Series format: group:source:column[@label], "
-            "where group is one of raw, density, vest."
+            "where group is one of raw, density, vest, monitoring."
         ),
     )
     parser.add_argument("--title", type=str, default=None, help="Optional figure title.")
